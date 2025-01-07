@@ -73,6 +73,47 @@ def fetch_dataframes_from_snowflake():
 # Fetch dataframes from Snowflake
 dataframes = fetch_dataframes_from_snowflake()
 
+
+def style_dataframe(df, column_name_patterns):
+    """
+    Applies conditional formatting to a dataframe.
+    Colors cells in the specified columns based on their values:
+    - Green for values >= -10000 and < 1
+    - Yellow for values >= 1 and < 6
+    - Pink for values >= 6 and < 35
+    - Red for values >= 35 and < 10000
+
+    Parameters:
+    - df: pandas DataFrame to style.
+    - column_name_patterns: list of strings or substrings to filter column names (e.g., ["Remain"]).
+    """
+    # Filter columns based on the given patterns
+    target_columns = [col for col in df.columns if any(pattern in col for pattern in column_name_patterns)]
+    
+    def highlight_cell(val):
+        if -10000 <= val < 1:
+            return "background-color: #BCE29E; color: black;"
+
+        elif 1 <= val < 6:
+            return "background-color: #E5EBB2; color: black;"
+
+        elif 6 <= val < 35:
+            return "background-color: #F8C4B4; color: black;"
+
+        elif 35 <= val < 10000:
+            return "background-color: #FF8787; color: black;"
+
+        return ""
+
+    # Apply styling only to the target columns
+    return df.style.applymap(
+        highlight_cell, subset=target_columns
+    )
+
+column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
+       '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
+
+
 # Example: Access DataFrames
 wkday_df = dataframes['wkday_df']
 wkday_dir_df = dataframes['wkday_dir_df']
@@ -95,7 +136,7 @@ detail_df = dataframes['detail_df']
 
 # detail_df=pd.read_excel('data/details_vta_CA_od_excel.xlsx',sheet_name='TOD')
 
-st.set_page_config(page_title="DataFrames Example", layout='wide')
+st.set_page_config(page_title="VTA-Completion Report", layout='wide')
 
 
 def download_csv(csv):
@@ -185,7 +226,7 @@ def main_page(data1, data2, data3):
         else:
             st.subheader("Route Direction Level Comparison")
         filtered_df1 = filter_dataframe(data1, search_query)
-        st.dataframe(filtered_df1, height=690)
+        st.dataframe(style_dataframe(filtered_df1, column_name_patterns), height=690)
 
     # Display buttons and dataframes in the second column (col2)
     with col2:
@@ -195,7 +236,7 @@ def main_page(data1, data2, data3):
 
         st.subheader("Route Level Comparison")
         filtered_df3 = filter_dataframe(data3, search_query)
-        st.dataframe(filtered_df3, height=300,use_container_width=True)
+        st.dataframe(style_dataframe(filtered_df3, column_name_patterns), height=300,use_container_width=True)
 
 
 def weekday_page():
