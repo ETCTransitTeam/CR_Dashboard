@@ -1,4 +1,5 @@
 import streamlit as st
+import datetime
 import snowflake.connector
 import pandas as pd
 from snowflake.connector.pandas_tools import pd_writer,write_pandas
@@ -169,6 +170,10 @@ header_col1, header_col2, header_col3 = st.columns([2, 2,1])
 
 with header_col1:
     st.header('Completion Report')
+    current_date = datetime.datetime.now()
+    formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
+    # st.markdown(f"##### **LAST SURVEY DATE**: {formatted_date}")
+    st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
 
 with header_col2:
@@ -241,11 +246,9 @@ def main_page(data1, data2, data3):
 
 def weekday_page():
     st.title("Weekday OverAll Data")
-    main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','(0) Goal', '(1) Goal',
-       '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal', '(0) Collect',
-       '(1) Collect', '(2) Collect', '(3) Collect', '(4) Collect',
-       '(5) Collect', '(0) Remain', '(1) Remain', '(2) Remain',
-       '(3) Remain', '(4) Remain', '(5) Remain']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekday data
+    main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
+        '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
+       ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekday data
     # csv = create_csv(wkday_df)
     # download_csv(csv)
 
@@ -256,11 +259,9 @@ def weekday_page():
 
 def weekend_page():
     st.title("Weekend OverAll Data")
-    main_page(wkend_dir_df[['ROUTE_SURVEYEDCode','(0) Goal', '(1) Goal',
-       '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal', '(0) Collect',
-       '(1) Collect', '(2) Collect', '(3) Collect', '(4) Collect',
-       '(5) Collect', '(0) Remain', '(1) Remain', '(2) Remain',
-       '(3) Remain', '(4) Remain', '(5) Remain']], wkend_time_df[['Display_Text','Original Text','Time Range','0', '1','2', '3', '4', '5']], wkend_df[['ROUTE_SURVEYEDCode', 'Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekend data
+    main_page(wkend_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
+        '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
+       ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkend_time_df[['Display_Text','Original Text','Time Range','0', '1','2', '3', '4', '5']], wkend_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekend data
     # csv = create_csv(wkend_df)
     # download_csv(csv)
 
@@ -274,11 +275,8 @@ if page == "weekday":
 elif page == "weekend":
     weekend_page()
 elif page=='timedetails':
-    time_details(detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
-                              'TIME_PERIOD', 'START_TIME']])
+    time_details(detail_df)
 else:
-    main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','(0) Goal', '(1) Goal',
-       '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal', '(0) Collect',
-       '(1) Collect', '(2) Collect', '(3) Collect', '(4) Collect',
-       '(5) Collect', '(0) Remain', '(1) Remain', '(2) Remain',
-       '(3) Remain', '(4) Remain', '(5) Remain']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'Route Level Goal', '# of Surveys', 'Remaining']])  # Default to original data for the main page
+    main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
+        '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
+       ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Default to original data for the main page
