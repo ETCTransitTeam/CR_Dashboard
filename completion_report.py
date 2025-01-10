@@ -1,9 +1,10 @@
-import streamlit as st
 import datetime
-import snowflake.connector
+import numpy as np
 import pandas as pd
-from snowflake.connector.pandas_tools import pd_writer,write_pandas
+import streamlit as st
+import snowflake.connector
 from decouple import config
+from snowflake.connector.pandas_tools import pd_writer,write_pandas
 
 # print()
 def create_snowflake_connection():
@@ -107,7 +108,7 @@ def style_dataframe(df, column_name_patterns):
         return ""
 
     # Apply styling only to the target columns
-    return df.style.applymap(
+    return df.style.map(
         highlight_cell, subset=target_columns
     )
 
@@ -236,7 +237,20 @@ def main_page(data1, data2, data3):
     # Display buttons and dataframes in the second column (col2)
     with col2:
         st.subheader("Time Range Data")
-        filtered_df2 = filter_dataframe(data2, search_query)
+        expected_totals = data1[['(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
+        collected_totals=data2[['0','1', '2', '3', '4', '5']].sum()
+        difference = np.maximum(expected_totals.values - collected_totals.values, 0)
+        result_df = pd.DataFrame({
+            'Time Period':  ['0', '1', '2', '3', '4', '5'],
+            'Collected Totals': (collected_totals.values.astype(str)),
+            'Expected Totals': expected_totals.values.astype(str),
+            'Remaining': difference.astype(int),
+        })
+        result_df = result_df.reindex(range(len(data2))).fillna(0)
+
+        # Concatenate with data2
+        final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
+        filtered_df2 = filter_dataframe(style_dataframe(final_df,column_name_patterns), search_query)
         st.dataframe(filtered_df2, height=300,use_container_width=True)
 
         st.subheader("Route Level Comparison")
