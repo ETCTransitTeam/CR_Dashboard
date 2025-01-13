@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 import snowflake.connector
 from decouple import config
-from st_aggrid import AgGrid, GridOptionsBuilder,JsCode
 from snowflake.connector.pandas_tools import pd_writer,write_pandas
 
 # print()
@@ -233,49 +232,7 @@ def main_page(data1, data2, data3):
         else:
             st.subheader("Route Direction Level Comparison")
         filtered_df1 = filter_dataframe(data1, search_query)
-        # st.dataframe(style_dataframe(filtered_df1, column_name_patterns), height=690)
-        cellStyle = JsCode("""
-            function(params) {
-                const val = params.value;
-
-                if (val >= -10000 && val < 1) {
-                    return {'background-color': '#BCE29E', 'color': 'black'};
-                } else if (val >= 1 && val < 6) {
-                    return {'background-color': '#E5EBB2', 'color': 'black'};
-                } else if (val >= 6 && val < 35) {
-                    return {'background-color': '#F8C4B4', 'color': 'black'};
-                } else if (val >= 35 && val < 10000) {
-                    return {'background-color': '#FF8787', 'color': 'black'};
-                }
-                return null;  // Default style
-            }
-        """)
-        # Create GridOptionsBuilder
-        gb = GridOptionsBuilder.from_dataframe(filtered_df1)
-        gb.configure_default_column(editable=False)
-
-        # Pin the specified column
-        gb.configure_column('ROUTE_SURVEYEDCode', pinned='left')
-
-        # Apply cell style to target columns
-        for column in filtered_df1.columns:
-            if any(pattern in column for pattern in column_name_patterns):
-                gb.configure_column(column, cellStyle=cellStyle)
-
-        # Build grid options
-        grid_options = gb.build()
-
-        # Render AgGrid
-        st.write()
-        AgGrid(
-            filtered_df1,
-            gridOptions=grid_options,
-            height=800,
-            theme="streamlit",  # Choose theme: 'streamlit', 'light', 'dark', etc.
-            allow_unsafe_jscode=True,  # Required to enable custom JsCode
-            key='grid1',
-            width='auto'
-        )
+        st.dataframe(style_dataframe(filtered_df1, column_name_patterns), height=690)
 
     # Display buttons and dataframes in the second column (col2)
     with col2:
@@ -294,11 +251,11 @@ def main_page(data1, data2, data3):
         # Concatenate with data2
         final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
         filtered_df2 = filter_dataframe(style_dataframe(final_df,column_name_patterns), search_query)
-        st.dataframe(filtered_df2, height=350,use_container_width=True)
+        st.dataframe(filtered_df2, height=300,use_container_width=True)
 
         st.subheader("Route Level Comparison")
         filtered_df3 = filter_dataframe(data3, search_query)
-        st.dataframe(style_dataframe(filtered_df3, column_name_patterns), height=350,use_container_width=True)
+        st.dataframe(style_dataframe(filtered_df3, column_name_patterns), height=300,use_container_width=True)
 
 
 def weekday_page():
