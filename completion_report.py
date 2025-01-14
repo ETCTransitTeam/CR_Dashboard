@@ -222,6 +222,7 @@ def time_details(details_df):
         st.experimental_rerun()
 
         
+
 def main_page(data1, data2, data3):
     """Main page display with dynamic data"""
     # Create two columns layout
@@ -234,7 +235,7 @@ def main_page(data1, data2, data3):
         else:
             st.subheader("Route Direction Level Comparison")
         filtered_df1 = filter_dataframe(data1, search_query)
-        print(f'{filtered_df1.shape}')
+
         # styled_df=style_dataframe(filtered_df1,column_name_patterns)
         # st.dataframe(style_dataframe(filtered_df1,column_name_patterns), height=690)
         # st.write("### DATA")
@@ -302,9 +303,39 @@ def main_page(data1, data2, data3):
 
         # Concatenate with data2
         final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
-        # filtered_df2 = filter_dataframe(style_dataframe(final_df,column_name_patterns), search_query)
-        filtered_df2 = style_dataframe(filter_dataframe(final_df, search_query),column_name_patterns)
-        st.dataframe(filtered_df2, height=250,use_container_width=True)
+        filtered_df2 = filter_dataframe(final_df, search_query)
+
+
+        gb2 = GridOptionsBuilder.from_dataframe(filtered_df2)
+        gb2.configure_default_column(editable=False,groupable=False)
+
+        # Pin the specified column
+        gb2.configure_column('Display_Text', pinned='left')
+        # Apply cell style to target columns
+        for column in filtered_df2.columns:
+            if any(pattern in column for pattern in column_name_patterns):
+                gb2.configure_column(column, cellStyle=cellStyle)
+
+        # Build grid options
+        gb2.configure_grid_options(alwaysShowHorizontalScroll=True, enableRangeSelection=True, pagination=True, paginationPageSize=10000, domLayout='normal')
+
+        grid_options = gb2.build()
+        # Render AgGrid
+        AgGrid(
+            filtered_df2,
+            gridOptions=grid_options,
+            height=300,
+            theme="streamlit",  # Choose theme: 'streamlit', 'light', 'dark', etc.
+            allow_unsafe_jscode=True,  # Required to enable custom JsCode
+            key='grid3',
+            suppressHorizontalScroll=False,
+            fit_columns_on_grid_load=False,
+            reload_data=True,  # Allow horizontal scrolling
+            width='100%',  # Ensure the grid takes full width
+        )
+
+        # filtered_df2 = style_dataframe(filter_dataframe(final_df, search_query),column_name_patterns)
+        # st.dataframe(filtered_df2, height=250,use_container_width=True)
         # filtered_df2 = filter_dataframe(data2, search_query)
         # st.dataframe(filtered_df2, height=300,use_container_width=True)
 
@@ -343,6 +374,7 @@ def main_page(data1, data2, data3):
             reload_data=True,  # Allow horizontal scrolling
             width='100%',  # Ensure the grid takes full width
         )
+        # st.dataframe(style_dataframe(filtered_df3,column_name_patterns), height=300,use_container_width=True)
 
 def weekday_page():
     st.title("Weekday OverAll Data")
