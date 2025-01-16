@@ -68,24 +68,24 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250110_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
-sheet_info = {
-    'WkDAY Route Comparison': 'wkday_comparison', 
-    'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
-    'WkEND Route Comparison': 'wkend_comparison', 
-    'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
-    'WkEND Time Data': 'wkend_time_data', 
-    'WkDAY Time Data': 'wkday_time_data',
-    'LAST SURVEY DATE': 'last_survey_date',
-}
+# file_path = 'reviewtool_20250116_UTA_RailRouteLevelComparison(Wkday & WkEnd)_Latest.xlsx'
+# sheet_info = {
+#     'WkDAY Route Comparison': 'wkday_comparison', 
+#     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+#     'WkEND Route Comparison': 'wkend_comparison', 
+#     'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+#     'WkEND Time Data': 'wkend_time_data', 
+#     'WkDAY Time Data': 'wkday_time_data',
+#     'LAST SURVEY DATE': 'last_survey_date',
+# }
 
-# file_path = 'details_vta_CA_od_excel.xlsx'
+file_path = 'details_project_od_excel_UTA.xlsx'
 # detail_df=pd.read_excel('details_vta_CA_od_excel.xlsx',sheet_name='TOD')
 # detail_df=detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
 #                               'TIME_PERIOD', 'START_TIME']]
-# sheet_info = {
-#     'TOD': 'TOD'
-# }
+sheet_info = {
+    'TOD': 'TOD'
+}
 
 # Call the function
 create_tables_and_insert_data(file_path, sheet_info)   

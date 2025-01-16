@@ -1,25 +1,99 @@
-import datetime
-import numpy as np
-import pandas as pd
 import streamlit as st
 import snowflake.connector
-from decouple import config
-from st_aggrid import AgGrid, GridOptionsBuilder,JsCode
+import pandas as pd
 from snowflake.connector.pandas_tools import pd_writer,write_pandas
+from decouple import config
+import datetime
+import numpy as np
+from st_aggrid import AgGrid,JsCode
+from st_aggrid.grid_options_builder import GridOptionsBuilder
 
-# print()
+
+st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
+
+# Check the query parameter to determine which page to show
+query_params = st.experimental_get_query_params()
+page = query_params.get("page", ["main"])[0]
+
+options = ['UTA-RAIL','VTA']
+
+# Show sidebar only on the main page
+# if page == "main":
+# if page!='timedetails':
+st.sidebar.markdown('### **Projects**')
+selected_project=st.sidebar.selectbox(
+'Select a project',  # This can be regular text
+options,  # List of options
+index=options.index('VTA')
+)
+st.sidebar.header("Filters")
+search_query=st.sidebar.text_input(label='Search', placeholder='Search')
+
+if selected_project.lower()=='uta-rail':
+    schema='uta_rail'
+elif selected_project.lower()=='vta':
+    schema='public'
+else:
+    schema='public'
+
+
 def create_snowflake_connection():
-    # Replace with your Snowflake credentials
     conn = snowflake.connector.connect(
-        user=config('user'),  # Snowflake username
-        password=config('password'),  # Snowflake password
-        account=config('account'),  # Snowflake account (e.g., abc12345.us-east-1)
-        warehouse=config('warehouse'),  # Snowflake warehouse name
-        database=config('database'),  # Your Snowflake database name
-        schema=config('schema') , # Default schema (you can change it)
-        role=config('role')  # Your Snowflake database name
+        user=config('user'),
+        password=config('password'),
+        account=config('account'),
+        warehouse=config('warehouse'),
+        database=config('database'),
+        schema=schema,
+        role=config('role')
     )
     return conn
+
+
+
+def style_dataframe(df, column_name_patterns):
+    """
+    Applies conditional formatting to a dataframe.
+    Colors cells in the specified columns based on their values:
+    - Green for values >= -10000 and < 1
+    - Yellow for values >= 1 and < 6
+    - Pink for values >= 6 and < 35
+    - Red for values >= 35 and < 10000
+
+    Parameters:
+    - df: pandas DataFrame to style.
+    - column_name_patterns: list of strings or substrings to filter column names (e.g., ["Remain"]).
+    """
+    # Filter columns based on the given patterns
+    target_columns = [col for col in df.columns if any(pattern in col for pattern in column_name_patterns)]
+    
+    def highlight_cell(val):
+        if -10000 <= val < 1:
+            return "background-color: #BCE29E; color: black;"
+
+        elif 1 <= val < 6:
+            return "background-color: #E5EBB2; color: black;"
+
+        elif 6 <= val < 35:
+            return "background-color: #F8C4B4; color: black;"
+
+        elif 35 <= val < 10000:
+            return "background-color: #FF8787; color: black;"
+
+        return ""
+
+    styled_df = df.style.map(
+        highlight_cell, subset=target_columns
+    )
+    
+    return styled_df
+
+
+
+
+pinned_column='ROUTE_SURVEYEDCode'
+column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
+       '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
 
 def fetch_dataframes_from_snowflake():
     """
@@ -76,47 +150,6 @@ def fetch_dataframes_from_snowflake():
 # Fetch dataframes from Snowflake
 dataframes = fetch_dataframes_from_snowflake()
 
-
-def style_dataframe(df, column_name_patterns):
-    """
-    Applies conditional formatting to a dataframe.
-    Colors cells in the specified columns based on their values:
-    - Green for values >= -10000 and < 1
-    - Yellow for values >= 1 and < 6
-    - Pink for values >= 6 and < 35
-    - Red for values >= 35 and < 10000
-
-    Parameters:
-    - df: pandas DataFrame to style.
-    - column_name_patterns: list of strings or substrings to filter column names (e.g., ["Remain"]).
-    """
-    # Filter columns based on the given patterns
-    target_columns = [col for col in df.columns if any(pattern in col for pattern in column_name_patterns)]
-    
-    def highlight_cell(val):
-        if -10000 <= val < 1:
-            return "background-color: #BCE29E; color: black;"
-
-        elif 1 <= val < 6:
-            return "background-color: #E5EBB2; color: black;"
-
-        elif 6 <= val < 35:
-            return "background-color: #F8C4B4; color: black;"
-
-        elif 35 <= val < 10000:
-            return "background-color: #FF8787; color: black;"
-
-        return ""
-
-    # Apply styling only to the target columns
-    return df.style.map(
-        highlight_cell, subset=target_columns
-    )
-
-column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
-       '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
-
-
 # Example: Access DataFrames
 wkday_df = dataframes['wkday_df']
 wkday_dir_df = dataframes['wkday_dir_df']
@@ -125,21 +158,6 @@ wkend_dir_df = dataframes['wkend_dir_df']
 wkend_time_df = dataframes['wkend_time_df']
 wkday_time_df = dataframes['wkday_time_df']
 detail_df = dataframes['detail_df']
-
-# Display example DataFrame
-# print(wkday_df.head())
-
-# wkday_df=pd.read_excel('data/reviewtool_20241224_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx',sheet_name='WkDAY Route Comparison')
-# wkday_dir_df=pd.read_excel('data/reviewtool_20241224_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx',sheet_name='WkDAY Route DIR Comparison')
-# wkend_df=pd.read_excel('data/reviewtool_20241224_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx',sheet_name='WkEND Route Comparison')
-# wkend_dir_df=pd.read_excel('data/reviewtool_20241224_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx',sheet_name='WkEND Route DIR Comparison')
-
-# wkend_time_df=pd.read_excel('data/reviewtool_20241224_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx',sheet_name='WkEND Time Data')
-# wkday_time_df=pd.read_excel('data/reviewtool_20241224_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx',sheet_name='WkDAY Time Data')
-
-# detail_df=pd.read_excel('data/details_vta_CA_od_excel.xlsx',sheet_name='TOD')
-
-st.set_page_config(page_title="VTA-Completion Report", layout='wide')
 
 
 def download_csv(csv):
@@ -157,16 +175,6 @@ def create_csv(df):
     csv = df.to_csv(index=False)
     return csv
 
-# Check the query parameter to determine which page to show
-query_params = st.experimental_get_query_params()
-page = query_params.get("page", ["main"])[0]
-
-# Show sidebar only on the main page
-# if page == "main":
-if page!='timedetails':
-    st.sidebar.header("Filters")
-    search_query=st.sidebar.text_input(label='Search', placeholder='Search')
-
 
 header_col1, header_col2, header_col3 = st.columns([2, 2,1]) 
 
@@ -177,16 +185,18 @@ with header_col1:
     # st.markdown(f"##### **LAST SURVEY DATE**: {formatted_date}")
     st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
-
 with header_col2:
-    if page!='timedetails':
+    if page != 'timedetails':
         if page == "weekend":
             st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
         else:  # Default to weekday data for main and weekday pages
             st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
+        
+        # Button for Time OF Day Details
         if st.button('Time OF Day Details'):
             st.experimental_set_query_params(page="timedetails")
             st.experimental_rerun()
+
     else:
         st.header(f'Time OF Day Details')
 
@@ -209,7 +219,6 @@ def filter_dataframe(df, query):
     
     # if date:
     #     df = df[df['Date'].dt.date == date]
-
     return df
 
 def time_details(details_df):
@@ -221,7 +230,6 @@ def time_details(details_df):
         st.experimental_set_query_params(page="main")
         st.experimental_rerun()
 
-        
 
 
 def render_aggrid(dataframe, height, pinned_column,key):
@@ -308,16 +316,17 @@ def main_page(data1, data2, data3):
             st.subheader("Route Direction Level Comparison")
         filtered_df1 = filter_dataframe(data1, search_query)
 
-
-        render_aggrid(filtered_df1,600,'ROUTE_SURVEYEDCode',1)
+        # styled_df=style_dataframe(filtered_df1,column_name_patterns)
+        # st.dataframe(style_dataframe(filtered_df1,column_name_patterns), height=690)
+        render_aggrid(filtered_df1,500,'ROUTE_SURVEYEDCode',1)
 
 
         filtered_df3 = filter_dataframe(data3, search_query)
         st.subheader("Route Level Comparison")
-        render_aggrid(filtered_df3,500,'ROUTE_SURVEYEDCode',2)
-        
+        render_aggrid(filtered_df3,400,'ROUTE_SURVEYEDCode',2)
     # Display buttons and dataframes in the second column (col2)
     with col2:
+
         st.subheader("Time Range Data")
         expected_totals = data1[['(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
         collected_totals=data2[['0','1', '2', '3', '4', '5']].sum()
@@ -331,16 +340,32 @@ def main_page(data1, data2, data3):
         # this is for matching the length of result dataframe with the data2 dataframe
         # result_df = result_df.reindex(range(len(data2))).fillna(0)
 
+        # Concatenate with data2
+        # final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
         filtered_df2 = filter_dataframe(data2, search_query)
-        render_aggrid(filtered_df2,600,'Display_Text',3)
+        # final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
+        # filtered_df2 = filter_dataframe(final_df, search_query)
+
+        render_aggrid(filtered_df2,500,'Display_Text',3)
+
+        # filtered_df2 = style_dataframe(filter_dataframe(final_df, search_query),column_name_patterns)
+        # st.dataframe(filtered_df2, height=250,use_container_width=True)
+        # filtered_df2 = filter_dataframe(data2, search_query)
+        # st.dataframe(filtered_df2, height=300,use_container_width=True)
+
+
         filtered_df4 = filter_dataframe(result_df, search_query)
+       
         # Render AgGrid
         st.subheader("Time Period OverAll Data")
-        render_aggrid(filtered_df4,500,'Time Period',4)
-        
+        render_aggrid(filtered_df4,400,'Time Period',4)
+        # st.dataframe(style_dataframe(filtered_df3,column_name_patterns), height=300,use_container_width=True)
+
+
 
 def weekday_page():
     st.title("Weekday OverAll Data")
+
     main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
         '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
        ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekday data
@@ -348,12 +373,13 @@ def weekday_page():
     # download_csv(csv)
 
     if st.button("GO TO HOME"):
-        st.experimental_set_query_params(page="main")
+        st.experimental_set_query_params()
         st.experimental_rerun()
 
 
 def weekend_page():
     st.title("Weekend OverAll Data")
+
     main_page(wkend_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
         '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
        ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkend_time_df[['Display_Text','Original Text','Time Range','0', '1','2', '3', '4', '5']], wkend_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekend data
@@ -361,8 +387,45 @@ def weekend_page():
     # download_csv(csv)
 
     if st.button("GO TO HOME"):
-        st.experimental_set_query_params(page="main")
+        st.experimental_set_query_params()
         st.experimental_rerun()
+
+# def calculate_difference(dir_df, time_df):
+#     """
+#     Calculate the difference between expected and collected totals and 
+#     concatenate the result with wkday_time_df.
+
+#     Args:
+#         wkday_dir_df (pd.DataFrame): DataFrame containing expected goal columns.
+#         wkday_time_df (pd.DataFrame): DataFrame containing collected total columns.
+
+#     Returns:
+#         pd.DataFrame: Final DataFrame with added results (Time Period, Collected Totals, 
+#                       Expected Totals, Remaining).
+#     """
+#     # Calculate expected and collected totals
+#     expected_totals = dir_df[['(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
+#     collected_totals = time_df[[0, 1, 2, 3, 4, 5]].sum()
+
+#     # Calculate the difference, ensuring no negative values
+#     difference = np.maximum(expected_totals.values - collected_totals.values, 0)
+
+#     # Create the result DataFrame
+#     result_df = pd.DataFrame({
+#         'Time Period': np.array([0, 1, 2, 3, 4, 5], dtype=int),
+#         'Collected Totals': collected_totals.values.astype(int),
+#         'Expected Totals': expected_totals.values.astype(int),
+#         'Remaining': difference.astype(int),
+#     })
+
+#     # Concatenate the original wkday_time_df with result_df
+#     final_df = pd.concat([time_df.reset_index(drop=True), result_df], axis=1)
+
+#     return final_df
+
+
+# wkday_time_value_df=calculate_difference(wkday_route_direction_df,wkday_time_value_df)
+# wkend_time_value_df=calculate_difference(wkend_route_direction_df,wkend_time_value_df)
 
 
 if page == "weekday":
