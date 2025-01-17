@@ -24,7 +24,7 @@ st.sidebar.markdown('### **Projects**')
 selected_project=st.sidebar.selectbox(
 'Select a project',  # This can be regular text
 options,  # List of options
-index=options.index('VTA')
+index=options.index('UTA-RAIL')
 )
 st.sidebar.header("Filters")
 search_query=st.sidebar.text_input(label='Search', placeholder='Search')
@@ -363,78 +363,69 @@ def main_page(data1, data2, data3):
 
 
 
-def weekday_page():
+def weekday_page(selected_project):
     st.title("Weekday OverAll Data")
 
-    main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
-        '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
-       ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekday data
-    # csv = create_csv(wkday_df)
-    # download_csv(csv)
+    # Modify columns dynamically based on the selected project
+    if selected_project.lower() == 'uta-rail':
+        wkday_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                            '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+    else:
+        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                                '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
 
+    main_page(wkday_dir_df[wkday_dir_columns],
+                wkday_time_df[['Display_Text', 'Original Text', 'Time Range', '0', '1', '2', '3', '4', '5']],
+                wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
     if st.button("GO TO HOME"):
         st.experimental_set_query_params()
         st.experimental_rerun()
 
 
-def weekend_page():
+def weekend_page(selected_project):
     st.title("Weekend OverAll Data")
 
-    main_page(wkend_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
-        '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
-       ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkend_time_df[['Display_Text','Original Text','Time Range','0', '1','2', '3', '4', '5']], wkend_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Load weekend data
-    # csv = create_csv(wkend_df)
-    # download_csv(csv)
+    # Modify columns dynamically based on the selected project
+    if selected_project.lower() == 'uta-rail':
+        wkend_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'STATION_ID','(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                             '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+    else:
+        wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                             '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+
+    main_page(wkend_dir_df[wkend_dir_columns],
+              wkend_time_df[['Display_Text', 'Original Text', 'Time Range', '0', '1', '2', '3', '4', '5']],
+              wkend_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
 
     if st.button("GO TO HOME"):
         st.experimental_set_query_params()
         st.experimental_rerun()
 
-# def calculate_difference(dir_df, time_df):
-#     """
-#     Calculate the difference between expected and collected totals and 
-#     concatenate the result with wkday_time_df.
-
-#     Args:
-#         wkday_dir_df (pd.DataFrame): DataFrame containing expected goal columns.
-#         wkday_time_df (pd.DataFrame): DataFrame containing collected total columns.
-
-#     Returns:
-#         pd.DataFrame: Final DataFrame with added results (Time Period, Collected Totals, 
-#                       Expected Totals, Remaining).
-#     """
-#     # Calculate expected and collected totals
-#     expected_totals = dir_df[['(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
-#     collected_totals = time_df[[0, 1, 2, 3, 4, 5]].sum()
-
-#     # Calculate the difference, ensuring no negative values
-#     difference = np.maximum(expected_totals.values - collected_totals.values, 0)
-
-#     # Create the result DataFrame
-#     result_df = pd.DataFrame({
-#         'Time Period': np.array([0, 1, 2, 3, 4, 5], dtype=int),
-#         'Collected Totals': collected_totals.values.astype(int),
-#         'Expected Totals': expected_totals.values.astype(int),
-#         'Remaining': difference.astype(int),
-#     })
-
-#     # Concatenate the original wkday_time_df with result_df
-#     final_df = pd.concat([time_df.reset_index(drop=True), result_df], axis=1)
-
-#     return final_df
-
-
-# wkday_time_value_df=calculate_difference(wkday_route_direction_df,wkday_time_value_df)
-# wkend_time_value_df=calculate_difference(wkend_route_direction_df,wkend_time_value_df)
-
-
 if page == "weekday":
-    weekday_page()
+    print(selected_project)
+    weekday_page(selected_project)
 elif page == "weekend":
-    weekend_page()
+    print(selected_project)
+
+    weekend_page(selected_project)
 elif page=='timedetails':
     time_details(detail_df)
 else:
-    main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
-        '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
-       ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Default to original data for the main page
+    print(selected_project)
+
+    if selected_project.lower() == 'uta-rail':
+        wkday_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                             '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+    else:
+        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                             '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+
+    main_page(wkday_dir_df[wkday_dir_columns],
+              wkday_time_df[['Display_Text', 'Original Text', 'Time Range', '0', '1', '2', '3', '4', '5']],
+              wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
