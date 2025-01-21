@@ -68,8 +68,21 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250117_UTA_RailRouteLevelComparison(Wkday & WkEnd)_Latest.xlsx'
+file_path = 'reviewtool_20250121_UTA_RailRouteLevelComparison(Wkday & WkEnd)_Latest (1).xlsx'
+# sheet_info = {
+#     'WkDAY Route Comparison': 'wkday_comparison', 
+#     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+#     'WkEND Route Comparison': 'wkend_comparison', 
+#     'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+#     'WkEND Time Data': 'wkend_time_data', 
+#     'WkDAY Time Data': 'wkday_time_data',
+#     'LAST SURVEY DATE': 'last_survey_date',
+# }
+
+# Sheet_info for the rail_projects
 sheet_info = {
+    'WkEND Stationwise Comparison': 'wkday_stationwise_comparison', 
+    'WkDAY Stationwise Comparison': 'wkend_stationwise_comparison',
     'WkDAY Route Comparison': 'wkday_comparison', 
     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
     'WkEND Route Comparison': 'wkend_comparison', 

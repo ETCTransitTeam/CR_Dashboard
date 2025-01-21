@@ -15,26 +15,11 @@ st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
 query_params = st.experimental_get_query_params()
 page = query_params.get("page", ["main"])[0]
 
-# options = ['UTA-RAIL','VTA']
 
-# Show sidebar only on the main page
-# if page == "main":
-# if page!='timedetails':
-# st.sidebar.markdown('### **Projects**')
-# selected_project=st.sidebar.selectbox(
-# 'Select a project',  # This can be regular text
-# options,  # List of options
-# index=options.index('UTA-RAIL')
-# )
+
+
 st.sidebar.header("Filters")
 search_query=st.sidebar.text_input(label='Search', placeholder='Search')
-
-# if selected_project.lower()=='uta-rail':
-#     schema='uta_rail'
-# elif selected_project.lower()=='vta':
-#     schema='public'
-# else:
-#     schema='public'
 
 
 def create_snowflake_connection():
@@ -44,7 +29,7 @@ def create_snowflake_connection():
         account=config('account'),
         warehouse=config('warehouse'),
         database=config('database'),
-        schema='public',
+        schema='uta_rail',
         role=config('role')
     )
     return conn
@@ -107,7 +92,11 @@ def fetch_dataframes_from_snowflake():
     cur = conn.cursor()
 
     # Table-to-DataFrame mapping
+
     table_to_df_mapping = {
+        'wkday_stationwise_comparison': 'wkday_stationwise_df',
+        'wkend_stationwise_comparison': 'wkend_stationwise_df',
+
         'wkday_comparison': 'wkday_df',
         'wkday_dir_comparison': 'wkday_dir_df',
         'wkend_comparison': 'wkend_df',
@@ -157,6 +146,11 @@ wkend_df = dataframes['wkend_df']
 wkend_dir_df = dataframes['wkend_dir_df']
 wkend_time_df = dataframes['wkend_time_df']
 wkday_time_df = dataframes['wkday_time_df']
+
+
+wkday_stationwise_df = dataframes['wkday_stationwise_df']
+wkend_stationwise_df = dataframes['wkend_stationwise_df']
+
 detail_df = dataframes['detail_df']
 
 
@@ -189,6 +183,10 @@ with header_col2:
     if page != 'timedetails':
         if page == "weekend":
             st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
+        elif page=='weekend_station':
+            st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
+        elif page=='weekday_station':
+            st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
         else:  # Default to weekday data for main and weekday pages
             st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
         
@@ -207,18 +205,18 @@ with header_col3:
     if st.button("WEEKEND-OVERALL"):
         st.experimental_set_query_params(page="weekend")
         st.experimental_rerun()
+    if st.button("WEEKDAY StationWise Comparison"):
+        st.experimental_set_query_params(page="weekday_station")
+        st.experimental_rerun()
+    if st.button("WEEKEND StationWise Comparison"):
+        st.experimental_set_query_params(page="weekend_station")
+        st.experimental_rerun()
 
 
 def filter_dataframe(df, query):
     if query:
         df = df[df.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1)]
-    # if usage.lower() == 'use':
-    #     df = df[df['Final_Usage'].str.lower() == 'use']
-    # elif usage.lower() == 'remove':
-    #     df = df[df['Final_Usage'].str.lower() == 'remove']
-    
-    # if date:
-    #     df = df[df['Date'].dt.date == date]
+
     return df
 
 def time_details(details_df):
@@ -337,21 +335,11 @@ def main_page(data1, data2, data3):
             'Expected Totals': expected_totals.values.astype(int),
             'Remaining': difference.astype(int),
         })
-        # this is for matching the length of result dataframe with the data2 dataframe
-        # result_df = result_df.reindex(range(len(data2))).fillna(0)
 
-        # Concatenate with data2
-        # final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
         filtered_df2 = filter_dataframe(data2, search_query)
-        # final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
-        # filtered_df2 = filter_dataframe(final_df, search_query)
+
 
         render_aggrid(filtered_df2,500,'Display_Text',3)
-
-        # filtered_df2 = style_dataframe(filter_dataframe(final_df, search_query),column_name_patterns)
-        # st.dataframe(filtered_df2, height=250,use_container_width=True)
-        # filtered_df2 = filter_dataframe(data2, search_query)
-        # st.dataframe(filtered_df2, height=300,use_container_width=True)
 
 
         filtered_df4 = filter_dataframe(result_df, search_query)
@@ -359,22 +347,38 @@ def main_page(data1, data2, data3):
         # Render AgGrid
         st.subheader("Time Period OverAll Data")
         render_aggrid(filtered_df4,400,'Time Period',4)
-        # st.dataframe(style_dataframe(filtered_df3,column_name_patterns), height=300,use_container_width=True)
 
+def weekday_station_page():
+    st.subheader('Route StationWise Comparison(WeekDAY)')
+    filtered_df = filter_dataframe(wkday_stationwise_df[[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                            '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']], search_query)
 
+    render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
+
+    if st.button("GO TO HOME"):
+        st.experimental_set_query_params()
+        st.experimental_rerun()
+
+def weekend_station_page():
+    st.subheader('Route StationWise Comparison(WeekEND)')
+    filtered_df = filter_dataframe(wkend_stationwise_df[[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                            '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']], search_query)
+
+    render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
+    if st.button("GO TO HOME"):
+        st.experimental_set_query_params()
+        st.experimental_rerun()
 
 def weekday_page():
+    
     st.title("Weekday OverAll Data")
 
-    # Modify columns dynamically based on the selected project
-    # if selected_project.lower() == 'uta-rail':
-    #     wkday_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-    #                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-    #                         '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-    # else:
-    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-                                '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+    wkday_dir_columns = [ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                        '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+
 
     main_page(wkday_dir_df[wkday_dir_columns],
                 wkday_time_df[['Display_Text', 'Original Text', 'Time Range', '0', '1', '2', '3', '4', '5']],
@@ -387,13 +391,7 @@ def weekday_page():
 def weekend_page():
     st.title("Weekend OverAll Data")
 
-    # # Modify columns dynamically based on the selected project
-    # if selected_project.lower() == 'uta-rail':
-    #     wkend_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'STATION_ID','(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-    #                          '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-    #                          '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-    # else:
-    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+    wkend_dir_columns = [ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME','(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
                              '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                              '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
 
@@ -405,26 +403,25 @@ def weekend_page():
         st.experimental_set_query_params()
         st.experimental_rerun()
 
+
 if page == "weekday":
     weekday_page()
+elif page=='weekday_station':
+    weekday_station_page()
+elif page=='weekend_station':
+    weekend_station_page()
 elif page == "weekend":
-
-
     weekend_page()
 elif page=='timedetails':
     time_details(detail_df)
 else:
-
-
-    # if selected_project.lower() == 'uta-rail':
-    #     wkday_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-    #                          '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-    #                          '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-    # else:
-    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
+    wkday_dir_columns = [ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
                              '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                              '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
 
     main_page(wkday_dir_df[wkday_dir_columns],
               wkday_time_df[['Display_Text', 'Original Text', 'Time Range', '0', '1', '2', '3', '4', '5']],
               wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+    # main_page(wkday_dir_df[['ROUTE_SURVEYEDCode','ROUTE_SURVEYED','(0) Collect', '(0) Remain', '(1) Collect','(1) Remain',
+    #     '(2) Collect','(2) Remain','(3) Collect','(3) Remain',  '(4) Collect','(4) Remain', '(5) Collect', '(5) Remain'
+    #    ,'(0) Goal','(1) Goal','(2) Goal','(3) Goal','(4) Goal','(5) Goal']], wkday_time_df[['Display_Text','Original Text','Time Range','0', '1', '2', '3', '4', '5']], wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']])  # Default to original data for the main page
