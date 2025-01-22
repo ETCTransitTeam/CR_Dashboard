@@ -9,34 +9,6 @@ from st_aggrid import AgGrid,JsCode
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 
 
-st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
-
-# Check the query parameter to determine which page to show
-query_params = st.experimental_get_query_params()
-page = query_params.get("page", ["main"])[0]
-
-# options = ['UTA-RAIL','VTA']
-
-# Show sidebar only on the main page
-# if page == "main":
-# if page!='timedetails':
-# st.sidebar.markdown('### **Projects**')
-# selected_project=st.sidebar.selectbox(
-# 'Select a project',  # This can be regular text
-# options,  # List of options
-# index=options.index('UTA-RAIL')
-# )
-st.sidebar.header("Filters")
-search_query=st.sidebar.text_input(label='Search', placeholder='Search')
-
-# if selected_project.lower()=='uta-rail':
-#     schema='uta_rail'
-# elif selected_project.lower()=='vta':
-#     schema='public'
-# else:
-#     schema='public'
-
-
 def create_snowflake_connection():
     conn = snowflake.connector.connect(
         user=config('user'),
@@ -48,7 +20,6 @@ def create_snowflake_connection():
         role=config('role')
     )
     return conn
-
 
 
 def style_dataframe(df, column_name_patterns):
@@ -87,7 +58,6 @@ def style_dataframe(df, column_name_patterns):
     )
     
     return styled_df
-
 
 
 
@@ -159,54 +129,93 @@ wkend_time_df = dataframes['wkend_time_df']
 wkday_time_df = dataframes['wkday_time_df']
 detail_df = dataframes['detail_df']
 
+st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
 
-def download_csv(csv):
-    # Use io.BytesIO to create a downloadable link
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="new_data.csv",
-        mime="text/csv"
-    )
+st.sidebar.header("Filters")
+search_query=st.sidebar.text_input(label='Search', placeholder='Search')
 
-
-def create_csv(df):
-    # Convert the DataFrame to CSV
+def create_csv(df, file_name):
+    """
+    Convert the DataFrame to CSV and return it for downloading.
+    Append (weekend) or (weekday) to the file name based on page_type.
+    """
+    # Add page type to the file name
+    # suffix = "(weekend)" if page_type == "weekend" else "(weekday)"
+    file_name = f"{file_name}.csv"
+    
+    # Convert DataFrame to CSV
     csv = df.to_csv(index=False)
-    return csv
+    return csv, file_name
+
+def download_csv(csv, file_name, label):
+    """
+    Create a Streamlit download button for a given CSV.
+    """
+    with st.empty():  # Using st.container() to wrap the button
+        st.download_button(
+            label=label,
+            data=csv,
+            file_name=file_name,
+            mime="text/csv"
+        )
 
 
-header_col1, header_col2, header_col3 = st.columns([2, 2,1]) 
+# Retrieve current query parameters
+query_params = st.experimental_get_query_params()
+page = query_params.get("page", ["main"])[0]
 
+# Debugging: Display the current query parameters
+# st.write(f"Current query parameters: {query_params}")
+
+def update_query_params_and_rerun(new_page):
+    if page != new_page:  # Only update if the page is different
+        st.experimental_set_query_params(page=new_page)
+        st.experimental_rerun()  # Trigger a rerun after updating params
+
+
+# Layout columns
+header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
+
+# Header Section
 with header_col1:
     st.header('Completion Report')
     current_date = datetime.datetime.now()
     formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
-    # st.markdown(f"##### **LAST SURVEY DATE**: {formatted_date}")
     st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
+# Page Content Section
 with header_col2:
     if page != 'timedetails':
         if page == "weekend":
             st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
         else:  # Default to weekday data for main and weekday pages
             st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
-        
+
         # Button for Time OF Day Details
         if st.button('Time OF Day Details'):
             st.experimental_set_query_params(page="timedetails")
-            st.experimental_rerun()
-
+            st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=timedetails">', unsafe_allow_html=True)
     else:
         st.header(f'Time OF Day Details')
 
+# Button Section
 with header_col3:
+    # WEEKDAY-OVERALL button
     if st.button("WEEKDAY-OVERALL"):
         st.experimental_set_query_params(page="weekday")
-        st.experimental_rerun()
+        # st.experimental_rerun()
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
+
+
+    # WEEKEND-OVERALL button
     if st.button("WEEKEND-OVERALL"):
         st.experimental_set_query_params(page="weekend")
-        st.experimental_rerun()
+        # st.experimental_rerun()
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
+
+
+# if "page" in query_params and query_params["page"][0] != page:
+#     st.experimental_rerun()
 
 
 def filter_dataframe(df, query):
@@ -316,14 +325,17 @@ def main_page(data1, data2, data3):
             st.subheader("Route Direction Level Comparison")
         filtered_df1 = filter_dataframe(data1, search_query)
 
-        # styled_df=style_dataframe(filtered_df1,column_name_patterns)
-        # st.dataframe(style_dataframe(filtered_df1,column_name_patterns), height=690)
-        render_aggrid(filtered_df1,500,'ROUTE_SURVEYEDCode',1)
 
+        render_aggrid(filtered_df1,500,'ROUTE_SURVEYEDCode',1)
+        csv1, file_name1 = create_csv(filtered_df1, "route_direction_comparison.csv")
+        download_csv(csv1, file_name1, "Download Route Direction Comparison Data")
 
         filtered_df3 = filter_dataframe(data3, search_query)
         st.subheader("Route Level Comparison")
         render_aggrid(filtered_df3,400,'ROUTE_SURVEYEDCode',2)
+        csv3, file_name3 = create_csv(filtered_df3, "route_level_comparison.csv")
+        download_csv(csv3, file_name3, "Download Route Level Comparison Data")
+
     # Display buttons and dataframes in the second column (col2)
     with col2:
 
@@ -337,21 +349,15 @@ def main_page(data1, data2, data3):
             'Expected Totals': expected_totals.values.astype(int),
             'Remaining': difference.astype(int),
         })
-        # this is for matching the length of result dataframe with the data2 dataframe
-        # result_df = result_df.reindex(range(len(data2))).fillna(0)
 
-        # Concatenate with data2
-        # final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
+
+
         filtered_df2 = filter_dataframe(data2, search_query)
-        # final_df = pd.concat([data2.reset_index(drop=True), result_df], axis=1)
-        # filtered_df2 = filter_dataframe(final_df, search_query)
 
         render_aggrid(filtered_df2,500,'Display_Text',3)
+        csv2, file_name2 = create_csv(filtered_df2, "time_range_data.csv")
+        download_csv(csv2, file_name2, "Download Time Range Data")
 
-        # filtered_df2 = style_dataframe(filter_dataframe(final_df, search_query),column_name_patterns)
-        # st.dataframe(filtered_df2, height=250,use_container_width=True)
-        # filtered_df2 = filter_dataframe(data2, search_query)
-        # st.dataframe(filtered_df2, height=300,use_container_width=True)
 
 
         filtered_df4 = filter_dataframe(result_df, search_query)
@@ -359,19 +365,16 @@ def main_page(data1, data2, data3):
         # Render AgGrid
         st.subheader("Time Period OverAll Data")
         render_aggrid(filtered_df4,400,'Time Period',4)
-        # st.dataframe(style_dataframe(filtered_df3,column_name_patterns), height=300,use_container_width=True)
+
+        csv4, file_name4 = create_csv(filtered_df4, "time_period_overall_data.csv")
+        download_csv(csv4, file_name4, "Download Time Period Overall Data")
+
 
 
 
 def weekday_page():
     st.title("Weekday OverAll Data")
 
-    # Modify columns dynamically based on the selected project
-    # if selected_project.lower() == 'uta-rail':
-    #     wkday_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-    #                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-    #                         '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-    # else:
     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
                                 '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                                 '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
@@ -380,19 +383,13 @@ def weekday_page():
                 wkday_time_df[['Display_Text', 'Original Text', 'Time Range', '0', '1', '2', '3', '4', '5']],
                 wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
     if st.button("GO TO HOME"):
-        st.experimental_set_query_params()
+        st.experimental_set_query_params(page="main")
         st.experimental_rerun()
 
 
 def weekend_page():
     st.title("Weekend OverAll Data")
 
-    # # Modify columns dynamically based on the selected project
-    # if selected_project.lower() == 'uta-rail':
-    #     wkend_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'STATION_ID','(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-    #                          '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-    #                          '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-    # else:
     wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
                              '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                              '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
@@ -402,25 +399,22 @@ def weekend_page():
               wkend_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
 
     if st.button("GO TO HOME"):
-        st.experimental_set_query_params()
+        st.experimental_set_query_params(page="main")
         st.experimental_rerun()
 
+# if "page_type" not in st.session_state:
+#     st.session_state["page_type"] = "weekday"  # Default page
+
+print(page)
 if page == "weekday":
     weekday_page()
 elif page == "weekend":
-
-
     weekend_page()
 elif page=='timedetails':
     time_details(detail_df)
 else:
 
 
-    # if selected_project.lower() == 'uta-rail':
-    #     wkday_dir_columns = [ 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-    #                          '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-    #                          '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-    # else:
     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
                              '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                              '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
