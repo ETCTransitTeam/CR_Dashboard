@@ -8,6 +8,8 @@ import numpy as np
 from st_aggrid import AgGrid,JsCode
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 
+st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
+
 
 def create_snowflake_connection():
     conn = snowflake.connector.connect(
@@ -65,6 +67,7 @@ pinned_column='ROUTE_SURVEYEDCode'
 column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
        '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
 
+@st.cache
 def fetch_dataframes_from_snowflake():
     """
     Fetches data from Snowflake tables and returns them as a dictionary of DataFrames.
@@ -78,6 +81,8 @@ def fetch_dataframes_from_snowflake():
 
     # Table-to-DataFrame mapping
     table_to_df_mapping = {
+        'wkend_raw':'wkend_raw_df',
+        'wkday_raw':'wkday_raw_df',
         'wkday_comparison': 'wkday_df',
         'wkday_dir_comparison': 'wkday_dir_df',
         'wkend_comparison': 'wkend_df',
@@ -127,9 +132,10 @@ wkend_df = dataframes['wkend_df']
 wkend_dir_df = dataframes['wkend_dir_df']
 wkend_time_df = dataframes['wkend_time_df']
 wkday_time_df = dataframes['wkday_time_df']
+wkend_raw_df = dataframes['wkend_raw_df']
+wkday_raw_df = dataframes['wkday_raw_df']
 detail_df = dataframes['detail_df']
 
-st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
 
 st.sidebar.header("Filters")
 search_query=st.sidebar.text_input(label='Search', placeholder='Search')
@@ -188,13 +194,19 @@ with header_col2:
     if page != 'timedetails':
         if page == "weekend":
             st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
+            csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
+            download_csv(csv_weekend_raw, week_end_raw_file_name, "Download WeekEnd Raw Data")
         else:  # Default to weekday data for main and weekday pages
             st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
+            csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
+            download_csv(csv_weekday_raw, week_day_raw_file_name, "Download WeekDay Raw Data")
 
         # Button for Time OF Day Details
         if st.button('Time OF Day Details'):
             st.experimental_set_query_params(page="timedetails")
+            # st.experimental_rerun()
             st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=timedetails">', unsafe_allow_html=True)
+
     else:
         st.header(f'Time OF Day Details')
 
@@ -405,7 +417,6 @@ def weekend_page():
 # if "page_type" not in st.session_state:
 #     st.session_state["page_type"] = "weekday"  # Default page
 
-print(page)
 if page == "weekday":
     weekday_page()
 elif page == "weekend":
