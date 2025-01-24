@@ -17,7 +17,6 @@ page = query_params.get("page", ["main"])[0]
 
 
 
-
 st.sidebar.header("Filters")
 search_query=st.sidebar.text_input(label='Search', placeholder='Search')
 
@@ -80,6 +79,7 @@ pinned_column='ROUTE_SURVEYEDCode'
 column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
        '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
 
+@st.cache
 def fetch_dataframes_from_snowflake():
     """
     Fetches data from Snowflake tables and returns them as a dictionary of DataFrames.
@@ -96,7 +96,8 @@ def fetch_dataframes_from_snowflake():
     table_to_df_mapping = {
         'wkday_stationwise_comparison': 'wkday_stationwise_df',
         'wkend_stationwise_comparison': 'wkend_stationwise_df',
-
+        'wkend_raw':'wkend_raw_df',
+        'wkday_raw':'wkday_raw_df',
         'wkday_comparison': 'wkday_df',
         'wkday_dir_comparison': 'wkday_dir_df',
         'wkend_comparison': 'wkend_df',
@@ -147,27 +148,38 @@ wkend_dir_df = dataframes['wkend_dir_df']
 wkend_time_df = dataframes['wkend_time_df']
 wkday_time_df = dataframes['wkday_time_df']
 
+wkend_raw_df = dataframes['wkend_raw_df']
+wkday_raw_df = dataframes['wkday_raw_df']
 
 wkday_stationwise_df = dataframes['wkday_stationwise_df']
 wkend_stationwise_df = dataframes['wkend_stationwise_df']
 
 detail_df = dataframes['detail_df']
 
-
-def download_csv(csv):
-    # Use io.BytesIO to create a downloadable link
-    st.download_button(
-        label="Download CSV",
-        data=csv,
-        file_name="new_data.csv",
-        mime="text/csv"
-    )
-
-
-def create_csv(df):
-    # Convert the DataFrame to CSV
+def create_csv(df, file_name):
+    """
+    Convert the DataFrame to CSV and return it for downloading.
+    Append (weekend) or (weekday) to the file name based on page_type.
+    """
+    # Add page type to the file name
+    # suffix = "(weekend)" if page_type == "weekend" else "(weekday)"
+    file_name = f"{file_name}.csv"
+    
+    # Convert DataFrame to CSV
     csv = df.to_csv(index=False)
-    return csv
+    return csv, file_name
+
+def download_csv(csv, file_name, label):
+    """
+    Create a Streamlit download button for a given CSV.
+    """
+    with st.empty():  # Using st.container() to wrap the button
+        st.download_button(
+            label=label,
+            data=csv,
+            file_name=file_name,
+            mime="text/csv"
+        )
 
 
 header_col1, header_col2, header_col3 = st.columns([2, 2,1]) 
@@ -182,35 +194,52 @@ with header_col1:
 with header_col2:
     if page != 'timedetails':
         if page == "weekend":
-            st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
+            st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')            
+            csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
+            download_csv(csv_weekend_raw, week_end_raw_file_name, "Download WeekEnd Raw Data")
         elif page=='weekend_station':
             st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
+            csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
+            download_csv(csv_weekend_raw, week_end_raw_file_name, "Download WeekEnd Raw Data")
         elif page=='weekday_station':
             st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
+            csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
+            download_csv(csv_weekday_raw, week_day_raw_file_name, "Download WeekDay Raw Data")
+
         else:  # Default to weekday data for main and weekday pages
             st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
+            csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
+            download_csv(csv_weekday_raw, week_day_raw_file_name, "Download WeekDay Raw Data")
         
         # Button for Time OF Day Details
         if st.button('Time OF Day Details'):
-            st.experimental_set_query_params(page="timedetails")
-            st.experimental_rerun()
+            # st.experimental_set_query_params(page="timedetails")
+            # st.experimental_rerun()
+            st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=timedetails">', unsafe_allow_html=True)
 
     else:
         st.header(f'Time OF Day Details')
 
 with header_col3:
     if st.button("WEEKDAY-OVERALL"):
-        st.experimental_set_query_params(page="weekday")
-        st.experimental_rerun()
+        # st.experimental_set_query_params(page="weekday")
+        # st.experimental_rerun()
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
+
     if st.button("WEEKEND-OVERALL"):
-        st.experimental_set_query_params(page="weekend")
-        st.experimental_rerun()
+        # st.experimental_set_query_params(page="weekend")
+        # st.experimental_rerun()
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
+
     if st.button("WEEKDAY StationWise Comparison"):
-        st.experimental_set_query_params(page="weekday_station")
-        st.experimental_rerun()
+        # st.experimental_set_query_params(page="weekday_station")
+        # st.experimental_rerun()
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday_station">', unsafe_allow_html=True)
+
     if st.button("WEEKEND StationWise Comparison"):
-        st.experimental_set_query_params(page="weekend_station")
-        st.experimental_rerun()
+        # st.experimental_set_query_params(page="weekend_station")
+        # st.experimental_rerun()
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend_station">', unsafe_allow_html=True)
 
 
 def filter_dataframe(df, query):

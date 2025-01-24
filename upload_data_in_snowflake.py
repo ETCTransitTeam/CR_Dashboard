@@ -11,7 +11,7 @@ def create_snowflake_connection():
         account=config('account'),
         warehouse=config('warehouse'),
         database=config('database'),
-        schema="public",
+        schema="uta_rail",
         role=config('role')
     )
     return conn
@@ -68,10 +68,13 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250123_VTA_RouteLevelComparison(Wkday & WkEnd)_Latest_01 (1).xlsx'
+file_path = 'reviewtool_20250124_UTA_RailRouteLevelComparison(Wkday & WkEnd)_Latest.xlsx'
+#  For rail project
 sheet_info = {
     'WkDAY RAW DATA': 'wkday_raw', 
     'WkEND RAW DATA': 'wkend_raw', 
+    'WkEND Stationwise Comparison': 'wkday_stationwise_comparison', 
+    'WkDAY Stationwise Comparison': 'wkend_stationwise_comparison',
     'WkDAY Route Comparison': 'wkday_comparison', 
     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
     'WkEND Route Comparison': 'wkend_comparison', 
