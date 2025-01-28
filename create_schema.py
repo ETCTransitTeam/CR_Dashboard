@@ -28,7 +28,7 @@ def create_schema(database_name, schema_name):
         conn.close()
 
 # Provide your database and new schema name
-database_name = 'Completion_Report'  # Replace with your actual database name
-schema_name = 'UTA_TEST'  # Replace with your desired new schema name
+database_name = 'CompletionReport'  # Replace with your actual database name
+schema_name = 'tucson_bus'  # Replace with your desired new schema name
 
 create_schema(database_name, schema_name)

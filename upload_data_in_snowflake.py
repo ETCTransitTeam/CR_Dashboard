@@ -11,7 +11,7 @@ def create_snowflake_connection():
         account=config('account'),
         warehouse=config('warehouse'),
         database=config('database'),
-        schema="uta_rail",
+        schema="tucson_bus",
         role=config('role')
     )
     return conn
@@ -68,13 +68,11 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250124_UTA_RailRouteLevelComparison(Wkday & WkEnd)_Latest.xlsx'
-#  For rail project
+file_path = 'reviewtool_20250127_TUCSON_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
+#  For bus transport project
 sheet_info = {
     'WkDAY RAW DATA': 'wkday_raw', 
     'WkEND RAW DATA': 'wkend_raw', 
-    'WkEND Stationwise Comparison': 'wkday_stationwise_comparison', 
-    'WkDAY Stationwise Comparison': 'wkend_stationwise_comparison',
     'WkDAY Route Comparison': 'wkday_comparison', 
     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
     'WkEND Route Comparison': 'wkend_comparison', 
@@ -84,8 +82,10 @@ sheet_info = {
     'LAST SURVEY DATE': 'last_survey_date',
 }
 
-# Sheet_info for the rail_projects
+#  For rail project
 # sheet_info = {
+#     'WkDAY RAW DATA': 'wkday_raw', 
+#     'WkEND RAW DATA': 'wkend_raw', 
 #     'WkEND Stationwise Comparison': 'wkday_stationwise_comparison', 
 #     'WkDAY Stationwise Comparison': 'wkend_stationwise_comparison',
 #     'WkDAY Route Comparison': 'wkday_comparison', 
@@ -97,10 +97,10 @@ sheet_info = {
 #     'LAST SURVEY DATE': 'last_survey_date',
 # }
 
-# file_path = 'details_project_od_excel_UTA.xlsx'
-# detail_df=pd.read_excel('details_vta_CA_od_excel.xlsx',sheet_name='TOD')
-# detail_df=detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
-#                               'TIME_PERIOD', 'START_TIME']]
+# file_path = 'details_TUCSON_AZ_od_excel.xlsx'
+# detail_df=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='TOD')
+# # detail_df=detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
+# #                               'TIME_PERIOD', 'START_TIME']]
 # sheet_info = {
 #     'TOD': 'TOD'
 # }
