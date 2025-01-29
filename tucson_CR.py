@@ -5,7 +5,7 @@ from snowflake.connector.pandas_tools import pd_writer,write_pandas
 from decouple import config
 import datetime
 import numpy as np
-from st_aggrid import AgGrid,JsCode
+from st_aggrid import AgGrid, JsCode, ColumnsAutoSizeMode
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -297,20 +297,26 @@ def render_aggrid(dataframe, height, pinned_column,key):
     for column in valid_columns:
         gb.configure_column(column, cellStyle=cellStyle)
 
+    other_options = {'suppressColumnVirtualisation': True}
+    
     # Build grid options
     gb.configure_grid_options(
         alwaysShowHorizontalScroll=True,
         enableRangeSelection=True,
         pagination=True,
         paginationPageSize=10000,
-        domLayout='normal'
+        domLayout='normal',
+        **other_options
     )
 
     grid_options = gb.build()
 
+    grid_options["autoSizeAllColumns"] = True
+
     # Render AgGrid
     AgGrid(
         dataframe,
+        columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
         gridOptions=grid_options,
         height=height,
         theme="streamlit",  # Choose theme: 'streamlit', 'light', 'dark', etc.
