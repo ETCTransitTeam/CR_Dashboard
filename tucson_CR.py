@@ -5,13 +5,13 @@ from snowflake.connector.pandas_tools import pd_writer,write_pandas
 from decouple import config
 import datetime
 import numpy as np
-import subprocess
-from st_aggrid import AgGrid,JsCode
-from st_aggrid import AgGrid, ColumnsAutoSizeMode
+from st_aggrid import AgGrid, JsCode, ColumnsAutoSizeMode
 from st_aggrid.grid_options_builder import GridOptionsBuilder
-from Automated_refresh_flow import fetch_and_process_data
+from automated_refresh_flow import fetch_and_process_data
 
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
+
+
 
 
 def create_snowflake_connection():
@@ -197,7 +197,6 @@ with header_col1:
     formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
     st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
-
 # Page Content Section
 with header_col2:
     if page != 'timedetails':
@@ -291,7 +290,7 @@ def render_aggrid(dataframe, height, pinned_column,key):
 
     # Create GridOptionsBuilder
     gb = GridOptionsBuilder.from_dataframe(dataframe)
-    gb.configure_default_column(editable=False, groupable=False, autoSizeColumns=True)
+    gb.configure_default_column(editable=False, groupable=False)
 
     # Pin the specified column
     if pinned_column in dataframe.columns:
@@ -305,7 +304,7 @@ def render_aggrid(dataframe, height, pinned_column,key):
         gb.configure_column(column, cellStyle=cellStyle)
 
     other_options = {'suppressColumnVirtualisation': True}
-
+    
     # Build grid options
     gb.configure_grid_options(
         alwaysShowHorizontalScroll=True,
@@ -323,6 +322,7 @@ def render_aggrid(dataframe, height, pinned_column,key):
     # Render AgGrid
     AgGrid(
         dataframe,
+        columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
         gridOptions=grid_options,
         height=height,
         theme="streamlit",  # Choose theme: 'streamlit', 'light', 'dark', etc.
@@ -330,7 +330,6 @@ def render_aggrid(dataframe, height, pinned_column,key):
         key=f'grid_{key}',  # Unique key for the grid instance
         suppressHorizontalScroll=False,
         fit_columns_on_grid_load=False,
-        columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
         reload_data=True,  # Allow horizontal scrolling
         width='100%',  # Ensure the grid takes full width
     )
