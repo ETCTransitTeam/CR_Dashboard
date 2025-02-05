@@ -28,7 +28,16 @@ load_dotenv()
 # else:
 #     file_first_name=file_name.split('_')[0]
 def fetch_and_process_data():
+    st.write("📌 Debugging Connection")
 
+    # Check if environment variables are set
+    host_set = "✅" if os.getenv("SQL_HOST") else "❌ Missing"
+    user_set = "✅" if os.getenv("SQL_USER") else "❌ Missing"
+    database_set = "✅" if os.getenv("SQL_DATABASE") else "❌ Missing"
+
+    st.write(f"SQL_HOST: {host_set}")
+    st.write(f"SQL_USER: {user_set}")
+    st.write(f"SQL_DATABASE: {database_set}")
     # in some Compeletion Report LSNAMECODE is splited in some it is not so have to check that
     def edit_ls_code_column(x):
         value=x.split('_')
@@ -50,7 +59,7 @@ def fetch_and_process_data():
         HOST = os.getenv("SQL_HOST")
         USER = os.getenv("SQL_USER")
         PASSWORD = os.getenv("SQL_PASSWORD")
-        DATABASE = os.getenv("SQL_DATABASE")
+        # DATABASE = os.getenv("SQL_DATABASE")
         db_connector = DatabaseConnector(HOST, 'elvistucsonod2025', USER, PASSWORD)
         try:
             db_connector.connect()

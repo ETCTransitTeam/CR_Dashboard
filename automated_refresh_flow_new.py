@@ -50,7 +50,7 @@ def fetch_and_process_data():
         HOST = os.getenv("SQL_HOST")
         USER = os.getenv("SQL_USER")
         PASSWORD = os.getenv("SQL_PASSWORD")
-        DATABASE = os.getenv("SQL_DATABASE")
+        # DATABASE = os.getenv("SQL_DATABASE")
         db_connector = DatabaseConnector(HOST, 'elvistucsonod2025', USER, PASSWORD)
         try:
             db_connector.connect()
