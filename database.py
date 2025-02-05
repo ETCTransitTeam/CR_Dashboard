@@ -12,7 +12,7 @@ class DatabaseConnector:
         try:
             self.connection = pymysql.connect(
                 host=self.host,
-                database=self.database,
+                db=self.database,
                 user=self.user,
                 password=self.password
             )
