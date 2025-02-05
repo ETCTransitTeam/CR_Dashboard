@@ -371,19 +371,15 @@ def main_page(data1, data2, data3):
     with col2:
 
         st.subheader("Time Range Data")
-        # Convert relevant columns in both dataframes to numeric values, handling errors
-        data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']].apply(pd.to_numeric, errors='coerce')
-        data2[['1', '2', '3', '4']] = data2[['1', '2', '3', '4']].apply(pd.to_numeric, errors='coerce')
+        expected_totals = data1[[ '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']].sum()
+        collected_totals=data2[['1', '2', '3', '4']].sum()
+        # Convert collected_totals to numeric values
+        collected_totals = collected_totals.apply(pd.to_numeric, errors='coerce')
 
-        # Fill any NaN values with 0 (or handle them differently if needed)
-        data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']].fillna(0)
-        data2[['1', '2', '3', '4']] = data2[['1', '2', '3', '4']].fillna(0)
+        # Ensure expected_totals is also numeric (though it likely already is)
+        expected_totals = expected_totals.apply(pd.to_numeric, errors='coerce')
 
-        # Calculate the sums for expected and collected totals
-        expected_totals = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']].sum()
-        collected_totals = data2[['1', '2', '3', '4']].sum()
-
-        # Calculate the difference, ensuring no negative values
+        # Calculate the difference
         difference = np.maximum(expected_totals.values - collected_totals.values, 0)
         result_df = pd.DataFrame({
             'Time Period':  [ '1', '2', '3', '4',],

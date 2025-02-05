@@ -1368,31 +1368,6 @@ def fetch_and_process_data():
         else:
             wkend_reverse_df_filtered.loc[row.name,'Generated Trips']='Used'
 
-    # wkend_comparison_df.rename(columns={'CR_PRE_Early_AM':'(0) Goal','CR_Early_AM':'(1) Goal','CR_AM_Peak':'(2) Goal','CR_Midday':'(3) Goal','CR_PM_Peak':'(4) Goal','CR_Evening':'(5) Goal',
-    #          'DB_PRE_Early_AM_Peak':'(0) Collect', 'DB_Early_AM_Peak':'(1) Collect', 'DB_AM_Peak':'(2) Collect',
-    #        'DB_Midday':'(3) Collect', 'DB_PM_Peak':'(4) Collect', 'DB_Evening':'(5) Collect','PRE_Early_AM_DIFFERENCE':'(0) Remain',
-    #        'Early_AM_DIFFERENCE':'(1) Remain', 'AM_DIFFERENCE':'(2) Remain', 'Midday_DIFFERENCE':'(3) Remain',
-    #        'PM_DIFFERENCE':'(4) Remain', 'Evening_DIFFERENCE':'(5) Remain','CR_Overall_Goal':'Route Level Goal','DB_Total':'# of Surveys','Overall_Goal_DIFFERENCE':'Remaining'},inplace=True)
-
-    # wkday_comparison_df.rename(columns={'CR_PRE_Early_AM':'(0) Goal','CR_Early_AM':'(1) Goal','CR_AM_Peak':'(2) Goal','CR_Midday':'(3) Goal','CR_PM_Peak':'(4) Goal','CR_Evening':'(5) Goal',
-    #          'DB_PRE_Early_AM_Peak':'(0) Collect', 'DB_Early_AM_Peak':'(1) Collect', 'DB_AM_Peak':'(2) Collect',
-    #        'DB_Midday':'(3) Collect', 'DB_PM_Peak':'(4) Collect', 'DB_Evening':'(5) Collect','PRE_Early_AM_DIFFERENCE':'(0) Remain',
-    #        'Early_AM_DIFFERENCE':'(1) Remain', 'AM_DIFFERENCE':'(2) Remain', 'Midday_DIFFERENCE':'(3) Remain',
-    #        'PM_DIFFERENCE':'(4) Remain', 'Evening_DIFFERENCE':'(5) Remain','CR_Overall_Goal':'Route Level Goal','DB_Total':'# of Surveys','Overall_Goal_DIFFERENCE':'Remaining'},inplace=True)
-
-    # wkday_route_direction_df.rename(columns={'CR_PRE_Early_AM':'(0) Goal','CR_Early_AM':'(1) Goal','CR_AM_Peak':'(2) Goal','CR_Midday':'(3) Goal','CR_PM_Peak':'(4) Goal','CR_Evening':'(5) Goal',
-    #          'DB_PRE_Early_AM_Peak':'(0) Collect', 'DB_Early_AM_Peak':'(1) Collect', 'DB_AM_Peak':'(2) Collect',
-    #        'DB_Midday':'(3) Collect', 'DB_PM_Peak':'(4) Collect', 'DB_Evening':'(5) Collect','PRE_Early_AM_DIFFERENCE':'(0) Remain',
-    #        'Early_AM_DIFFERENCE':'(1) Remain', 'AM_DIFFERENCE':'(2) Remain', 'Midday_DIFFERENCE':'(3) Remain',
-    #        'PM_DIFFERENCE':'(4) Remain', 'Evening_DIFFERENCE':'(5) Remain'},inplace=True)
-
-    # wkend_route_direction_df.rename(columns={'CR_PRE_Early_AM':'(0) Goal','CR_Early_AM':'(1) Goal','CR_AM_Peak':'(2) Goal','CR_Midday':'(3) Goal','CR_PM_Peak':'(4) Goal','CR_Evening':'(5) Goal',
-    #          'DB_PRE_Early_AM_Peak':'(0) Collect', 'DB_Early_AM_Peak':'(1) Collect', 'DB_AM_Peak':'(2) Collect',
-    #        'DB_Midday':'(3) Collect', 'DB_PM_Peak':'(4) Collect', 'DB_Evening':'(5) Collect','PRE_Early_AM_DIFFERENCE':'(0) Remain',
-    #        'Early_AM_DIFFERENCE':'(1) Remain', 'AM_DIFFERENCE':'(2) Remain', 'Midday_DIFFERENCE':'(3) Remain',
-    #        'PM_DIFFERENCE':'(4) Remain', 'Evening_DIFFERENCE':'(5) Remain'},inplace=True)
-
-
 
     wkend_comparison_df.rename(columns={'CR_AM_Peak':'(1) Goal','CR_Midday':'(2) Goal','CR_PM_Peak':'(3) Goal','CR_Evening':'(4) Goal',
             'DB_AM_Peak':'(1) Collect',
@@ -1446,7 +1421,8 @@ def fetch_and_process_data():
     for _,row in wkend_route_direction_df.iterrows():
         route_surveyed=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_NAME'].iloc[0]
         route_surveyed_ID=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_ID'].iloc[0]
-        wkend_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed  
+        wkend_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed
+        print("After this, I'll create snowflake connection") 
 
 
     def create_snowflake_connection():
@@ -1464,7 +1440,7 @@ def fetch_and_process_data():
         return conn
         
 
-    def create_tables_and_insert_data(file_path, sheet_info):
+    def create_tables_and_insert_data(dataframes, table_info):
         print("creating table")
         # File path and dtype mapping
         dtype_mapping = {
@@ -1506,40 +1482,40 @@ def fetch_and_process_data():
                 write_pandas(conn, df, table_name=table_name.upper())
                 print(f"Data inserted into table {table_name} successfully.")
 
-            # Close the Snowflake connection
-            cur.close()
-            conn.close()
+        # Close the Snowflake connection
+        cur.close()
+        conn.close()
 
 
-        # DataFrames preparation
-        dataframes = {
-            'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
-            'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
-            'WkDAY RAW DATA': weekday_raw_df,
-            'WkEND RAW DATA': weekend_raw_df,
-            'WkEND Time Data': wkend_time_value_df,
-            'WkDAY Time Data': wkday_time_value_df,
-            'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
-            'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
-            'LAST SURVEY DATE': latest_date_df
-        }
+    # DataFrames preparation
+    dataframes = {
+        'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
+        'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
+        'WkDAY RAW DATA': weekday_raw_df,
+        'WkEND RAW DATA': weekend_raw_df,
+        'WkEND Time Data': wkend_time_value_df,
+        'WkDAY Time Data': wkday_time_value_df,
+        'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
+        'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
+        'LAST SURVEY DATE': latest_date_df
+    }
 
-        # Table mapping
-        table_info = {
-            'WkDAY RAW DATA': 'wkday_raw', 
-            'WkEND RAW DATA': 'wkend_raw', 
-            'WkDAY Route Comparison': 'wkday_comparison', 
-            'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
-            'WkEND Route Comparison': 'wkend_comparison', 
-            'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
-            'WkEND Time Data': 'wkend_time_data', 
-            'WkDAY Time Data': 'wkday_time_data',
-            'LAST SURVEY DATE': 'last_survey_date'
-        }
+    # Table mapping
+    table_info = {
+        'WkDAY RAW DATA': 'wkday_raw', 
+        'WkEND RAW DATA': 'wkend_raw', 
+        'WkDAY Route Comparison': 'wkday_comparison', 
+        'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+        'WkEND Route Comparison': 'wkend_comparison', 
+        'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+        'WkEND Time Data': 'wkend_time_data', 
+        'WkDAY Time Data': 'wkday_time_data',
+        'LAST SURVEY DATE': 'last_survey_date'
+    }
 
-        # Call the function
-        print("Final call")
-        create_tables_and_insert_data(dataframes, table_info)
+    # Call the function
+    print("Final call")
+    create_tables_and_insert_data(dataframes, table_info)
     # f'{file_first_name} Route Level Comparison(Wkday & WkEnd)(v{version}).xlsx'
     # with pd.ExcelWriter(f'reviewtool_{today_date}_{project_name}_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx') as writer:
     #     # wkday_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE','DB_Total']).to_excel(writer,sheet_name='WkDAY Route DIR Comparison',index=False)
