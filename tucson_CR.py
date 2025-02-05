@@ -9,7 +9,7 @@ import subprocess
 from st_aggrid import AgGrid,JsCode
 from st_aggrid import AgGrid, ColumnsAutoSizeMode
 from st_aggrid.grid_options_builder import GridOptionsBuilder
-from automated_refresh_flow import fetch_and_process_data
+from automated_refresh_flow_new import fetch_and_process_data
 
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
 
