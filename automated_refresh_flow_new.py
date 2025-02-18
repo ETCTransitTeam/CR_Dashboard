@@ -15,6 +15,9 @@ import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
 from decouple import config
 import os
+import boto3
+from io import BytesIO
+from decouple import config
 
 warnings.filterwarnings('ignore')
 
@@ -115,50 +118,42 @@ def fetch_and_process_data():
 
         return matching_columns
 
-    # # if __name__ == "__main__":
-    # HOST = os.getenv("HOST")
-    # USER = os.getenv("USER")
-    # PASSWORD = os.getenv("PASSWORD")  # No need to quote_plus
-    # DATABASE = os.getenv("DATABASE")
+    bucket_name = config('bucket_name')
+    file_keys = {
+        'details_TUCSON_AZ_od_excel.xlsx': ['STOPS', 'XFERS'],
+        'TUCSON_AZ_CR.xlsx': ['WkEND-Overall', 'WkEND-RouteTotal', 'WkDAY-Overall', 'WkDAY-RouteTotal']
+    }
+    s3_client = boto3.client(
+    's3',
+    aws_access_key_id = config('aws_access_key_id'),
+    aws_secret_access_key = config('aws_secret_access_key')
+    )
+    # Function to read an Excel file from S3 into a DataFrame
+    def read_excel_from_s3(bucket_name, file_key, sheet_name):
+        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        excel_data = response['Body'].read()
+        return pd.read_excel(BytesIO(excel_data), sheet_name=sheet_name)
 
-    # db_connector = DatabaseConnector(HOST, 'elvistucsonod2025', USER, PASSWORD)
-    # db_connector.connect()  # Connect to the database
-
-    # connection = db_connector.connection  # Get the MySQL connection object
-
-
-    # # database File
-    # select_query = "SELECT * FROM elvistucson2025obweekday_export_odbc"
-
-    # csv_filename = select_query.split(" ")[-1]+".csv"
-    # df = pd.read_sql(select_query, connection)
-
-    #  # Check if df is correctly loaded
-    # print(type(df))  # Should print <class 'pandas.core.frame.DataFrame'>
-    # print(df.shape)  # Should print the number of rows and columns (e.g., (1000, 5))
-    # print(df.head(2))
-    # df.to_csv(csv_filename, index=False)  # Save the DataFrame to CSV
-    # # Close the database connection
-    # db_connector.disconnect()
-
-    # # Check column names after fetching from the database
-    # # print("Columns from database:", df.columns.tolist())
-    # # database File
-    # df=pd.read_csv('elvistucson2025obweekday_export_odbc.csv')
-    # KingElvis Dataframe
-    # ke_df=pd.read_excel("VTA_CA_OB_KINGElvis.xlsx",sheet_name='Elvis_Review')
     # Details File Stops Sheet
-    detail_df_stops=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='STOPS')
-    detail_df_xfers=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='XFERS')
+    # detail_df_stops=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='STOPS')
+    # detail_df_xfers=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='XFERS')
 
-    wkend_overall_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkEND-Overall')
-    # wkend_overall_df['LS_NAME_CODE']=wkend_overall_df['LS_NAME_CODE'].apply(edit_ls_code_column)
-    wkend_route_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkEND-RouteTotal')
+    # wkend_overall_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkEND-Overall')
+    # # wkend_overall_df['LS_NAME_CODE']=wkend_overall_df['LS_NAME_CODE'].apply(edit_ls_code_column)
+    # wkend_route_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkEND-RouteTotal')
 
-    wkday_overall_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkDAY-Overall')
-    # wkday_overall_df['LS_NAME_CODE']=wkday_overall_df['LS_NAME_CODE'].apply(edit_ls_code_column)
-    wkday_route_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkDAY-RouteTotal')
+    # wkday_overall_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkDAY-Overall')
+    # # wkday_overall_df['LS_NAME_CODE']=wkday_overall_df['LS_NAME_CODE'].apply(edit_ls_code_column)
+    # wkday_route_df=pd.read_excel('TUCSON_AZ_CR.xlsx',sheet_name='WkDAY-RouteTotal')
 
+    detail_df_stops = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'STOPS')
+    detail_df_xfers = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'XFERS')
+
+    wkend_overall_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkEND-Overall')
+    wkend_route_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkEND-RouteTotal')
+
+    wkday_overall_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-Overall')
+    wkday_route_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-RouteTotal')
 
     df=df[df['INTERV_INIT']!='999']
     df=df[df['HAVE_5_MIN_FOR_SURVECode']==1]
