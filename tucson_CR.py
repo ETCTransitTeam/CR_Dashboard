@@ -26,7 +26,7 @@ query_params = st.experimental_get_query_params()
 current_page = st.experimental_get_query_params().get("page", ["login"])[0]  # Default to "login" if not set
 
 
-schema_value = {'TUCSON': 'tucson_bus', 'UTA': 'uta_rail'}
+schema_value = {'TUCSON': 'tucson_bus','VTA': 'vta_bus', 'UTA': 'uta_rail'}
 
 
 def user_connect_to_snowflake():
@@ -165,11 +165,13 @@ def login():
     if st.button("Login"):
         if check_user_login(email, password):
             st.success("LogIn successful!")
-
+            print(f'{project.lower()=}')
             # If login is successful
             st.session_state["logged_in"] = True
             st.session_state["selected_project"] = project  # Store selected project in session state
             st.session_state["schema"] = schema_value[project]
+            print(f'{st.session_state["selected_project"]=}')
+            print(f'{st.session_state["schema"]=}')
 
             # Preserve 'page' parameter in URL after login
             st.experimental_set_query_params(logged_in="true", page='main')  
@@ -200,13 +202,13 @@ else:
         
     def create_snowflake_connection():
         conn = snowflake.connector.connect(
-                user=config('user'),
-                password=config('password'),
-                account=config('account'),
-                warehouse=config('warehouse'),
-                database=config('database'),
-                schema=selected_schema,
-                role=config('role')
+            user=config('user'),
+            password=config('password'),
+            account=config('account'),
+            warehouse=config('warehouse'),
+            database=config('database'),
+            schema=selected_schema,
+            role=config('role')
             )
         return conn
 
@@ -301,7 +303,8 @@ else:
     if st.sidebar.button("Logout"):
         st.session_state["logged_in"] = False
         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
-
+        # st.experimental_set_query_params(logged_in="false")  # Update URL
+        # st.experimental_rerun()  # Reload the page to show login again
 
 
 
@@ -353,7 +356,7 @@ else:
         # Button to trigger the entire script
         if st.button("Sync"):
             with st.spinner("Syncing... Please wait"):
-                result = fetch_and_process_data()
+                result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
             st.success(f"Data Synced Successfully!")
         current_date = datetime.datetime.now()
         formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -361,11 +364,11 @@ else:
 
         # Get the most recent "Completed" date from both wkday_raw_df and wkend_raw_df
 
-        # completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
-        # most_recent_completed_date = pd.to_datetime(completed_dates).max()
+        completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
+        most_recent_completed_date = pd.to_datetime(completed_dates).max()
 
-        # # Display the most recent "Completed" date
-        # st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
+        # Display the most recent "Completed" date
+        st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
     # Page Content Section
@@ -643,6 +646,11 @@ else:
             st.experimental_set_query_params()
             st.experimental_rerun()
 
+    # if page=='register':
+    #     register()
+    # if not st.session_state.logged_in:
+    #     login()
+    # else:
     if 'rail' in selected_schema.lower():
         if page == "weekday":
             weekday_page()
@@ -675,5 +683,3 @@ else:
             main_page(wkday_dir_df[wkday_dir_columns],
                     wkday_time_df[['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']],
                     wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
-
-
