@@ -26,24 +26,24 @@ load_dotenv()
 
 PROJECTS = {
     "TUCSON": {
-        "database": config("TUCSON_DATABASE_NAME"),
-        "table": config("TUCSON_TABLE_NAME"),
+        "database": os.getenv("TUCSON_DATABASE_NAME"),
+        "table": os.getenv("TUCSON_TABLE_NAME"),
         "files": {
             "details": "details_TUCSON_AZ_od_excel.xlsx",
             "cr": "TUCSON_AZ_CR.xlsx"
         }
     },
     "UTA": {
-        "database": config("UTA_DATABASE_NAME"),
-        "table": config("UTA_TABLE_NAME"),
+        "database": os.getenv("UTA_DATABASE_NAME"),
+        "table": os.getenv("UTA_TABLE_NAME"),
         "files": {
             "details": "details_project_od_excel_UTA.xlsx",
             "cr": "UTA_SL_CR.xlsx"
         }
     },
     "VTA": {
-        "database": config("VTA_DATABASE_NAME"),
-        "table": config("VTA_TABLE_NAME"),
+        "database": os.getenv("VTA_DATABASE_NAME"),
+        "table": os.getenv("VTA_TABLE_NAME"),
         "files": {
             "details": "details_vta_CA_od_excel.xlsx",
             "cr": "VTA_CA_CR.xlsx"
@@ -196,15 +196,15 @@ def fetch_and_process_data(project,schema):
 
         return matching_columns
 
-    bucket_name = config('bucket_name')
+    bucket_name = os.getenv('bucket_name')
     file_keys = {
         'details_TUCSON_AZ_od_excel.xlsx': ['STOPS', 'XFERS'],
         'TUCSON_AZ_CR.xlsx': ['WkEND-Overall', 'WkEND-RouteTotal', 'WkDAY-Overall', 'WkDAY-RouteTotal']
     }
     s3_client = boto3.client(
     's3',
-    aws_access_key_id = config('aws_access_key_id'),
-    aws_secret_access_key = config('aws_secret_access_key')
+    aws_access_key_id = os.getenv('aws_access_key_id'),
+    aws_secret_access_key = os.getenv('aws_secret_access_key')
     )
     # Function to read an Excel file from S3 into a DataFrame
     def read_excel_from_s3(bucket_name, file_key, sheet_name):
@@ -370,7 +370,7 @@ def fetch_and_process_data(project,schema):
     stopoff_clntid_column=check_all_characters_present(df,stopoff_clntid_column_check)
 
 
-    df[['id','Day',route_survey_column[0]]].to_csv('Checking Day Names.csv',index=False)
+    # df[['id','Day',route_survey_column[0]]].to_csv('Checking Day Names.csv',index=False)
 
 
     wkend_overall_df.dropna(subset=['LS_NAME_CODE'],inplace=True)
@@ -1734,13 +1734,13 @@ def fetch_and_process_data(project,schema):
     def create_snowflake_connection():
         print("Creating connection with snowflake")
         conn = snowflake.connector.connect(
-            user=config('user'),
-            password=config('password'),
-            account=config('account'),
-            warehouse=config('warehouse'),
-            database=config('database'),
+            user=os.getenv('user'),
+            password=os.getenv('password'),
+            account=os.getenv('account'),
+            warehouse=os.getenv('warehouse'),
+            database=os.getenv('database'),
             schema=schema,
-            role=config('role')
+            role=os.getenv('role')
         )
         print("Connection successfull")
         return conn

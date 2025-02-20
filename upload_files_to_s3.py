@@ -1,8 +1,9 @@
 import boto3
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 from decouple import config
+from dotenv import load_dotenv
 # Use your AWS credentials (replace these with actual values)
-
+load_dotenv()
 
 def upload_file_to_s3(file_name, bucket_name, object_name=None):
     """

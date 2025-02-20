@@ -1,3 +1,4 @@
+import os
 import bcrypt
 import base64
 import datetime
@@ -12,6 +13,10 @@ from streamlit.runtime.scriptrunner import get_script_run_ctx
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 from automated_refresh_flow_new import fetch_and_process_data
 from snowflake.connector.pandas_tools import pd_writer,write_pandas
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -26,18 +31,18 @@ query_params = st.experimental_get_query_params()
 current_page = st.experimental_get_query_params().get("page", ["login"])[0]  # Default to "login" if not set
 
 
-schema_value = {'TUCSON': 'tucson_bus','VTA': 'vta_bus', 'UTA': 'uta_rail'}
+schema_value = {'TUCSON': 'tucson_bus','VTA': 'public', 'UTA': 'uta_rail'}
 
 
 def user_connect_to_snowflake():
     return snowflake.connector.connect(
-        user=config('user'),
-        password=config('password'),
-        account=config('account'),
-        warehouse=config('warehouse'),
-        database=config('database'),
+        user=os.getenv('user'),
+        password=os.getenv('password'),
+        account=os.getenv('account'),
+        warehouse=os.getenv('warehouse'),
+        database=os.getenv('database'),
         schema='user',
-        role=config('role')
+        role=os.getenv('role')
     )
 
 # Function to register a new user in Snowflake
@@ -202,13 +207,13 @@ else:
         
     def create_snowflake_connection():
         conn = snowflake.connector.connect(
-            user=config('user'),
-            password=config('password'),
-            account=config('account'),
-            warehouse=config('warehouse'),
-            database=config('database'),
+            user=os.getenv('user'),
+            password=os.getenv('password'),
+            account=os.getenv('account'),
+            warehouse=os.getenv('warehouse'),
+            database=os.getenv('database'),
             schema=selected_schema,
-            role=config('role')
+            role=os.getenv('role')
         )
         return conn
 
