@@ -202,6 +202,7 @@ else:
         
     def create_snowflake_connection():
         conn = snowflake.connector.connect(
+
             user=config('user'),
             password=config('password'),
             account=config('account'),
@@ -217,7 +218,7 @@ else:
     column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
         '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
 
-    @st.cache
+    # @st.cache
     def fetch_dataframes_from_snowflake():
         """
         Fetches data from Snowflake tables and returns them as a dictionary of DataFrames.
@@ -357,6 +358,25 @@ else:
         if st.button("Sync"):
             with st.spinner("Syncing... Please wait"):
                 result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
+            st.cache.clear()
+            print("Cache cleared")  # Debug statement
+            
+            # Fetch and process data again
+            dataframes = fetch_dataframes_from_snowflake()
+            print("Data fetched successfully")  # Debug statement
+            
+            # Example: Access DataFrames
+            wkday_df = dataframes['wkday_df']
+            wkday_dir_df = dataframes['wkday_dir_df']
+            wkend_df = dataframes['wkend_df']
+            wkend_dir_df = dataframes['wkend_dir_df']
+            wkend_time_df = dataframes['wkend_time_df']
+            wkday_time_df = dataframes['wkday_time_df']
+            wkend_raw_df = dataframes['wkend_raw_df']
+            wkday_raw_df = dataframes['wkday_raw_df']
+            detail_df = dataframes['detail_df']
+            wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
+            wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
             st.success(f"Data Synced Successfully!")
         current_date = datetime.datetime.now()
         formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
