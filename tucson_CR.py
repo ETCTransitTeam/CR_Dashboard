@@ -202,7 +202,6 @@ else:
         
     def create_snowflake_connection():
         conn = snowflake.connector.connect(
-
             user=config('user'),
             password=config('password'),
             account=config('account'),
@@ -210,7 +209,7 @@ else:
             database=config('database'),
             schema=selected_schema,
             role=config('role')
-            )
+        )
         return conn
 
 
@@ -218,8 +217,8 @@ else:
     column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
         '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
 
-    # @st.cache
-    def fetch_dataframes_from_snowflake():
+    @st.cache(allow_output_mutation=True)  # Use st.cache in Streamlit 1.6.0
+    def fetch_dataframes_from_snowflake(cache_key):
         """
         Fetches data from Snowflake tables and returns them as a dictionary of DataFrames.
         If a table is missing or an error occurs, it returns an empty DataFrame.
@@ -282,7 +281,9 @@ else:
         return dataframes
 
     # Fetch dataframes from Snowflake
-    dataframes = fetch_dataframes_from_snowflake()
+    if "cache_key" not in st.session_state:
+        st.session_state["cache_key"] = 0
+    dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"] )
 
     # Example: Access DataFrames
     wkday_df = dataframes['wkday_df']
@@ -348,6 +349,9 @@ else:
             st.query_params["page"] = new_page
             st.experimental_rerun()
 
+    def clear_cache():
+        st.experimental_memo.clear()
+
     # Layout columns
     header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
 
@@ -356,27 +360,27 @@ else:
         st.header('Completion Report')
         # Button to trigger the entire script
         if st.button("Sync"):
-            with st.spinner("Syncing... Please wait"):
+            with st.spinner("Syncing... Please wait...It will take 2 to 3 mints"):
                 result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
-            st.cache.clear()
-            print("Cache cleared")  # Debug statement
-            
-            # Fetch and process data again
-            dataframes = fetch_dataframes_from_snowflake()
-            print("Data fetched successfully")  # Debug statement
-            
-            # Example: Access DataFrames
-            wkday_df = dataframes['wkday_df']
-            wkday_dir_df = dataframes['wkday_dir_df']
-            wkend_df = dataframes['wkend_df']
-            wkend_dir_df = dataframes['wkend_dir_df']
-            wkend_time_df = dataframes['wkend_time_df']
-            wkday_time_df = dataframes['wkday_time_df']
-            wkend_raw_df = dataframes['wkend_raw_df']
-            wkday_raw_df = dataframes['wkday_raw_df']
-            detail_df = dataframes['detail_df']
-            wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
-            wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
+                if "cache_key" not in st.session_state:
+                    st.session_state["cache_key"] = 0
+                st.session_state["cache_key"] += 1                
+                # Fetch and process data again
+                dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
+                print("Data fetched successfully")  # Debug statement
+                
+                # Example: Access DataFrames
+                wkday_df = dataframes['wkday_df']
+                wkday_dir_df = dataframes['wkday_dir_df']
+                wkend_df = dataframes['wkend_df']
+                wkend_dir_df = dataframes['wkend_dir_df']
+                wkend_time_df = dataframes['wkend_time_df']
+                wkday_time_df = dataframes['wkday_time_df']
+                wkend_raw_df = dataframes['wkend_raw_df']
+                wkday_raw_df = dataframes['wkday_raw_df']
+                detail_df = dataframes['detail_df']
+                wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
+                wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
             st.success(f"Data Synced Successfully!")
         current_date = datetime.datetime.now()
         formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -387,7 +391,7 @@ else:
         completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
         most_recent_completed_date = pd.to_datetime(completed_dates).max()
 
-        # Display the most recent "Completed" date
+        # # # Display the most recent "Completed" date
         st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
