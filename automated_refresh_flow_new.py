@@ -72,75 +72,30 @@ def fetch_and_process_data(project,schema):
     table_name=project_config["table"]
     database_name=project_config["database"]
     # Function to fetch data from the database
-    def fetch_data(database_name, table_name):
-        HOST = os.getenv("SQL_HOST")
-        USER = os.getenv("SQL_USER")
-        PASSWORD = os.getenv("SQL_PASSWORD")
-        
-        db_connector = DatabaseConnector(HOST, database_name, USER, PASSWORD)
-
-        try:
-            db_connector.connect()
-            print("Connection successful.....")
-
-            if db_connector.connection is None:
-                st.error("Database connection failed. Check credentials and server availability.")
-                st.experimental_set_query_params(logged_in="true", page='main')
-                st.experimental_rerun()
-                return None
-            
-            connection = db_connector.connection  # Get MySQL connection object
-            print(f"{table_name=} and {database_name=}")
-            
-            select_query = f"SELECT * FROM {table_name}"
-            df = pd.read_sql(select_query, connection)  # Load data into DataFrame
-            print(df.tail(2))
-            
-            db_connector.disconnect()  # Close database connection
-
-            # Store DataFrame in memory
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False)
-            csv_buffer.seek(0)
-
-            return csv_buffer  
-
-        # except mysql.connector.Error as sql_err:
-        #     st.error(f"Database error: {sql_err}")
-            
-        except Exception as e:
-            st.error(f"Error fetching data: {e}")
-        
-        # finally:
-        #     try:
-        #         db_connector.disconnect()
-        #     except Exception:
-        #         pass  # Ensure it doesn't crash on failed disconnect
-
-        # # Redirect back to the main page without disturbing the whole process
-        # st.experimental_set_query_params(logged_in="true", page='main')
-        # st.experimental_rerun()
-        # return None
-
-    # def fetch_data(database_name,table_name):
+    # def fetch_data(database_name, table_name):
     #     HOST = os.getenv("SQL_HOST")
     #     USER = os.getenv("SQL_USER")
     #     PASSWORD = os.getenv("SQL_PASSWORD")
-    #     # DATABASE = os.getenv("SQL_DATABASE")
-    #     # db_connector = DatabaseConnector(HOST, 'elvistucsonod2025', USER, PASSWORD)
+        
     #     db_connector = DatabaseConnector(HOST, database_name, USER, PASSWORD)
+
     #     try:
     #         db_connector.connect()
     #         print("Connection successful.....")
+
     #         if db_connector.connection is None:
     #             st.error("Database connection failed. Check credentials and server availability.")
+    #             st.experimental_set_query_params(logged_in="true", page='main')
+    #             st.experimental_rerun()
     #             return None
             
     #         connection = db_connector.connection  # Get MySQL connection object
     #         print(f"{table_name=} and {database_name=}")
+            
     #         select_query = f"SELECT * FROM {table_name}"
     #         df = pd.read_sql(select_query, connection)  # Load data into DataFrame
     #         print(df.tail(2))
+            
     #         db_connector.disconnect()  # Close database connection
 
     #         # Store DataFrame in memory
@@ -150,9 +105,54 @@ def fetch_and_process_data(project,schema):
 
     #         return csv_buffer  
 
+    #     # except mysql.connector.Error as sql_err:
+    #     #     st.error(f"Database error: {sql_err}")
+            
     #     except Exception as e:
     #         st.error(f"Error fetching data: {e}")
-    #         return None
+        
+    #     # finally:
+    #     #     try:
+    #     #         db_connector.disconnect()
+    #     #     except Exception:
+    #     #         pass  # Ensure it doesn't crash on failed disconnect
+
+    #     # # Redirect back to the main page without disturbing the whole process
+    #     # st.experimental_set_query_params(logged_in="true", page='main')
+    #     # st.experimental_rerun()
+    #     # return None
+
+    def fetch_data(database_name,table_name):
+        HOST = os.getenv("SQL_HOST")
+        USER = os.getenv("SQL_USER")
+        PASSWORD = os.getenv("SQL_PASSWORD")
+        # DATABASE = os.getenv("SQL_DATABASE")
+        # db_connector = DatabaseConnector(HOST, 'elvistucsonod2025', USER, PASSWORD)
+        db_connector = DatabaseConnector(HOST, database_name, USER, PASSWORD)
+        try:
+            db_connector.connect()
+            print("Connection successful.....")
+            if db_connector.connection is None:
+                st.error("Database connection failed. Check credentials and server availability.")
+                return None
+            
+            connection = db_connector.connection  # Get MySQL connection object
+            print(f"{table_name=} and {database_name=}")
+            select_query = f"SELECT * FROM {table_name}"
+            df = pd.read_sql(select_query, connection)  # Load data into DataFrame
+            print(df.tail(2))
+            db_connector.disconnect()  # Close database connection
+
+            # Store DataFrame in memory
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, index=False)
+            csv_buffer.seek(0)
+
+            return csv_buffer  
+
+        except Exception as e:
+            st.error(f"Error fetching data: {e}")
+            return None
         
 
     # Initialize session state for df
