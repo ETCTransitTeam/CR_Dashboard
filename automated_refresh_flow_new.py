@@ -111,16 +111,16 @@ def fetch_and_process_data(project,schema):
         except Exception as e:
             st.error(f"Error fetching data: {e}")
         
-        finally:
-            try:
-                db_connector.disconnect()
-            except Exception:
-                pass  # Ensure it doesn't crash on failed disconnect
+        # finally:
+        #     try:
+        #         db_connector.disconnect()
+        #     except Exception:
+        #         pass  # Ensure it doesn't crash on failed disconnect
 
-        # Redirect back to the main page without disturbing the whole process
-        st.experimental_set_query_params(logged_in="true", page='main')
-        st.experimental_rerun()
-        return None
+        # # Redirect back to the main page without disturbing the whole process
+        # st.experimental_set_query_params(logged_in="true", page='main')
+        # st.experimental_rerun()
+        # return None
 
     # def fetch_data(database_name,table_name):
     #     HOST = os.getenv("SQL_HOST")

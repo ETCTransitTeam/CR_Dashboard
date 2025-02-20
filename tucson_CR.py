@@ -35,6 +35,7 @@ schema_value = {'TUCSON': 'tucson_bus','VTA': 'public', 'UTA': 'uta_rail'}
 
 
 def user_connect_to_snowflake():
+    print("hehe user = ",os.getenv('user'))
     return snowflake.connector.connect(
         user=os.getenv('user'),
         password=os.getenv('password'),
