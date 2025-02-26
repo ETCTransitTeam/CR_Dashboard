@@ -394,7 +394,7 @@ def login():
             st.session_state["schema"] = schema_value[project]
 
             # Preserve 'page' parameter in URL after login
-            st.experimental_set_query_params(logged_in="true", page='main', token=st.session_state["jwt_token"])  
+            st.experimental_set_query_params(logged_in="true", page='main')  
             st.experimental_rerun()  # Refresh the page after login
 
         else:
