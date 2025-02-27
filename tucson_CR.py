@@ -9,10 +9,26 @@ from automated_refresh_flow_new import fetch_and_process_data
 from utils import render_aggrid,create_csv,download_csv,update_query_params
 from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page
 from dotenv import load_dotenv
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
+
+with open("path/to/key.p8", "rb") as key:
+    private_key = serialization.load_pem_private_key(
+        key.read(),
+        password=os.environ["SNOWFLAKE_PASSPHRASE"].encode(),
+        backend=default_backend(),
+    )
+
+# Serialize the private key to DER format
+private_key_bytes = private_key.private_bytes(
+    encoding=serialization.Encoding.DER,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption(),
+)
 
 # Ensure session state exists
 if "logged_in" not in st.session_state:
@@ -65,13 +81,14 @@ else:
         selected_project = str(st.session_state.get("selected_project", "")).lower()
         def create_snowflake_connection():
             conn = snowflake.connector.connect(
-                user=os.getenv('user'),
-                password=os.getenv('password'),
-                account=os.getenv('account'),
-                warehouse=os.getenv('warehouse'),
-                database=os.getenv('database'),
+                user=os.getenv('SNOWFLAKE_USER'),
+                private_key= private_key_bytes,
+                account=os.getenv('SNOWFLAKE_ACCOUNT'),
+                warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
+                database=os.getenv('SNOWFLAKE_DATABASE'),
+                authenticator="SNOWFLAKE_JWT",
                 schema=selected_schema,
-                role=os.getenv('role')
+                role=os.getenv('SNOWFLAKE_ROLE'),
                     )
             return conn
 

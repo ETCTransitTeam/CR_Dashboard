@@ -17,12 +17,26 @@ import boto3
 from io import BytesIO
 from decouple import config
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
-
+import os
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 warnings.filterwarnings('ignore')
 
 load_dotenv()
 
+with open("path/to/key.p8", "rb") as key:
+    private_key = serialization.load_pem_private_key(
+        key.read(),
+        password=os.environ["SNOWFLAKE_PASSPHRASE"].encode(),
+        backend=default_backend(),
+    )
 
+# Serialize the private key to DER format
+private_key_bytes = private_key.private_bytes(
+    encoding=serialization.Encoding.DER,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption(),
+)
 
 PROJECTS = {
     "TUCSON": {
@@ -2267,13 +2281,14 @@ def fetch_and_process_data(project,schema):
     def create_snowflake_connection():
         print("Creating connection with snowflake")
         conn = snowflake.connector.connect(
-            user=os.getenv('user'),
-            password=os.getenv('password'),
-            account=os.getenv('account'),
-            warehouse=os.getenv('warehouse'),
-            database=os.getenv('database'),
+            user=os.getenv('SNOWFLAKE_USER'),
+            private_key=private_key_bytes,
+            account=os.getenv('SNOWFLAKE_ACCOUNT'),
+            warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
+            database=os.getenv('SNOWFLAKE_DATABASE'),
+            authenticator="SNOWFLAKE_JWT",
             schema=schema,
-            role=os.getenv('role')
+            role=os.getenv('SNOWFLAKE_ROLE'),
         )
         print("Connection successfull")
         return conn

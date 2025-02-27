@@ -1,4 +1,6 @@
 import os
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 import jwt
 import bcrypt
 import base64
@@ -13,6 +15,9 @@ from email.mime.multipart import MIMEMultipart
 import logging
 import streamlit.components.v1 as components
 
+
+
+
 # Set up basic logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -25,15 +30,32 @@ EMAIL_PORT = os.getenv("EMAIL_PORT")
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
+
+# Load the private key from the file
+with open("path/to/key.p8", "rb") as key:
+    private_key = serialization.load_pem_private_key(
+        key.read(),
+        password=os.environ["SNOWFLAKE_PASSPHRASE"].encode(),
+        backend=default_backend(),
+    )
+
+# Serialize the private key to DER format
+private_key_bytes = private_key.private_bytes(
+    encoding=serialization.Encoding.DER,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption(),
+)
+
 def user_connect_to_snowflake():
     return snowflake.connector.connect(
-        user=os.getenv('user'),
-        password=os.getenv('password'),
-        account=os.getenv('account'),
-        warehouse=os.getenv('warehouse'),
-        database=os.getenv('database'),
+        user=os.getenv('SNOWFLAKE_USER'),
+        private_key= private_key_bytes,
+        account=os.getenv('SNOWFLAKE_ACCOUNT'),
+        warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
+        database=os.getenv('SNOWFLAKE_DATABASE'),
+        authenticator="SNOWFLAKE_JWT",
         schema='user',
-        role=os.getenv('role')
+        role=os.getenv('SNOWFLAKE_ROLE'),
     )
 
 

@@ -170,3 +170,5 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 *.xlsx
+path/
+test_streamlit.py
