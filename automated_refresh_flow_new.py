@@ -40,8 +40,16 @@ private_key_bytes = private_key.private_bytes(
 
 PROJECTS = {
     "TUCSON": {
-        "database": os.getenv("TUCSON_DATABASE_NAME"),
-        "table": os.getenv("TUCSON_TABLE_NAME"),
+        "databases": {
+                    "main": {
+                        "database": os.getenv("TUCSON_DATABASE_NAME"),
+                        "table": os.getenv("TUCSON_TABLE_NAME")
+                    },
+                    "elvis": {
+                        "database": os.getenv("TUCSON_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("TUCSON_ELVIS_TABLE_NAME")
+                    }
+                },
         "files": {
             "details": "details_TUCSON_AZ_od_excel.xlsx",
             "cr": "TUCSON_AZ_CR.xlsx",
@@ -49,8 +57,16 @@ PROJECTS = {
         }
     },
     "TUCSON RAIL": {
-        "database": os.getenv("TUCSON_DATABASE_NAME"),
-        "table": os.getenv("TUCSON_TABLE_NAME"),
+        "databases": {
+                    "main": {
+                        "database": os.getenv("TUCSON_DATABASE_NAME"),
+                        "table": os.getenv("TUCSON_TABLE_NAME")
+                    },
+                    "elvis": {
+                        "database": os.getenv("TUCSON_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("TUCSON_ELVIS_TABLE_NAME")
+                    }
+                },
         "files": {
             "details": "details_TUCSON_AZ_od_excel.xlsx",
             "cr": "TUCSON_AZ_CR.xlsx",
@@ -58,16 +74,24 @@ PROJECTS = {
         }
     },
     "UTA": {
-        "database": os.getenv("UTA_DATABASE_NAME"),
-        "table": os.getenv("UTA_TABLE_NAME"),
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("UTA_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("UTA_ELVIS_TABLE_NAME")
+                    }
+                },
         "files": {
             "details": "details_project_od_excel_UTA.xlsx",
             "cr": "UTA_SL_CR.xlsx"
         }
     },
     "VTA": {
-        "database": os.getenv("VTA_DATABASE_NAME"),
-        "table": os.getenv("VTA_TABLE_NAME"),
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("VTA_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("VTA_ELVIS_TABLE_NAME")
+                    }
+                },
         "files": {
             "details": "details_vta_CA_od_excel.xlsx",
             "cr": "VTA_CA_CR.xlsx",
@@ -95,8 +119,7 @@ def fetch_and_process_data(project,schema):
     today_date=''.join(str(today_date).split('-'))
 
     project_config = PROJECTS[project]
-    table_name=project_config["table"]
-    database_name=project_config["database"]
+
     # Function to fetch data from the database
     def fetch_data(database_name, table_name):
         HOST = os.getenv("SQL_HOST")
@@ -164,7 +187,12 @@ def fetch_and_process_data(project,schema):
 
         return matching_columns
     
-
+    def clean_string(s):
+        return s.replace('_', '').replace('[', '').replace(']', '').replace(' ','').replace('#','').lower()
+    
+    elvis_config=project_config['databases']["elvis"]
+    table_name=elvis_config['table']
+    database_name=elvis_config["database"]
     # Initialize session state for df
     if "df" not in st.session_state:
         st.session_state.df = None
@@ -180,25 +208,83 @@ def fetch_and_process_data(project,schema):
     if st.session_state.df is not None:
         df = st.session_state.df
         # Apply filters only after confirming df is loaded
-        df = df[df['INTERV_INIT'] != '999']
-        df = df[df['HAVE_5_MIN_FOR_SURVECode'] == 1]
+        time_value_code_check=['have5minforsurvecode']
+        time_value_code_df=check_all_characters_present(df,time_value_code_check)
+        df=df[df[time_value_code_df[0]]==1]
+        df=df[df['INTERV_INIT']!='999']
+        df=df[df['INTERV_INIT']!=999]
+        df = df[df[time_value_code_df[0]] == 1]
         df=df[df['INTERV_INIT']!=999]
         elvis_status_column_check=['elvisstatus']
         elvis_status_column=check_all_characters_present(df,elvis_status_column_check)
         df=df[df[elvis_status_column[0]].str.lower()!='delete']
         df.drop_duplicates(subset='id',inplace=True)
+        time_column_check=['timeoncode']
+        time_period_column_check=['timeon']
+        time_column_df=check_all_characters_present(df,time_column_check)
+        time_period_column_df=check_all_characters_present(df,time_period_column_check)
 
         
         # st.write(df.head())  # Display the filtered data
     else:
         st.warning("No data available. Click 'Fetch Data' to load the dataset.")
+    
+    df1=None
+    if "main" in project_config["databases"]:
+        main_config = project_config["databases"]["main"]
+        main_table_name = main_config["table"]
+        main_database_name = main_config["database"]
+        main_csv_buffer = fetch_data(main_database_name, main_table_name)
+        df1 = pd.read_csv(main_csv_buffer) if main_csv_buffer else None
 
-    # df=pd.read_csv('elvistucson2025obweekday_export_odbc.csv')
-    # print(f'File read successfully {df.shape}')
-    # df = df[df['INTERV_INIT'] != '999']
-    # df = df[df['HAVE_5_MIN_FOR_SURVECode'] == 1]
-    # df=df[df['INTERV_INIT']!=999]
-    # df.drop_duplicates(subset='id',inplace=True)
+        column_mapping = {}
+        for df1_col in df1.columns:
+            cleaned_df1_col = clean_string(df1_col)
+            for df_col in df.columns:
+                if cleaned_df1_col == clean_string(df_col):
+                    column_mapping[df1_col] = df_col
+                    break  # Move to next df1 column once we find a match
+
+        # Rename df1 columns to match df column names exactly
+        df1 = df1.rename(columns=column_mapping)
+        time_column_check=['timeoncode']
+        time_period_column_check=['timeon']
+        time_column_df1=check_all_characters_present(df1,time_column_check)
+        time_period_column_df1=check_all_characters_present(df1,time_period_column_check)
+
+    if df is not None and df1 is not None:
+
+        df3 = df.copy()
+        # Code for Adding new records from baby elvis to elvis database file 
+        # added 
+        missing_ids = set(df1['id']) - set(df['id'])
+
+        # Filter df1 to get only records with missing IDs
+        df1_new = df1[df1['id'].isin(missing_ids)]
+
+        # Concatenate df3 (original df) with the filtered df1_new
+        df = pd.concat([df, df1_new], ignore_index=True)
+        
+        df.drop_duplicates(subset=['id'],inplace=True)
+        # Sort by ID (optional)
+        df = df.sort_values('id').reset_index(drop=True)
+        # Code for Adding new records from baby elvis to elvis database file ends here
+
+        # Code for Adding Time_ONCode values from baby elvis to elvis database file 
+        # Identify rows where time_column_df[0] is either NaN or empty string
+        mask = df[time_column_df[0]].isna() | (df[time_column_df[0]].str.strip() == '')
+
+        # Create a mapping dictionary from df1 using 'id' as key and time_column_df1[0] as value
+        time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
+
+        # Fill the missing/empty values in df using the mapping
+        df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
+        # Code for Adding Time_ONCode values from baby elvis to elvis database file ends here
+
+        print("Data merged successfully!")
+    else:
+        print("One or both dataframes failed to load.")
+
     bucket_name = os.getenv('bucket_name')
 
     s3_client = boto3.client(
