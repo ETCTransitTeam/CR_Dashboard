@@ -316,7 +316,7 @@ def fetch_and_process_data(project,schema):
         ke_df=ke_df[ke_df['1st Cleaner']!='Test']
         ke_df=ke_df[ke_df['1st Cleaner']!='Test/No 5 MIN']
         ke_df=ke_df[ke_df['Final_Usage'].str.lower()=='use']
-        df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join([x.split('_')[0], '1'] + x.split('_')[2:]))
+        df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join([str(x).split('_')[0], '1'] + str(x).split('_')[2:]))
         df=pd.merge(df,ke_df['id'],on='id',how='inner')
 
 
@@ -341,7 +341,7 @@ def fetch_and_process_data(project,schema):
         ke_df=ke_df[ke_df['1st Cleaner']!='Test']
         ke_df=ke_df[ke_df['1st Cleaner']!='Test/No 5 MIN']
         ke_df=ke_df[ke_df['Final_Usage'].str.lower()=='use']
-        df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join([x.split('_')[0], '1'] + x.split('_')[2:]))
+        df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join([str(x).split('_')[0], '1'] + str(x).split('_')[2:]))
         df=pd.merge(df,ke_df['id'],on='id',how='inner')
 
 
@@ -2300,7 +2300,109 @@ def fetch_and_process_data(project,schema):
                 route_level_df.loc[index, 'Total_DIFFERENCE'] =math.ceil(max(0, pre_early_am_peak_diff))+math.ceil(max(0, early_am_peak_diff))+math.ceil(max(0, am_peak_diff))+math.ceil(max(0, midday_diff))+math.ceil(max(0, pm_peak_diff))+math.ceil(max(0, evening_diff))
                 route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0,overall_difference))
         return route_level_df
+  
+    def create_wkend_route_level_df(overall_df, route_df, df, project):
+        am_values = ['AM1','AM2','AM3', 'AM4']
+        midday_values = ['MID1', 'MID2','MID3', 'MID4', 'MID5', 'MID6']
+        pm_values = ['PM1','PM2', 'PM3']
+        evening_values = ['OFF1', 'OFF2', 'OFF3', 'OFF4','OFF5']
+        am_column=[1]
+        midday_colum=[2]
+        pm_column=[3]
+        evening_column=[4]
 
+        def convert_string_to_integer(x):
+            try:
+                return float(x)
+            except (ValueError, TypeError):
+                return 0
+
+        # Create separate dataframes for each day
+        new_df = pd.DataFrame()
+        new_df['ROUTE_SURVEYEDCode'] = overall_df['LS_NAME_CODE']
+        new_df['Day'] = overall_df['DAY']
+        new_df['CR_AM_Peak'] = overall_df[am_column[0]].apply(math.ceil)
+        new_df['CR_Midday'] = overall_df[midday_colum[0]].apply(math.ceil)
+        new_df['CR_PM_Peak'] = overall_df[pm_column[0]].apply(math.ceil)
+        new_df['CR_Evening'] = overall_df[evening_column[0]].apply(math.ceil)
+
+        new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']] = new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
+        new_df.fillna(0, inplace=True)
+    #     new_df.to_csv("First Draft WeekEND.csv",index=False)
+        for index, row in new_df.iterrows():
+            route_code = row['ROUTE_SURVEYEDCode']
+            day = row['Day']
+            def get_counts_and_ids(time_values):
+                # Filter by both route code AND day
+                subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & 
+                            (df[time_column[0]].isin(time_values)) & 
+                            (df['Day'].str.lower() == str(day).lower())]
+                print(route_code,day,subset_df.shape)
+                subset_df = subset_df.drop_duplicates(subset='id')
+                count = subset_df.shape[0]
+                ids = subset_df['id'].values
+                return count, ids
+            am_value, am_value_ids = get_counts_and_ids(am_values)
+            midday_value, midday_value_ids = get_counts_and_ids(midday_values)
+            pm_value, pm_value_ids = get_counts_and_ids(pm_values)
+            evening_value, evening_value_ids = get_counts_and_ids(evening_values)
+
+            new_df.loc[index, 'CR_Total'] = row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+            new_df.loc[index, 'DB_AM_Peak'] = am_value
+            new_df.loc[index, 'DB_Midday'] = midday_value
+            new_df.loc[index, 'DB_PM_Peak'] = pm_value
+            new_df.loc[index, 'DB_Evening'] = evening_value
+            new_df.loc[index, 'DB_Total'] = evening_value + am_value + midday_value + pm_value
+
+        new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join(x.split('_')[:-1]))
+        unique_route_days = new_df[['ROUTE_SURVEYEDCode_Splited', 'Day']].drop_duplicates()
+        route_level_df = pd.DataFrame()
+        # Create unique combinations of route and day
+        unique_route_days = new_df[['ROUTE_SURVEYEDCode_Splited', 'Day']].drop_duplicates()
+        route_level_df['ROUTE_SURVEYEDCode'] = new_df['ROUTE_SURVEYEDCode_Splited']
+        route_level_df['Day'] = new_df['Day']
+
+        route_df.rename(columns={'ROUTE_TOTAL':'CR_Overall_Goal','SURVEY_ROUTE_CODE':'ROUTE_SURVEYEDCode','LS_NAME_CODE':'ROUTE_SURVEYEDCode','DAY':'Day'}, inplace=True)
+        route_df.dropna(subset=['ROUTE_SURVEYEDCode'], inplace=True)
+        # route_level_df = pd.merge(route_level_df, route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']], on='ROUTE_SURVEYEDCode')
+        route_level_df.drop_duplicates(subset=['ROUTE_SURVEYEDCode','Day'],inplace=True)
+        for _,row in route_level_df.iterrows():
+            print(row['ROUTE_SURVEYEDCode'],row['Day'])
+            subset_df = new_df[(new_df['ROUTE_SURVEYEDCode_Splited'] == row['ROUTE_SURVEYEDCode']) & 
+                            (new_df['Day'] == row['Day'])]
+
+            sum_per_route_cr = subset_df[['CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening','CR_Total']].sum()
+            sum_per_route_db = subset_df[['DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening','DB_Total']].sum()
+            print(sum_per_route_cr['CR_AM_Peak'])
+            route_level_df.loc[row.name,'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
+            route_level_df.loc[row.name,'CR_Midday'] = sum_per_route_cr['CR_Midday']
+            route_level_df.loc[row.name,'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
+            route_level_df.loc[row.name,'CR_Evening'] = sum_per_route_cr['CR_Evening']
+            route_level_df.loc[row.name,'CR_Total'] = sum_per_route_cr['CR_Total']
+
+            route_level_df.loc[row.name,'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
+            route_level_df.loc[row.name,'DB_Midday'] = sum_per_route_db['DB_Midday']
+            route_level_df.loc[row.name,'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
+            route_level_df.loc[row.name,'DB_Evening'] = sum_per_route_db['DB_Evening']
+            route_level_df.loc[row.name,'DB_Total'] = sum_per_route_db['DB_Total']
+        route_level_df = pd.merge(route_level_df, route_df[['ROUTE_SURVEYEDCode', 'Day', 'CR_Overall_Goal']], 
+                                on=['ROUTE_SURVEYEDCode', 'Day'])
+
+        for _, row in route_level_df.iterrows():
+            am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
+            midday_diff = row['CR_Midday'] - row['DB_Midday']
+            pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
+            evening_diff = row['CR_Evening'] - row['DB_Evening']
+            total_diff = row['CR_Total'] - row['DB_Total']
+            overall_difference = row['CR_Overall_Goal'] - row['DB_Total']
+
+            route_level_df.loc[row.name, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+            route_level_df.loc[row.name, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+            route_level_df.loc[row.name, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+            route_level_df.loc[row.name, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+            route_level_df.loc[row.name, 'Total_DIFFERENCE'] = math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
+            route_level_df.loc[row.name, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
+        return route_level_df
 
     weekday_df.dropna(subset=[time_column[0]],inplace=True)
     weekday_raw_df=weekday_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
@@ -2311,7 +2413,10 @@ def fetch_and_process_data(project,schema):
 
 
     wkday_route_level =create_route_level_df(wkday_overall_df,wkday_route_df,weekday_df,project)
-    wkend_route_level =create_route_level_df(wkend_overall_df,wkend_route_df,weekend_df,project)
+    if project=='TUCSON':
+        wkend_route_level =create_wkend_route_level_df(wkend_overall_df,wkend_route_df,weekend_df,project)
+    else:
+        wkend_route_level =create_route_level_df(wkend_overall_df,wkend_route_df,weekend_df,project)
     # wkday_route_df.to_csv("CHECk TOTAL_Difference.csv",index=False)
     # wkend_route_df.to_csv("WKENDCHECk TOTAL_Difference.csv",index=False)
     wkday_comparison_df=copy.deepcopy(wkday_route_level)
@@ -2737,7 +2842,7 @@ def fetch_and_process_data(project,schema):
             'WkEND Time Data': wkend_time_value_df,
             'WkDAY Time Data': wkday_time_value_df,
             'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
-            'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
+            'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
             'LAST SURVEY DATE': latest_date_df
         }
 
