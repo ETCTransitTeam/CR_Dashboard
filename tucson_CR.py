@@ -250,7 +250,21 @@ else:
                 st.experimental_set_query_params(page="main")
                 st.experimental_rerun()
 
+        def check_all_characters_present(df, columns_to_check):
+            # Function to clean a string by removing underscores and square brackets and converting to lowercase
+            def clean_string(s):
+                return s.replace('_', '').replace('[', '').replace(']', '').replace(' ','').replace('#','').lower()
 
+            # Clean and convert all column names in df to lowercase for case-insensitive comparison
+            df_columns_lower = [clean_string(column) for column in df.columns]
+
+            # Clean and convert the columns_to_check list to lowercase for case-insensitive comparison
+            columns_to_check_lower = [clean_string(column) for column in columns_to_check]
+
+            # Use a list comprehension to filter columns
+            matching_columns = [column for column in df.columns if clean_string(column) in columns_to_check_lower]
+
+            return matching_columns
 
         def main_page(data1, data2, data3):
             """Main page display with dynamic data"""
@@ -320,60 +334,108 @@ else:
                 csv4, file_name4 = create_csv(filtered_df4, "time_period_overall_data.csv")
                 download_csv(csv4, file_name4, "Download Time Period Overall Data")
 
-
         def weekday_page():
-            st.title("Weekday OverAll Data")
-            if 'uta' in selected_project:
-                wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-            elif 'tucson' in selected_project:
-                wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                        '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-            else:
-                wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-                
-
-            main_page(wkday_dir_df[wkday_dir_columns],
-                        wkday_time_df[wkday_time_columns],
-                        wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
-            if st.button("GO TO HOME"):
-                st.experimental_set_query_params(page="main")
-                st.experimental_rerun()
+                    st.title("Weekday OverAll Data")
+                    if 'uta' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                                '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
+                    elif 'tucson' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                    else:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                                '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
+                        
+                    # day_column_present = check_all_characters_present(wkday_dir_df, ["day"])
+                    # if day_column_present:
+                    #     wkday_dir_columns.insert(2,day_column_present[0])
+                    main_page(wkday_dir_df[wkday_dir_columns],
+                                wkday_time_df[wkday_time_columns],
+                                wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+                    if st.button("GO TO HOME"):
+                        st.experimental_set_query_params(page="main")
+                        st.experimental_rerun()
 
         def weekend_page():
             st.title("Weekend OverAll Data")
+            day_column_present = check_all_characters_present(wkend_dir_df, ["day"])
+            route_level_day_column_present = check_all_characters_present(wkend_df, ["day"])
             if 'uta' in selected_project:
-                wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+
+                # day_column_present = check_all_characters_present(wkend_dir_df, ["day"])
+                print(day_column_present)
+                if day_column_present:
+                    # print(wkend_dir_columns)
+                    print("Inside If Condition")
+                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED',day_column_present[0],'STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+                else:
+                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                            '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-                wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
+                if route_level_day_column_present:
+                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED',route_level_day_column_present[0],'Route Level Goal', '# of Surveys', 'Remaining']
+                else:
+                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
             elif 'tucson' in selected_project:
-                wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                if day_column_present:
+                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', day_column_present[0],'(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                else:
+                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                if route_level_day_column_present:
+                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED',route_level_day_column_present[0],'Route Level Goal', '# of Surveys', 'Remaining']
+                else: 
+                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
+                # wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Day' ,'Route Level Goal', '# of Surveys', 'Remaining']
             else:
-                wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+                if day_column_present:
+                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', day_column_present[0],'(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                            '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+                else:
+                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-                
-                
+                if route_level_day_column_present:
+                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED',route_level_day_column_present,'Route Level Goal', '# of Surveys', 'Remaining']
+                else:
+                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
+
+            # day_column_present = check_all_characters_present(wkend_dir_df, ["day"])
+            # print(day_column_present)
+            # if day_column_present:
+            #     print(wkend_dir_columns)
+            #     wkend_dir_columns.insert(2,day_column_present[0])
+            #     print(wkend_dir_columns)
+
+            # print(wkend_dir_df.columns)
+            # print("Data Columns Before Passing to main_page:", wkend_dir_df[wkend_dir_columns].columns)
+
             main_page(wkend_dir_df[wkend_dir_columns],
                     wkend_time_df[wkend_time_columns],
-                    wkend_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+                    wkend_df[wkend_df_columns])
 
             if st.button("GO TO HOME"):
                 st.experimental_set_query_params(page="main")
                 st.experimental_rerun()
+
+
+
+
 
         # if "page_type" not in st.session_state:
         #     st.session_state["page_type"] = "weekday"  # Default page
