@@ -2,6 +2,7 @@ import os
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 import jwt
+import time
 import bcrypt
 import base64
 import secrets
@@ -63,26 +64,80 @@ schema_value = {'TUCSON': 'tucson_bus','TUCSON RAIL': 'tucson_rail','VTA': 'publ
 
 
 def send_activation_email(email, activation_token):
-    """Send an account activation email with a secure token."""
+    """Send an account activation email with a secure token using HTML format."""
     activation_link = f"http://18.116.237.208:8501/?page=activate&token={activation_token}"
+    
     subject = "Activate Your Account"
-    body = f"Click the link to activate your account: {activation_link}\n"
+    
+    # HTML email body
+    body = f"""
+    <html>
+    <head>
+         <style>
+            .container {{
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 20px;
+                background-color: #f4f4f4;
+            }}
+            .email-box {{
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+                max-width: 500px;
+                margin: auto;
+            }}
+            .btn {{
+                display: inline-block;
+                padding: 10px 20px;
+                margin-top: 20px;
+                font-size: 16px;
+                color: #FFF;
+                background-color: #007BFF;
+                text-decoration: none;
+                border-radius: 5px;
+            }}
+            .btn:hover {{
+                background-color: #0056b3;
+            }}
+            .footer {{
+                margin-top: 20px;
+                font-size: 12px;
+                color: #666;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="email-box">
+                <h2>Welcome to Our Service!</h2>
+                <p>Thank you for signing up. Please activate your account by clicking the button below:</p>
+                <a class="btn" href="{activation_link}" style="color: #fff">Activate My Account</a>
+                <p>If the button above doesn't work, you can also use this link:</p>
+                <p><a href="{activation_link}">{activation_link}</a></p>
+                <p class="footer">If you did not sign up for this account, please ignore this email.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
 
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = email
         msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
+        msg.attach(MIMEText(body, 'html'))  # Use 'html' instead of 'plain'
 
         with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, email, msg.as_string())
 
-        st.success("Activation email sent! Please check your inbox.")
+        print("Activation email sent successfully!")  # Replace with `st.success()` if using Streamlit
     except Exception as e:
-        st.error(f"Failed to send email: {e}")
+        print(f"Failed to send email: {e}")  # Replace with `st.error()` if using Streamlit
 
 
 def create_new_user(email, username, password, role):
@@ -109,7 +164,7 @@ def create_new_user(email, username, password, role):
         cursor.execute(insert_query, (email, username, encoded_password, role, False, activation_token))
         conn.commit()
         send_activation_email(email, activation_token)
-        # st.success(f"User {username} created successfully! Activation email sent.")
+        st.success(f"User {username} created successfully! Activation email sent.")
         return True
     except Exception as e:
         st.error(f"Failed to create user: {e}")
@@ -118,114 +173,66 @@ def create_new_user(email, username, password, role):
         cursor.close()
         conn.close()
 
-# def create_new_user_page():
-#     """Displays a form for admins to create new users."""
-#     st.title("Create New User (Admin Only)")
-
-#     # Check if the current user is an admin
-#     if "user" not in st.session_state or st.session_state["user"].get("role", "").lower() != "admin":
-#         st.error("You must be an admin to access this page.")
-#         st.stop()
-
-#     # Initialize session state for form inputs
-#     if "create_user_username" not in st.session_state:
-#         st.session_state["create_user_username"] = ""
-#     if "create_user_email" not in st.session_state:
-#         st.session_state["create_user_email"] = ""
-#     if "create_user_role" not in st.session_state:
-#         st.session_state["create_user_role"] = "USER"
-#     if "create_user_password" not in st.session_state:
-#         st.session_state["create_user_password"] = ""
-#     if "create_user_confirm_password" not in st.session_state:
-#         st.session_state["create_user_confirm_password"] = ""
-
-#     with st.form(key="create_new_user_form"):
-#         # Form inputs tied to session state
-#         st.session_state["create_user_username"] = st.text_input("Username", value=st.session_state["create_user_username"])
-#         st.session_state["create_user_email"] = st.text_input("Email", value=st.session_state["create_user_email"])
-#         st.session_state["create_user_role"] = st.selectbox("Select Role", ["USER", "ADMIN"], index=["USER", "ADMIN"].index(st.session_state["create_user_role"]))
-#         st.session_state["create_user_password"] = st.text_input("Password", type="password", value=st.session_state["create_user_password"])
-#         st.session_state["create_user_confirm_password"] = st.text_input("Confirm Password", type="password", value=st.session_state["create_user_confirm_password"])
-        
-#         submit_button = st.form_submit_button(label="ADD User")
-
-#         if submit_button:
-#             username = st.session_state["create_user_username"]
-#             email = st.session_state["create_user_email"]
-#             role = st.session_state["create_user_role"]
-#             password = st.session_state["create_user_password"]
-#             confirm_password = st.session_state["create_user_confirm_password"]
-
-#             if not username or not email or not password or not confirm_password:
-#                 st.error("Please fill in all fields.")
-#             elif password != confirm_password:
-#                 st.error("Passwords do not match.")
-#             else:
-#                 if create_new_user(email, username, password, role):
-#                     # Clear form after successful creation
-#                     st.session_state["create_user_username"] = ""
-#                     st.session_state["create_user_email"] = ""
-#                     st.session_state["create_user_role"] = "USER"
-#                     st.session_state["create_user_password"] = ""
-#                     st.session_state["create_user_confirm_password"] = ""
-
-#     # Navigation back to main page (outside the form)
-#     if st.button("Back to Main Page"):
-#         st.experimental_set_query_params(page="main")
-#         st.experimental_rerun()
-
-
 def create_new_user_page():
     """Displays a form for admins to create new users."""
-    st.title("Create New User (Admin Only)")
+    st.title("Create New User")
 
-    # Check if the current user is an admin
-    if "user" not in st.session_state or st.session_state["user"].get("role", "").lower() != "admin":
-        st.error("You must be an admin to access this page.")
-        st.stop()
+    # Initialize minimal session state for navigation and messages
+    if "current_page" not in st.session_state:
+        st.session_state["current_page"] = "create_user"
+    if "error_message" not in st.session_state:
+        st.session_state["error_message"] = ""
+    if "success_message" not in st.session_state:
+        st.session_state["success_message"] = ""
 
-    # Initialize session state for form inputs
-    if "form_submitted" not in st.session_state:
-        st.session_state["form_submitted"] = False
+    # Display error message if it exists
+    if st.session_state["error_message"]:
+        st.error(st.session_state["error_message"])
+
+    # Display success message if it exists
+    if st.session_state["success_message"]:
+        st.success(st.session_state["success_message"])
+        # Refresh the page after 2 seconds to clear the form
+        time.sleep(2)  # Delay to show the message
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
+        st.stop()  # Stop execution to prevent further rendering until refresh
 
     with st.form(key="create_new_user_form"):
-        # Form inputs
-        username = st.text_input("Username", value=st.session_state.get("create_user_username", ""))
-        email = st.text_input("Email", value=st.session_state.get("create_user_email", ""))
-        role = st.selectbox("Select Role", ["USER", "ADMIN"], index=["USER", "ADMIN"].index(st.session_state.get("create_user_role", "USER")))
-        password = st.text_input("Password", type="password", value=st.session_state.get("create_user_password", ""))
-        confirm_password = st.text_input("Confirm Password", type="password", value=st.session_state.get("create_user_confirm_password", ""))
+        # Form inputs without session state persistence
+        username = st.text_input("Username")
+        email = st.text_input("Email")
+        role = st.selectbox("Select Role", ["USER", "ADMIN"], index=0)  # Default to USER
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
         
         submit_button = st.form_submit_button(label="ADD User")
 
         if submit_button:
-            st.session_state["form_submitted"] = True
-            st.session_state["create_user_username"] = username
-            st.session_state["create_user_email"] = email
-            st.session_state["create_user_role"] = role
-            st.session_state["create_user_password"] = password
-            st.session_state["create_user_confirm_password"] = confirm_password
+            st.session_state["error_message"] = ""
+            st.session_state["success_message"] = ""
 
-            if not username or not email or not password or not confirm_password:
-                st.error("Please fill in all fields.")
+            if not all([username, email, password, confirm_password]):
+                st.session_state["error_message"] = "Please fill in all fields."
             elif password != confirm_password:
-                st.error("Passwords do not match.")
+                st.session_state["error_message"] = "Passwords do not match."
             else:
-                if create_new_user(email, username, password, role):
-                    st.success("User created successfully! Activation email sent.")
-                    # Clear form after successful creation
-                    st.session_state["create_user_username"] = ""
-                    st.session_state["create_user_email"] = ""
-                    st.session_state["create_user_role"] = "USER"
-                    st.session_state["create_user_password"] = ""
-                    st.session_state["create_user_confirm_password"] = ""
-                    st.session_state["form_submitted"] = False
-    # Navigation back to main page (outside the form)
-    if st.button("Back to Main Page"):
-        st.experimental_set_query_params(page="main")
-        st.experimental_rerun()
+                try:
+                    if create_new_user(email, username, password, role):
+                        st.session_state["success_message"] = "User created successfully! Activation email sent."
+                        time.sleep(5)  # Delay to show the message
 
+                        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
 
+                        # The success message will trigger the refresh above
+                    else:
+                        st.session_state["error_message"] = "Failed to create user."
+                except Exception as e:
+                    st.session_state["error_message"] = f"Error: {str(e)}"
+
+    # Navigation button
+    if st.button("Login"):
+        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
+        
 
 def register_new_user(email, username, password,role):
     conn = user_connect_to_snowflake()
@@ -244,12 +251,12 @@ def register_new_user(email, username, password,role):
         INSERT INTO user.user_table (email, username, password, role, is_active, activation_token) 
         VALUES (%s, %s, %s, %s, %s, %s)
     """
-    cursor.execute(insert_query, (email, username, encoded_password, role, True, activation_token))
+    cursor.execute(insert_query, (email, username, encoded_password, role, False, activation_token))
     conn.commit()
     cursor.close()
     conn.close()
 
-    # send_activation_email(email, activation_token)
+    send_activation_email(email, activation_token)
 
     st.success("Registration successful! You can now log in.")
     return True
@@ -291,7 +298,7 @@ def register_page():
                 # st.experimental_rerun()
 
     # Navigation buttons
-    if st.button("Go to Login Page"):
+    if st.button("Login"):
         # st.experimental_set_query_params(page="login")
         # st.experimental_rerun()
         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
@@ -385,8 +392,6 @@ def check_user_login(email, password):
         return None  # User not found
 
 
-
-# Streamlit login page
 def login():
     """Displays a login form and handles authentication."""
     st.title("Login Page")
@@ -408,10 +413,10 @@ def login():
             store_user_in_session(user)
             st.success(f"Welcome {user['username']}!")
             # Generate JWT token
-
-
+            jwt_token = generate_jwt(user["email"], user["username"], user["role"])
             # If login is successful
             st.session_state["logged_in"] = True
+            st.session_state["jwt_token"] = jwt_token
             st.session_state["selected_project"] = project  # Store selected project in session state
             st.session_state["schema"] = schema_value[project]
 
@@ -422,13 +427,10 @@ def login():
         else:
             # Display error if login fails
             st.error("Incorrect email or password")
-    
-    # Button to go to register page
-    # if st.button("Register"):
-    #     st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=register">', unsafe_allow_html=True)
 
     if st.button("Forgot Password"):
         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=forgot_password">', unsafe_allow_html=True)
+
 
 
 def logout():
@@ -460,7 +462,6 @@ def is_authenticated():
         return False  # User is not logged in
 
 
-
 # Function to decode JWT token
 def decode_jwt(token):
     try:
@@ -485,26 +486,77 @@ def send_reset_email(user_email, reset_token):
     """Send password reset email with the reset token link."""
     reset_link = f"http://18.116.237.208:8501/?page=reset_password&token={reset_token}"
     subject = "Password Reset Request"
-    body = f"Click the link to reset your password: {reset_link}"
 
-    # Send email (Using SMTP)
+    # HTML email body
+    body = f"""
+    <html>
+    <head>
+        <style>
+            .container {{
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 20px;
+                background-color: #f4f4f4;
+            }}
+            .email-box {{
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+                max-width: 500px;
+                margin: auto;
+            }}
+            .btn {{
+                display: inline-block;
+                padding: 12px 20px;
+                margin-top: 20px;
+                font-size: 16px;
+                color: #ffffff;
+                background-color: #dc3545; /* Red color for reset warning */
+                text-decoration: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }}
+            .btn:hover {{
+                background-color: #c82333;
+            }}
+            .footer {{
+                margin-top: 20px;
+                font-size: 12px;
+                color: #666;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="email-box">
+                <h2>Password Reset Request</h2>
+                <p>We received a request to reset your password. Click the button below to proceed:</p>
+                <a class="btn" href="{reset_link}" style="color: #fff">Reset My Password</a>
+                <p>If the button above doesn't work, you can also use this link:</p>
+                <p><a href="{reset_link}">{reset_link}</a></p>
+                <p class="footer">If you did not request a password reset, please ignore this email.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_ADDRESS
         msg['To'] = user_email
         msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
-        
-        # SMTP connection and email sending
+        msg.attach(MIMEText(body, 'html'))  # Use 'html' instead of 'plain'
+
         with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
-            server.starttls()  # Secure the connection
+            server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, user_email, msg.as_string())
-        
         st.success("Password reset link sent to your email.")
-    except Exception as e:
-        st.error(f"Failed to send email: {e}")
 
+    except Exception as e:
+        print(f"Failed to send email: {e}")  # Replace with `st.error()` if using Streamlit
 
 # Forgot Password page
 def forgot_password():
@@ -602,33 +654,87 @@ def generate_change_password_token(email):
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
+
+
 def send_change_password_email(email):
     """Send a password change email with a secure link."""
     token = generate_change_password_token(email)
     change_link = f"http://18.116.237.208:8501/?page=change_password&token={token}"
     
     subject = "Change Your Password"
-    body = f"Click the link to change your password: {change_link}\nThis link is valid for 30 minutes."
 
-    # # Debug: Check if the function is triggered
-    # st.write("Sending email to:", email)
-    # st.write("Generated link:", change_link)
+    # HTML email body
+    body = f"""
+    <html>
+    <head>
+        <style>
+            .container {{
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 20px;
+                background-color: #f4f4f4;
+            }}
+            .email-box {{
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+                max-width: 500px;
+                margin: auto;
+            }}
+            .btn {{
+                display: inline-block;
+                padding: 12px 20px;
+                margin-top: 20px;
+                font-size: 16px;
+                color: #fff;
+                background-color: #007bff; /* Blue for security action */
+                text-decoration: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }}
+            .btn:hover {{
+                background-color: #0056b3;
+                color: #fff;
+            }}
+            .footer {{
+                margin-top: 20px;
+                font-size: 12px;
+                color: #666;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="email-box">
+                <h2>Password Change Request</h2>
+                <p>We received a request to change your password. Click the button below to proceed:</p>
+                <a class="btn" href="{change_link}" style="color: #fff">Change My Password</a>
+                <p>If the button above doesn't work, you can also use this link:</p>
+                <p><a href="{change_link}">{change_link}</a></p>
+                <p class="footer">This link is valid for <strong>30 minutes</strong>. If you did not request this, please ignore this email.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
 
     try:
         msg = MIMEMultipart()
         msg["From"] = EMAIL_ADDRESS
         msg["To"] = email
         msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
-        
+        msg.attach(MIMEText(body, "html"))  # Use 'html' instead of 'plain'
+
         with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, email, msg.as_string())
-        
-        st.success("Password change link sent to your email.")
+
+        st.success("Password change link sent to your email.")  # Keep success message
     except Exception as e:
         st.error(f"Failed to send email: {e}")
+
 
 def verify_change_password_token(token):
     """Verify JWT token and extract the email."""
@@ -851,7 +957,7 @@ def change_password(email):
             logger.debug("Password update failed")
 
     # Back button
-    if st.button("Back to Main Page"):
+    if st.button("Login"):
         for key in ["current_password", "new_password", "confirm_password", "form_submitted"]:
             if key in st.session_state:
                 del st.session_state[key]
