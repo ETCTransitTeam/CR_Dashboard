@@ -60,7 +60,7 @@ def user_connect_to_snowflake():
     )
 
 
-schema_value = {'TUCSON': 'tucson_bus','TUCSON RAIL': 'tucson_rail','VTA': 'public', 'UTA': 'uta_rail'}
+schema_value = {'TUCSON': 'tucson_bus','TUCSON RAIL': 'tucson_rail','VTA': 'public', 'UTA': 'uta_rail', 'STL':'stl_bus'}
 
 
 def send_activation_email(email, activation_token):

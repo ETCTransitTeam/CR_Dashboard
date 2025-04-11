@@ -99,6 +99,19 @@ PROJECTS = {
             "cr": "VTA_CA_CR.xlsx",
             'kingelvis':'VTA_CA_OB_KINGElvis.xlsx'
         }
+    },
+    "STL": {
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("STL_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("STL_ELVIS_TABLE_NAME")
+                    }
+                },
+        "files": {
+            "details": "details_saint_louis_MO_od_excel.xlsx",
+            "cr": "STL_MO_CR.xlsx",
+            # 'kingelvis':'VTA_CA_OB_KINGElvis.xlsx'
+        }
     }
 }
 
@@ -192,6 +205,8 @@ def fetch_and_process_data(project,schema):
         df = st.session_state.df
         # Apply filters only after confirming df is loaded
         time_value_code_check=['have5minforsurvecode']
+        route_surveyed_code_check=['routesurveyedcode']
+        route_surveyed_code=check_all_characters_present(df,route_surveyed_code_check)
         time_value_code_df=check_all_characters_present(df,time_value_code_check)
         df=df[df[time_value_code_df[0]]==1]
         df=df[df['INTERV_INIT']!='999']
@@ -204,6 +219,8 @@ def fetch_and_process_data(project,schema):
         df.drop_duplicates(subset='id',inplace=True)
         time_column_check=['timeoncode']
         time_period_column_check=['timeon']
+        df.rename(columns={route_surveyed_code[0]:'ROUTE_SURVEYEDCode'},inplace=True)
+
         time_column_df=check_all_characters_present(df,time_column_check)
         time_period_column_df=check_all_characters_present(df,time_period_column_check)
 
@@ -304,6 +321,30 @@ def fetch_and_process_data(project,schema):
 
 
         print("Files read for TUCSON")
+
+    if project=='STL':
+        # ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
+
+        detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
+
+        wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-Overall')
+        wkend_route_df = read_excel_from_s3(bucket_name,project_config["files"]["cr"], 'WkEND-RouteTotal')
+
+        wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-Overall')
+        wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
+
+        # ke_df=ke_df[ke_df['INTERV_INIT']!='999']
+        # ke_df=ke_df[ke_df['INTERV_INIT']!=999]
+        # ke_df=ke_df[ke_df['1st Cleaner']!='No 5 MIN']
+        # ke_df=ke_df[ke_df['1st Cleaner']!='Test']
+        # ke_df=ke_df[ke_df['1st Cleaner']!='Test/No 5 MIN']
+        # ke_df=ke_df[ke_df['Final_Usage'].str.lower()=='use']
+        # df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join([str(x).split('_')[0], '1'] + str(x).split('_')[2:]))
+        # df=pd.merge(df,ke_df['id'],on='id',how='inner')
+
+
+        print("Files read for STL")
 
     elif project=='TUCSON RAIL':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
@@ -419,8 +460,9 @@ def fetch_and_process_data(project,schema):
     # wkday_overall_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-Overall')
     # wkday_route_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-RouteTotal')
 
-
-    df=df[df['HAVE_5_MIN_FOR_SURVECode']==1]
+    have5min_column_check=['have5minforsurvecode']
+    have5min_column=check_all_characters_present(df,have5min_column_check)
+    df=df[df[have5min_column[0]]==1]
     df=df[df['INTERV_INIT']!='999']
     df=df[df['INTERV_INIT']!=999]
 
@@ -1143,6 +1185,60 @@ def fetch_and_process_data(project,schema):
             wkend_stationwise_route_df.loc[row.name,'STATION_NAME']=station_name    
         print("After this, I'll create snowflake connection") 
 
+    elif project=='STL':
+        
+        wkend_comparison_df.rename(columns={'CR_AM_Peak':'(1) Goal','CR_Midday':'(2) Goal','CR_PM':'(3) Goal','CR_Evening':'(4) Goal',
+                'DB_AM_Peak':'(1) Collect',
+            'DB_Midday':'(2) Collect', 'DB_PM':'(3) Collect',  'DB_Evening':'(4) Collect', 'AM_DIFFERENCE':'(1) Remain', 'Midday_DIFFERENCE':'(2) Remain',
+            'PM_DIFFERENCE':'(3) Remain','Evening_DIFFERENCE':'(4) Remain','CR_Overall_Goal':'Route Level Goal','DB_Total':'# of Surveys','Overall_Goal_DIFFERENCE':'Remaining'},inplace=True)
+
+        wkday_comparison_df.rename(columns={'CR_AM_Peak':'(1) Goal','CR_Midday':'(2) Goal','CR_PM':'(3) Goal','CR_Evening':'(4) Goal',
+                'DB_AM_Peak':'(1) Collect',
+            'DB_Midday':'(2) Collect', 'DB_PM':'(3) Collect',  'DB_Evening':'(4) Collect',  'AM_DIFFERENCE':'(1) Remain', 'Midday_DIFFERENCE':'(2) Remain',
+            'PM_DIFFERENCE':'(3) Remain', 'Evening_DIFFERENCE':'(4) Remain','CR_Overall_Goal':'Route Level Goal','DB_Total':'# of Surveys','Overall_Goal_DIFFERENCE':'Remaining'},inplace=True)
+
+        wkday_route_direction_df.rename(columns={'CR_AM_Peak':'(1) Goal','CR_Midday':'(2) Goal','CR_PM':'(3) Goal','CR_Evening':'(4) Goal',
+                'DB_AM_Peak':'(1) Collect',
+            'DB_Midday':'(2) Collect', 'DB_PM':'(3) Collect', 'DB_Evening':'(4) Collect','AM_DIFFERENCE':'(1) Remain', 'Midday_DIFFERENCE':'(2) Remain',
+            'PM_DIFFERENCE':'(3) Remain', 'Evening_DIFFERENCE':'(4) Remain','CR_Overall_Goal':'Route Level Goal','DB_Total':'# of Surveys','Overall_Goal_DIFFERENCE':'Remaining'},inplace=True)
+
+        wkend_route_direction_df.rename(columns={'CR_AM_Peak':'(1) Goal','CR_Midday':'(2) Goal','CR_PM':'(3) Goal','CR_Evening':'(4) Goal',
+                'DB_AM_Peak':'(1) Collect',
+            'DB_Midday':'(2) Collect', 'DB_PM':'(3) Collect', 'DB_Evening':'(4) Collect', 'AM_DIFFERENCE':'(1) Remain', 'Midday_DIFFERENCE':'(2) Remain',
+            'PM_DIFFERENCE':'(3) Remain', 'Evening_DIFFERENCE':'(4) Remain','CR_Overall_Goal':'Route Level Goal','DB_Total':'# of Surveys','Overall_Goal_DIFFERENCE':'Remaining'},inplace=True)
+
+
+        wkday_comparison_df = wkday_comparison_df.merge(
+            detail_df_xfers[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']],
+            left_on='ROUTE_SURVEYEDCode',
+            right_on='ETC_ROUTE_ID',
+            how='left'
+        )
+
+        # Rename the column as per requirement
+        wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
+        wkday_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+
+        wkend_comparison_df = wkend_comparison_df.merge(
+            detail_df_xfers[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']],
+            left_on='ROUTE_SURVEYEDCode',
+            right_on='ETC_ROUTE_ID',
+            how='left'
+        )
+
+        # Rename the column as per requirement
+        wkend_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
+        wkend_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+
+        for _,row in wkday_route_direction_df.iterrows():
+            route_surveyed=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_NAME'].iloc[0]
+            route_surveyed_ID=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_ID'].iloc[0]
+            wkday_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed  
+
+        for _,row in wkend_route_direction_df.iterrows():
+            route_surveyed=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_NAME'].iloc[0]
+            route_surveyed_ID=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_ID'].iloc[0]
+            wkend_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed  
 
     def create_snowflake_connection():
         print("Creating connection with snowflake")
@@ -1319,6 +1415,34 @@ def fetch_and_process_data(project,schema):
         'WkDAY Time Data': 'wkday_time_data',
         'LAST SURVEY DATE': 'last_survey_date',
             }
+        
+    elif project=='STL':
+        # DataFrames preparation
+        dataframes = {
+            'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkDAY RAW DATA': weekday_raw_df,
+            'WkEND RAW DATA': weekend_raw_df,
+            'WkEND Time Data': wkend_time_value_df,
+            'WkDAY Time Data': wkday_time_value_df,
+            'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
+            'LAST SURVEY DATE': latest_date_df
+        }
+
+        # Table mapping
+        table_info = {
+            'WkDAY RAW DATA': 'wkday_raw', 
+            'WkEND RAW DATA': 'wkend_raw', 
+            'WkDAY Route Comparison': 'wkday_comparison', 
+            'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+            'WkEND Route Comparison': 'wkend_comparison', 
+            'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+            'WkEND Time Data': 'wkend_time_data', 
+            'WkDAY Time Data': 'wkday_time_data',
+            'LAST SURVEY DATE': 'last_survey_date'
+        }
+
     # Call the function
     print("Final call")
     create_tables_and_insert_data(dataframes, table_info)

@@ -6,13 +6,13 @@ import os
 
 def create_snowflake_connection():
     conn = snowflake.connector.connect(
-        user=config('user'),
-        password=config('password'),
-        account=config('account'),
-        warehouse=config('warehouse'),
-        database=config('database'),
-        schema="tucson_bus",
-        role=config('role')
+        user=config('SNOWFLAKE_USER'),
+        password=config('SNOWFLAKE_PASSWORD'),
+        account=config('SNOWFLAKE_ACCOUNT'),
+        warehouse=config('SNOWFLAKE_WAREHOUSE'),
+        database=config('SNOWFLAKE_DATABASE'),
+        schema='stl_bus',
+        role=config('SNOWFLAKE_ROLE')
     )
     return conn
 
@@ -68,19 +68,19 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250129_TUCSON_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
-#  For bus transport project
-sheet_info = {
-    'WkDAY RAW DATA': 'wkday_raw', 
-    'WkEND RAW DATA': 'wkend_raw', 
-    'WkDAY Route Comparison': 'wkday_comparison', 
-    'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
-    'WkEND Route Comparison': 'wkend_comparison', 
-    'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
-    'WkEND Time Data': 'wkend_time_data', 
-    'WkDAY Time Data': 'wkday_time_data',
-    'LAST SURVEY DATE': 'last_survey_date',
-}
+# file_path = 'reviewtool_20250410_STL_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
+# #  For bus transport project
+# sheet_info = {
+#     'WkDAY RAW DATA': 'wkday_raw', 
+#     'WkEND RAW DATA': 'wkend_raw', 
+#     'WkDAY Route Comparison': 'wkday_comparison', 
+#     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+#     'WkEND Route Comparison': 'wkend_comparison', 
+#     'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+#     'WkEND Time Data': 'wkend_time_data', 
+#     'WkDAY Time Data': 'wkday_time_data',
+#     'LAST SURVEY DATE': 'last_survey_date',
+# }
 
 #  For rail project
 # sheet_info = {
@@ -97,13 +97,13 @@ sheet_info = {
 #     'LAST SURVEY DATE': 'last_survey_date',
 # }
 
-# file_path = 'details_TUCSON_AZ_od_excel.xlsx'
+file_path = 'details_saint_louis_MO_od_excel.xlsx'
 # detail_df=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='TOD')
 # # detail_df=detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
 # #                               'TIME_PERIOD', 'START_TIME']]
-# sheet_info = {
-#     'TOD': 'TOD'
-# }
+sheet_info = {
+    'TOD': 'TOD'
+}
 
 # Call the function
 create_tables_and_insert_data(file_path, sheet_info)   

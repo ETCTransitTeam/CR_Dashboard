@@ -6,13 +6,13 @@ def create_schema(database_name, schema_name):
     # Establish a connection to Snowflake
 
     conn = snowflake.connector.connect(
-        user=config('user'),
-        password=config('password'),
-        account=config('account'),
-        warehouse=config('warehouse'),
+        user=config('SNOWFLAKE_USER'),
+        password=config('SNOWFLAKE_PASSWORD'),
+        account=config('SNOWFLAKE_ACCOUNT'),
+        warehouse=config('SNOWFLAKE_WAREHOUSE'),
         database=database_name,
         schema='public',
-        role=config('role')
+        role=config('SNOWFLAKE_ROLE')
     )
 
     try:
@@ -29,6 +29,6 @@ def create_schema(database_name, schema_name):
 
 # Provide your database and new schema name
 database_name = 'CompletionReport'  # Replace with your actual database name
-schema_name = 'tucson_bus'  # Replace with your desired new schema name
+schema_name = 'stl_bus'  # Replace with your desired new schema name
 
 create_schema(database_name, schema_name)
