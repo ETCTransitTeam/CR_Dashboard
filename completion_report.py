@@ -167,8 +167,8 @@ def download_csv(csv, file_name, label):
 
 
 # Retrieve current query parameters
-query_params = st.experimental_get_query_params()
-page = query_params.get("page", ["main"])[0]
+query_params = st.query_params
+page = query_params.get("page", "main")
 
 # Debugging: Display the current query parameters
 # st.write(f"Current query parameters: {query_params}")
@@ -176,7 +176,7 @@ page = query_params.get("page", ["main"])[0]
 def update_query_params_and_rerun(new_page):
     if page != new_page:  # Only update if the page is different
         st.experimental_set_query_params(page=new_page)
-        st.experimental_rerun()  # Trigger a rerun after updating params
+        st.rerun()  # Trigger a rerun after updating params
 
 
 # Layout columns
@@ -204,7 +204,7 @@ with header_col2:
         # Button for Time OF Day Details
         if st.button('Time OF Day Details'):
             st.experimental_set_query_params(page="timedetails")
-            # st.experimental_rerun()
+            # st.rerun()
             st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=timedetails">', unsafe_allow_html=True)
 
     else:
@@ -215,19 +215,19 @@ with header_col3:
     # WEEKDAY-OVERALL button
     if st.button("WEEKDAY-OVERALL"):
         st.experimental_set_query_params(page="weekday")
-        # st.experimental_rerun()
+        # st.rerun()
         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
 
 
     # WEEKEND-OVERALL button
     if st.button("WEEKEND-OVERALL"):
         st.experimental_set_query_params(page="weekend")
-        # st.experimental_rerun()
+        # st.rerun()
         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
 
 
 # if "page" in query_params and query_params["page"][0] != page:
-#     st.experimental_rerun()
+#     st.rerun()
 
 
 def filter_dataframe(df, query):
@@ -249,7 +249,7 @@ def time_details(details_df):
     st.dataframe(details_df, height=670, use_container_width=True)
     if st.button("GO TO HOME"):
         st.experimental_set_query_params(page="main")
-        st.experimental_rerun()
+        st.rerun()
 
 
 
@@ -396,7 +396,7 @@ def weekday_page():
                 wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
     if st.button("GO TO HOME"):
         st.experimental_set_query_params(page="main")
-        st.experimental_rerun()
+        st.rerun()
 
 
 def weekend_page():
@@ -412,7 +412,7 @@ def weekend_page():
 
     if st.button("GO TO HOME"):
         st.experimental_set_query_params(page="main")
-        st.experimental_rerun()
+        st.rerun()
 
 # if "page_type" not in st.session_state:
 #     st.session_state["page_type"] = "weekday"  # Default page

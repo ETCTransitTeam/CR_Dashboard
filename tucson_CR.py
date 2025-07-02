@@ -35,9 +35,9 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
 # Get existing query parameters
-query_params = st.experimental_get_query_params()
+query_params = st.query_params
 # current_page = query_params.get("page", [""])[0]  # Get 'page' value if it exists
-current_page = st.experimental_get_query_params().get("page", ["login"])[0]  # Default to "login" if not set
+current_page = st.query_params.get("page", "login")  # Default to "login" if not set
 
 button_style = """
 <style>
@@ -70,7 +70,7 @@ if not st.session_state["logged_in"]:
         st.write('Token Expired. LogIn Again')
         if st.button("Login"):
             # st.experimental_set_query_params(page="login")
-            # st.experimental_rerun()
+            # st.rerun()
             st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
     st.stop()
 else:
@@ -123,7 +123,10 @@ else:
                 'wkday_time_data': 'wkday_time_df',
                 'wkend_raw': 'wkend_raw_df',
                 'wkday_raw': 'wkday_raw_df',
-                'TOD': 'detail_df'
+                'TOD': 'detail_df',
+                'by_interv_totals': 'by_interv_totals_df',
+                'by_route_totals': 'by_route_totals_df',
+                'survey_detail_totals': 'survey_detail_totals_df',
             }
 
             # Initialize an empty dictionary to hold DataFrames
@@ -181,6 +184,9 @@ else:
         wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
         wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
 
+        by_interv_totals_df = dataframes['by_interv_totals_df']
+        by_route_totals_df = dataframes['by_route_totals_df']
+        survey_detail_totals_df = dataframes['survey_detail_totals_df']
 
         st.sidebar.markdown("**User Profile**")
         st.sidebar.caption(f"**Role:** {st.session_state['user']['role']}")
@@ -209,8 +215,8 @@ else:
         def time_details(details_df):
             st.dataframe(details_df, height=670, use_container_width=True)
             if st.button("Home Page"):
-                st.experimental_set_query_params(page="main")
-                st.experimental_rerun()
+                st.query_params["page"] = "main"
+                st.rerun()
 
         
         def check_all_characters_present(df, columns_to_check):
@@ -328,8 +334,8 @@ else:
                         wkday_time_df[wkday_time_columns],
                         wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
             if st.button("Home Page"):
-                st.experimental_set_query_params(page="main")
-                st.experimental_rerun()
+                st.query_params["page"] = "main"
+                st.rerun()
 
         def weekend_page():
             st.title("Weekend OverAll Data")
@@ -375,7 +381,6 @@ else:
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
                 wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
-
             else:
                 if day_column_present:
                     wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', day_column_present[0],'(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
@@ -396,8 +401,8 @@ else:
                     wkend_df[wkend_df_columns])
 
             if st.button("Home Page"):
-                st.experimental_set_query_params(page="main")
-                st.experimental_rerun()
+                st.query_params["page"] = "main"
+                st.rerun()
 
         # if "page_type" not in st.session_state:
         #     st.session_state["page_type"] = "weekday"  # Default page
@@ -416,8 +421,8 @@ else:
             render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
 
             if st.button("Home Page"):
-                st.experimental_set_query_params()
-                st.experimental_rerun()
+                st.query_params()
+                st.rerun()
 
         def weekend_station_page():
             st.subheader('Route StationWise Comparison(WeekEND)')
@@ -434,8 +439,189 @@ else:
 
             render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
             if st.button("Home Page"):
-                st.experimental_set_query_params()
-                st.experimental_rerun()
+                st.query_params()
+                st.rerun()
+
+
+        def daily_totals_page():
+            if 'stl' in selected_project:
+                st.title("📊 Daily Totals - Interviewer and Route Level")
+                # Load Snowflake-extracted DataFrames
+                by_interv_totals_df = dataframes['by_interv_totals_df']
+                by_route_totals_df = dataframes['by_route_totals_df']
+                survey_detail_totals_df = dataframes['survey_detail_totals_df']
+
+                # Standardize column names to uppercase for consistent access
+                survey_detail_totals_df.columns = survey_detail_totals_df.columns.astype(str).str.strip().str.upper()
+
+                # Ensure DATE column exists
+                if 'DATE' not in survey_detail_totals_df.columns:
+                    st.error("❌ 'DATE' column not found in survey_detail_totals_df.")
+                    st.stop()
+
+                # Convert DATE column to datetime.date and handle errors
+                survey_detail_totals_df['DATE'] = pd.to_datetime(survey_detail_totals_df['DATE'], errors='coerce').dt.date
+
+                # Extract unique values for filters
+                all_dates = sorted(survey_detail_totals_df['DATE'].dropna().astype(str).unique())
+                all_intervs = sorted(survey_detail_totals_df['INTERV_INIT'].dropna().unique())
+
+                # Summary cards
+                total_surveys = survey_detail_totals_df['COUNT'].sum()
+                unique_interviewers = survey_detail_totals_df['INTERV_INIT'].nunique()
+                active_routes = survey_detail_totals_df['ROUTE'].nunique()
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Surveys", f"{total_surveys:,}")
+                with col2:
+                    st.metric("Unique Interviewers", unique_interviewers)
+                with col3:
+                    st.metric("Active Routes", active_routes)
+
+                # Create filter controls in a single row at the top - Interviewer first, then Date
+                filter_col1, filter_col2 = st.columns(2)
+                with filter_col1:
+                    selected_interv = st.selectbox(
+                        "Filter by Interviewer:",
+                        options=[None] + list(all_intervs),
+                        format_func=lambda x: x if x else "— All Interviewers —"
+                    )
+                with filter_col2:
+                    selected_date = st.selectbox(
+                        "Filter by Date:",
+                        options=[None] + list(all_dates),
+                        format_func=lambda x: x if x else "— All Dates —"
+                    )
+
+                # Function to add total row
+                def add_total_row(df, index_col):
+                    if not df.empty:
+                        total_row = df.select_dtypes(include=['number']).sum()
+                        total_row[index_col] = 'Total'
+                        return pd.concat([df, total_row.to_frame().T], ignore_index=True)
+                    return df
+
+                # Function to filter columns while keeping all rows
+                def filter_date_columns(df, date_col, selected_date_str):
+                    if selected_date_str is None:
+                        return df
+                    
+                    # Keep index column, selected date column (if exists), and Total column
+                    cols_to_keep = [df.columns[0]]  # First column (index)
+                    
+                    # Find the matching date column
+                    date_cols = [col for col in df.columns if str(col).split()[0] == selected_date_str]
+                    if date_cols:
+                        cols_to_keep.append(date_cols[0])
+                    
+                    # Keep Total column if it exists
+                    if 'Total' in df.columns:
+                        cols_to_keep.append('Total')
+                    
+                    return df[cols_to_keep]
+
+                # Function to format date columns
+                def format_date_columns(df):
+                    # Format date columns (those that can be parsed as dates)
+                    for col in df.columns:
+                        try:
+                            # Try to parse the column name as a date
+                            pd.to_datetime(col)
+                            # If successful, format it
+                            df = df.rename(columns={col: str(col).split()[0]})
+                        except:
+                            continue
+                    return df
+
+                # Process data based on filters
+                if selected_date or selected_interv:
+                    # Filter the detail data based on selections
+                    filtered_detail = survey_detail_totals_df.copy()
+                    
+                    if selected_date:
+                        filtered_detail = filtered_detail[filtered_detail['DATE'].astype(str) == selected_date]
+                    
+                    if selected_interv:
+                        filtered_detail = filtered_detail[filtered_detail['INTERV_INIT'] == selected_interv]
+
+                    # Process interviewer data
+                    if not filtered_detail.empty:
+                        # Pivot interviewer data
+                        interv_filtered = filtered_detail.pivot_table(
+                            index='INTERV_INIT',
+                            columns='DATE',
+                            values='COUNT',
+                            aggfunc='sum',
+                            fill_value=0
+                        ).reset_index()
+                        
+                        # Add Total column
+                        interv_filtered['Total'] = interv_filtered.select_dtypes(include=['number']).sum(axis=1)
+                        
+                        # Format date columns
+                        interv_filtered = format_date_columns(interv_filtered)
+                        
+                        # Add Total row
+                        interv_filtered_with_total = add_total_row(interv_filtered, 'INTERV_INIT')
+                        
+                        # Filter columns if date is selected
+                        if selected_date:
+                            interv_filtered_with_total = filter_date_columns(interv_filtered_with_total, 'DATE', selected_date)
+                    else:
+                        # Create empty DataFrame with correct structure
+                        columns = ['INTERV_INIT'] + ([selected_date] if selected_date else []) + ['Total']
+                        interv_filtered_with_total = pd.DataFrame(columns=columns)
+
+                    # Process route data
+                    if not filtered_detail.empty:
+                        # Pivot route data
+                        route_filtered = filtered_detail.pivot_table(
+                            index='ROUTE',
+                            columns='DATE',
+                            values='COUNT',
+                            aggfunc='sum',
+                            fill_value=0
+                        ).reset_index()
+                        
+                        # Add Total column
+                        route_filtered['Total'] = route_filtered.select_dtypes(include=['number']).sum(axis=1)
+                        
+                        # Format date columns
+                        route_filtered = format_date_columns(route_filtered)
+                        
+                        # Add Total row
+                        route_filtered_with_total = add_total_row(route_filtered, 'ROUTE')
+                        
+                        # Filter columns if date is selected
+                        if selected_date:
+                            route_filtered_with_total = filter_date_columns(route_filtered_with_total, 'DATE', selected_date)
+                    else:
+                        # Create empty DataFrame with correct structure
+                        columns = ['ROUTE'] + ([selected_date] if selected_date else []) + ['Total']
+                        route_filtered_with_total = pd.DataFrame(columns=columns)
+                else:
+                    
+                    # Format date columns in the original dataframes if needed
+                    interv_filtered_with_total = format_date_columns(by_interv_totals_df)
+                    route_filtered_with_total = format_date_columns(by_route_totals_df)
+                    
+
+                # Main content layout
+                col1, col2 = st.columns([1.3, 2])
+                
+                with col1:
+                    st.subheader("👤 Interviewer Totals")
+                    st.dataframe(interv_filtered_with_total, use_container_width=True)
+
+                with col2:
+                    st.subheader("🛣️ Route Totals")
+                    st.dataframe(route_filtered_with_total, use_container_width=True)
+
+                # Navigation
+                if st.button("🔙 Home Page"):
+                    st.query_params["page"] = "main"
+                    st.rerun()
 
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
@@ -496,8 +682,8 @@ else:
 
                 # Button for Time OF Day Details
                 if st.button('Time OF Day Details'):
-                    st.experimental_set_query_params(page="timedetails")
-                    st.experimental_rerun()
+                    st.query_params["page"] = "timedetails"
+                    st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=timedetails">', unsafe_allow_html=True)
             else:
                 st.header(f'Time OF Day Details')
@@ -506,25 +692,30 @@ else:
         with header_col3:
             # WEEKDAY-OVERALL button
             if st.button("WEEKDAY-OVERALL"):
-                st.experimental_set_query_params(page="weekday")
-                st.experimental_rerun()
+                st.query_params["page"] = "weekday"
+                st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
 
             # WEEKEND-OVERALL button
             if st.button("WEEKEND-OVERALL"):
-                st.experimental_set_query_params(page="weekend")
-                st.experimental_rerun()
+                st.query_params["page"] = "weekend"
+                st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
+
+            if 'stl' in selected_project:
+                if st.button("DAILY TOTALS"):
+                    st.query_params["page"] = "dailytotals"
+                    st.rerun()
 
             if 'rail' in selected_schema.lower():
                 if st.button("WEEKDAY StationWise Comparison"):
-                    st.experimental_set_query_params(page="weekday_station")
-                    st.experimental_rerun()
+                    st.query_params["page"] = "weekday_station"
+                    st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday_station">', unsafe_allow_html=True)
 
                 if st.button("WEEKEND StationWise Comparison"):
-                    st.experimental_set_query_params(page="weekend_station")
-                    st.experimental_rerun()
+                    st.query_params["page"] = "weekend_station"
+                    st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend_station">', unsafe_allow_html=True)
             
         if 'rail' in selected_schema.lower():
@@ -578,6 +769,9 @@ else:
                 weekend_page()
             elif current_page=='timedetails':
                 time_details(detail_df)
+            elif current_page == "dailytotals":
+                if 'stl' in selected_project:
+                    daily_totals_page()
             else:
                 if 'tucson' in selected_project:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',

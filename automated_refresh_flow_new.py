@@ -105,6 +105,10 @@ PROJECTS = {
                     "elvis": {
                         "database": os.getenv("STL_ELVIS_DATABASE_NAME"),
                         "table": os.getenv("STL_ELVIS_TABLE_NAME")
+                    },
+                    "baby_elvis": {
+                        "database": os.getenv("STL_BABY_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("STL_BABY_ELVIS_TABLE_NAME")
                     }
                 },
         "files": {
@@ -149,8 +153,9 @@ def fetch_and_process_data(project,schema):
 
             if db_connector.connection is None:
                 st.error("Database connection failed. Check credentials and server availability.")
-                st.experimental_set_query_params(logged_in="true", page='main')
-                st.experimental_rerun()
+                st.query_params["logged_in"] = "true"
+                st.query_params["page"] = "main"
+                st.rerun()  # Refresh the page after login
                 return None
             
             connection = db_connector.connection  # Get MySQL connection object
@@ -182,8 +187,9 @@ def fetch_and_process_data(project,schema):
                 pass  # Ensure it doesn't crash on failed disconnect
 
         # Redirect back to the main page without disturbing the whole process
-        st.experimental_set_query_params(logged_in="true", page='main')
-        st.experimental_rerun()
+        st.query_params["logged_in"] = "true"
+        st.query_params["page"] = "main"
+        st.rerun()  # Refresh the page after login
         return None
     
     elvis_config=project_config['databases']["elvis"]
@@ -292,6 +298,29 @@ def fetch_and_process_data(project,schema):
     aws_access_key_id = os.getenv('aws_access_key_id'),
     aws_secret_access_key = os.getenv('aws_secret_access_key')
     )
+
+    # Fetch baby_elvis data (new code)
+    if "baby_elvis" in PROJECTS["STL"]["databases"]:
+        baby_elvis_config = PROJECTS["STL"]["databases"]["baby_elvis"]
+        baby_table_name = baby_elvis_config['table']
+        baby_database_name = baby_elvis_config["database"]
+
+        # Initialize session state for baby_elvis_df if it doesn't exist
+        if "baby_elvis_df" not in st.session_state:
+            st.session_state.baby_elvis_df = None
+
+        # Streamlit button to fetch baby_elvis data
+        baby_csv_buffer = fetch_data(baby_database_name, baby_table_name)
+        if baby_csv_buffer:  # Ensure data was fetched successfully
+            st.session_state.baby_elvis_df = pd.read_csv(baby_csv_buffer)  # Load into DataFrame
+            baby_elvis_df = st.session_state.baby_elvis_df  # Create local reference
+
+            # Display success message
+            st.success(f"Successfully loaded {len(baby_elvis_df)} records from baby_elvis")
+        else:
+            st.error("Failed to load baby_elvis data.")
+
+
     # Function to read an Excel file from S3 into a DataFrame
     def read_excel_from_s3(bucket_name, file_key, sheet_name):
         response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
@@ -1215,6 +1244,8 @@ def fetch_and_process_data(project,schema):
             how='left'
         )
 
+        interviewer_pivot, route_pivot, detail_table = process_survey_data(baby_elvis_df)
+
         # Rename the column as per requirement
         wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
         wkday_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
@@ -1414,7 +1445,7 @@ def fetch_and_process_data(project,schema):
         'WkEND Time Data': 'wkend_time_data', 
         'WkDAY Time Data': 'wkday_time_data',
         'LAST SURVEY DATE': 'last_survey_date',
-            }
+        }
         
     elif project=='STL':
         # DataFrames preparation
@@ -1427,7 +1458,10 @@ def fetch_and_process_data(project,schema):
             'WkDAY Time Data': wkday_time_value_df,
             'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
             'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
-            'LAST SURVEY DATE': latest_date_df
+            'LAST SURVEY DATE': latest_date_df,
+            'By_Interviewer': interviewer_pivot,
+            'By_Route': route_pivot,
+            'Survey_Detail': detail_table,
         }
 
         # Table mapping
@@ -1440,7 +1474,10 @@ def fetch_and_process_data(project,schema):
             'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
             'WkEND Time Data': 'wkend_time_data', 
             'WkDAY Time Data': 'wkday_time_data',
-            'LAST SURVEY DATE': 'last_survey_date'
+            'LAST SURVEY DATE': 'last_survey_date',
+            'By_Interviewer': 'by_interv_totals',
+            'By_Route': 'by_route_totals',
+            'Survey_Detail': 'survey_detail_totals',
         }
 
     # Call the function

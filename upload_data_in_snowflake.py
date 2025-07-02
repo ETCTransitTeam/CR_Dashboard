@@ -33,33 +33,65 @@ def create_tables_and_insert_data(file_path, sheet_info):
     # Check if the file exists
     if os.path.exists(file_path):
         for sheet_name, table_name in sheet_info.items():
-            # Read the sheet into a DataFrame
-            df = pd.read_excel(file_path, sheet_name=sheet_name)
+            try:
+                # Read the sheet into a DataFrame
+                df = pd.read_excel(file_path, sheet_name=sheet_name)
 
-            # Drop the table if it exists
-            drop_table_sql = f"DROP TABLE IF EXISTS {table_name};"
-            cur.execute(drop_table_sql)
-            print(f"Table {table_name} dropped successfully (if it existed).")
-            
-            # Dynamically generate the CREATE TABLE statement
-            create_table_sql = f"CREATE TABLE {table_name} (\n"
-            for column, dtype in df.dtypes.items():
-                # Quote column names to handle special characters
-                sanitized_column = f'"{column}"'
-                snowflake_dtype = dtype_mapping.get(str(dtype), 'VARCHAR')  # Default to VARCHAR for unknown types
-                create_table_sql += f"  {sanitized_column} {snowflake_dtype},\n"
-            create_table_sql = create_table_sql.rstrip(",\n") + "\n);"
-            
-            # Print the create table SQL for reference (optional)
-            print(create_table_sql)
+                # Special handling for Survey_Detail sheet
+                if sheet_name == 'Survey_Detail':
+                    df.columns = [col.strip().lower() for col in df.columns]
+                    # Standardize column names
+                    rename_map = {
+                        'interv_init': 'INTERV_INIT',
+                        'route': 'ROUTE',
+                        'date_format': 'DATE',
+                        'date': 'DATE',
+                        'count': 'COUNT'
+                    }
 
-            # Execute the CREATE TABLE statement
-            cur.execute(create_table_sql)
-            print(f"Table {table_name} created successfully.")
+                    df = df.rename(columns=rename_map)
+                    
+                    # Validate required columns
+                    required_cols = ['INTERV_INIT', 'ROUTE', 'DATE', 'COUNT']
+                    if not all(col in df.columns for col in required_cols):
+                        print(f"Missing required columns in Survey_Detail sheet. Found: {df.columns.tolist()}")
+                        continue
+                    
+                    # Convert data types
+                    df['DATE'] = pd.to_datetime(df['DATE'], errors='coerce').dt.date
+                    df['COUNT'] = pd.to_numeric(df['COUNT'], errors='coerce')
+                    
+                    # Remove invalid rows
+                    df = df.dropna(subset=['DATE', 'COUNT'])
+
+                # Drop the table if it exists
+                drop_table_sql = f"DROP TABLE IF EXISTS {table_name};"
+                cur.execute(drop_table_sql)
+                print(f"Table {table_name} dropped successfully (if it existed).")
+                
+                # Dynamically generate the CREATE TABLE statement
+                create_table_sql = f"CREATE TABLE {table_name} (\n"
+                for column, dtype in df.dtypes.items():
+                    # Quote column names to handle special characters
+                    sanitized_column = f'"{column}"'
+                    snowflake_dtype = dtype_mapping.get(str(dtype), 'VARCHAR')  # Default to VARCHAR for unknown types
+                    create_table_sql += f"  {sanitized_column} {snowflake_dtype},\n"
+                create_table_sql = create_table_sql.rstrip(",\n") + "\n);"
+                
+                # Print the create table SQL for reference (optional)
+                print(create_table_sql)
+
+                # Execute the CREATE TABLE statement
+                cur.execute(create_table_sql)
+                print(f"Table {table_name} created successfully.")
+                
+                # Insert data into the Snowflake table
+                write_pandas(conn, df, table_name=table_name.upper())
+                print(f"Data inserted into table {table_name} successfully.")
             
-            # Insert data into the Snowflake table
-            write_pandas(conn, df, table_name=table_name.upper())
-            print(f"Data inserted into table {table_name} successfully.")
+            except Exception as e:
+                print(f"Error processing sheet {sheet_name}: {str(e)}")
+                continue
     
     else:
         print(f"The file {file_path} does not exist.")
@@ -68,19 +100,22 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-# file_path = 'reviewtool_20250410_STL_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
+file_path = 'reviewtool_20250701_STL_RouteLevelComparison(Wkday & WkEnd)_Latest_02.xlsx'
 # #  For bus transport project
-# sheet_info = {
-#     'WkDAY RAW DATA': 'wkday_raw', 
-#     'WkEND RAW DATA': 'wkend_raw', 
-#     'WkDAY Route Comparison': 'wkday_comparison', 
-#     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
-#     'WkEND Route Comparison': 'wkend_comparison', 
-#     'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
-#     'WkEND Time Data': 'wkend_time_data', 
-#     'WkDAY Time Data': 'wkday_time_data',
-#     'LAST SURVEY DATE': 'last_survey_date',
-# }
+sheet_info = {
+    'WkDAY RAW DATA': 'wkday_raw', 
+    'WkEND RAW DATA': 'wkend_raw', 
+    'WkDAY Route Comparison': 'wkday_comparison', 
+    'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+    'WkEND Route Comparison': 'wkend_comparison', 
+    'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+    'WkEND Time Data': 'wkend_time_data', 
+    'WkDAY Time Data': 'wkday_time_data',
+    'LAST SURVEY DATE': 'last_survey_date',
+    'By_Interviewer': 'by_interv_totals',
+    'By_Route': 'by_route_totals',
+    'Survey_Detail': 'survey_detail_totals',
+}
 
 #  For rail project
 # sheet_info = {
@@ -97,13 +132,13 @@ def create_tables_and_insert_data(file_path, sheet_info):
 #     'LAST SURVEY DATE': 'last_survey_date',
 # }
 
-file_path = 'details_saint_louis_MO_od_excel.xlsx'
-# detail_df=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='TOD')
-# # detail_df=detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
-# #                               'TIME_PERIOD', 'START_TIME']]
-sheet_info = {
-    'TOD': 'TOD'
-}
+# file_path = 'details_saint_louis_MO_od_excel.xlsx'
+# # detail_df=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='TOD')
+# # # detail_df=detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
+# # #                               'TIME_PERIOD', 'START_TIME']]
+# sheet_info = {
+#     'TOD': 'TOD'
+# }
 
 # Call the function
 create_tables_and_insert_data(file_path, sheet_info)   

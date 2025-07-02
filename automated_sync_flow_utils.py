@@ -2115,4 +2115,68 @@ def create_uta_route_direction_level_df(overalldf, df,time_column,time):
     return new_df
 
 
+def process_survey_data(df):
+    """
+    Process survey data by filtering, cleaning route names, and creating summary tables.
+    
+    Parameters:
+    df (pd.DataFrame): Input dataframe containing survey data
+    
+    Returns:
+    tuple: A tuple containing (interviewer_pivot, route_pivot, detail_table)
+    """
+    # Convert 'Completed' column to datetime
+    df['Completed'] = pd.to_datetime(df['Completed'], errors='coerce').dt.date
 
+    # Apply filters
+    filtered_df = df[
+        (df['RANDOM_NUMBER'] == 1) &
+        (df['HAVE_5_MIN_FOR_SURVE_Code_'] == 1) &
+        (df['INTERV_INIT'] != "999")
+    ].copy()
+
+    # Clean route: remove _00, _01 etc. from the end
+    filtered_df['ROUTE_MAIN'] = filtered_df['ROUTE_SURVEYED_Code_'].str.extract(r'(^.*)_\d\d$')
+
+    # Fallback for cases without _dd pattern
+    filtered_df['ROUTE_MAIN'] = filtered_df['ROUTE_MAIN'].fillna(filtered_df['ROUTE_SURVEYED_Code_'])
+
+    # Create Interviewer-by-Date pivot
+    interviewer_pivot = pd.pivot_table(
+        filtered_df,
+        values='ROUTE_SURVEYED_Code_',
+        index='INTERV_INIT',
+        columns='Completed',
+        aggfunc='count',
+        fill_value=0,
+        margins=True,
+        margins_name='Total'
+    )
+
+    # Create Route-by-Date pivot (using cleaned route name)
+    route_pivot = pd.pivot_table(
+        filtered_df,
+        values='INTERV_INIT',
+        index='ROUTE_MAIN',
+        columns='Completed',
+        aggfunc='count',
+        fill_value=0,
+        margins=True,
+        margins_name='Total'
+    )
+
+    # Rename index to "ROUTE"
+    route_pivot.index.name = 'ROUTE'
+
+    # Create detail table
+    detail_table = (
+        filtered_df
+        .groupby(['INTERV_INIT', 'ROUTE_MAIN', 'Completed'])
+        .size()
+        .reset_index(name='Count')
+        .rename(columns={'ROUTE_MAIN': 'ROUTE', 'Completed': 'Date'})
+        .sort_values(by=['Date', 'INTERV_INIT', 'ROUTE'])
+    )
+    detail_table['Date'] = pd.to_datetime(detail_table['Date']).dt.date
+
+    return interviewer_pivot, route_pivot, detail_table

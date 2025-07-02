@@ -292,15 +292,15 @@ def register_page():
                 st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
 
                 # st.experimental_set_query_params(page="login")
-                # query_params = st.experimental_get_query_params()
+                # query_params = st.query_params()
                 # st.write("Updated Query Params:", query_params)
 
-                # st.experimental_rerun()
+                # st.rerun()
 
     # Navigation buttons
     if st.button("Login"):
         # st.experimental_set_query_params(page="login")
-        # st.experimental_rerun()
+        # st.rerun()
         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
 
 
@@ -310,8 +310,8 @@ def activate_account():
     st.title("Account Activation")
 
     # Extract token from URL
-    query_params = st.experimental_get_query_params()
-    token = query_params.get("token", [None])[0]
+    query_params = st.query_params
+    token = query_params.get("token", None)
 
     if not token:
         st.error("Invalid activation link.")
@@ -421,8 +421,9 @@ def login():
             st.session_state["schema"] = schema_value[project]
 
             # Preserve 'page' parameter in URL after login
-            st.experimental_set_query_params(logged_in="true", page='main')  
-            st.experimental_rerun()  # Refresh the page after login
+            st.query_params["logged_in"] = "true"
+            st.query_params["page"] = "main"
+            st.rerun()  # Refresh the page after login
 
         else:
             # Display error if login fails
@@ -436,8 +437,8 @@ def login():
 def logout():
     st.session_state.clear()
     st.success("Logged out successfully!")
-    st.experimental_set_query_params(page="login")
-    st.experimental_rerun()
+    st.query_params["page"] = "login"
+    st.rerun()
 
 
 def is_authenticated():
@@ -577,7 +578,7 @@ def forgot_password():
         if user:
             reset_token = generate_reset_token(email)
             send_reset_email(email, reset_token)
-            # st.experimental_rerun()
+            # st.rerun()
             # email = ""
         else:
             st.error("Email not found in the system.")
@@ -621,8 +622,8 @@ def reset_password():
     st.title("Reset Password")
 
     # Get reset token from URL query parameters
-    query_params = st.experimental_get_query_params()
-    reset_token = query_params.get("token", [None])[0]  # Fetch the token from URL (e.g., ?token=xyz)
+    query_params = st.query_params
+    reset_token = query_params.get("token", None)  # Fetch the token from URL (e.g., ?token=xyz)
 
     if not reset_token:
         st.error("Reset token is missing or invalid.")
@@ -754,8 +755,8 @@ def change_password_form():
     st.title("Change Password")
 
     # Extract token from URL query parameters
-    query_params = st.experimental_get_query_params()
-    token = query_params.get("token", [None])[0]
+    query_params = st.query_params
+    token = query_params.get("token", None)
 
     if not token:
         st.error("Invalid request. No change password token found.")
@@ -962,4 +963,4 @@ def change_password(email):
             if key in st.session_state:
                 del st.session_state[key]
         st.experimental_set_query_params(page="main")
-        st.experimental_rerun()
+        st.rerun()
