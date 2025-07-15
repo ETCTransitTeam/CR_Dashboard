@@ -100,7 +100,7 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250701_STL_RouteLevelComparison(Wkday & WkEnd)_Latest_02.xlsx'
+file_path = 'reviewtool_20250714_STL_RouteLevelComparison(Wkday & WkEnd)_Latest_02.xlsx'
 # #  For bus transport project
 sheet_info = {
     'WkDAY RAW DATA': 'wkday_raw', 
@@ -115,6 +115,10 @@ sheet_info = {
     'By_Interviewer': 'by_interv_totals',
     'By_Route': 'by_route_totals',
     'Survey_Detail': 'survey_detail_totals',
+    'Surveyor Report': 'surveyor_report_trends',
+    'Route Report': 'route_report_trends',
+    'Surveyor Report with Date': 'surveyor_report_date_trends',
+    'Route Report with Date': 'route_report_date_trends'
 }
 
 #  For rail project

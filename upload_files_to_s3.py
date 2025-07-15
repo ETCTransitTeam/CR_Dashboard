@@ -44,8 +44,8 @@ def upload_file_to_s3(file_name, bucket_name, object_name=None):
 
 # Example usage
 if __name__ == "__main__":
-    file_name = 'details_TUCSON_AZ_od_excel.xlsx'  # Replace with your Excel file path
+    file_name = 'STL_MO_2025_KINGElvis.xlsx'  # Replace with your Excel file path
     bucket_name = 'etc-streamlit'  # Replace with your S3 bucket name
-    object_name = 'details_TUCSON_AZ_od_excel.xlsx'  # Replace with the desired S3 object name
+    object_name = 'STL_MO_2025_KINGElvis.xlsx'  # Replace with the desired S3 object name
 
     upload_file_to_s3(file_name, bucket_name, object_name)

@@ -127,6 +127,10 @@ else:
                 'by_interv_totals': 'by_interv_totals_df',
                 'by_route_totals': 'by_route_totals_df',
                 'survey_detail_totals': 'survey_detail_totals_df',
+                'surveyor_report_trends': 'surveyor_report_trends_df',
+                'route_report_trends': 'route_report_trends_df',
+                'surveyor_report_date_trends': 'surveyor_report_date_trends_df',
+                'route_report_date_trends': 'route_report_date_trends_df'
             }
 
             # Initialize an empty dictionary to hold DataFrames
@@ -179,6 +183,11 @@ else:
         wkend_raw_df = dataframes['wkend_raw_df']
         wkday_raw_df = dataframes['wkday_raw_df']
         detail_df = dataframes['detail_df']
+        surveyor_report_trends_df = dataframes['surveyor_report_trends_df']
+        route_report_trends_df = dataframes['route_report_trends_df']
+        surveyor_report_date_trends_df = dataframes['surveyor_report_date_trends_df']
+        route_report_date_trends_df = dataframes['route_report_date_trends_df']
+
 
 
         wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
@@ -623,6 +632,44 @@ else:
                     st.query_params["page"] = "main"
                     st.rerun()
 
+        def extract_date_and_clean_column(df, column_name, new_column_name, split_char='_'):
+            df = df.copy()
+            df['date'] = df[column_name].str.split(split_char).str[0]
+            df[new_column_name] = df[column_name].str.split(split_char).str[1]
+            return df
+
+        # Function to display report with optional filtering
+        def display_filtered_or_unfiltered_report(
+            unfiltered_df: pd.DataFrame,
+            filtered_df: pd.DataFrame,
+            filter_column_name: str,
+            display_column_name: str,
+            section_title: str,
+            date_label: str
+        ):
+            st.subheader(section_title)
+
+            # Prepare date filter options
+            temp_df = extract_date_and_clean_column(filtered_df, filter_column_name, display_column_name)
+            unique_dates = sorted(temp_df['date'].unique())
+
+            # Show filter
+            selected_date = st.selectbox(f"{date_label} Date", ["All"] + unique_dates)
+
+            if selected_date == "All":
+                st.dataframe(unfiltered_df, use_container_width=True)
+            else:
+                df_filtered = temp_df[temp_df['date'] == selected_date]
+                df_filtered = df_filtered.drop(columns=[filter_column_name])
+                df_filtered = df_filtered.rename(columns={display_column_name: display_column_name.upper()})
+
+                # Reorder columns to show 'date' and 'INTERV_INIT' or 'ROUTE' first
+                first_cols = ['date', display_column_name.upper()]
+                remaining_cols = [col for col in df_filtered.columns if col not in first_cols]
+                reordered_df = df_filtered[first_cols + remaining_cols]
+
+                st.dataframe(reordered_df, use_container_width=True)
+
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
 
@@ -654,6 +701,10 @@ else:
                         detail_df = dataframes['detail_df']
                         wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
                         wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
+                        surveyor_report_trends_df = dataframes['surveyor_report_trends_df']
+                        route_report_trends_df = dataframes['route_report_trends_df']
+                        surveyor_report_date_trends_df = dataframes['surveyor_report_date_trends_df']
+                        route_report_date_trends_df = dataframes['route_report_date_trends_df']
                     st.success(f"Data Synced Successfully!")
             current_date = datetime.datetime.now()
             formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -705,6 +756,10 @@ else:
             if 'stl' in selected_project:
                 if st.button("DAILY TOTALS"):
                     st.query_params["page"] = "dailytotals"
+                    st.rerun()
+            
+                if st.button("Surveyor/Route/Trend Reports"):
+                    st.query_params["page"] = "surveyreport"
                     st.rerun()
 
             if 'rail' in selected_schema.lower():
@@ -772,6 +827,99 @@ else:
             elif current_page == "dailytotals":
                 if 'stl' in selected_project:
                     daily_totals_page()
+            elif current_page == "surveyreport":
+                if 'stl' in selected_project:
+                    # 📌 Fields you want to show
+                    percentage_fields = [
+                        "% of Incomplete Home Address", "% of 0 Transfers",
+                        "% of Access Walk", "% of Egress Walk",
+                        "% of LowIncome", "% of No Income",
+                        "% of Hispanic", "% of Black", "% of White",
+                        "% of Follow-Up Survey", "% of Contest - Yes"
+                    ]
+
+                    time_fields = [
+                        "SurveyTime (All)", "SurveyTime (TripLogic)", "SurveyTime (DemoLogic)"
+                    ]
+
+                    count_fields = [
+                        "# of Records", "# of Supervisor Delete", "# of Records Remove",
+                        "# of Records Reviewed", "# of Records Not Reviewed"
+                    ]
+
+                    # 📌 Columns to exclude
+                    excluded_columns = [
+                        "INTERV_INIT",
+                        "Route",
+                        "# of Records",
+                        "# of Supervisor Delete",
+                        "# of Records Remove",
+                        "# of Records Reviewed",
+                        "# of Records Not Reviewed",
+                        "% of LowIncome",
+                        "% of Contest - Yes",
+                        "% of Follow-Up Survey",
+                        "% of Contest - (Yes & Good Info)/Overall # of Records"
+                    ]
+
+                    
+                    def render_metrics(row, title):
+                        st.markdown(f"### {title}")
+
+                        # Filter
+                        filtered_items = [
+                            (k, v) for k, v in row.items() if k not in excluded_columns
+                        ]
+
+                        for i in range(0, len(filtered_items), 4):
+                            cols = st.columns(min(4, len(filtered_items) - i))
+                            for col, (field, value) in zip(cols, filtered_items[i:i+4]):
+                                with col:
+                                    st.markdown(f"""
+                                        <div style="
+                                            padding: 4px 0;
+                                            margin-bottom: 6px;
+                                        ">
+                                            <div style="font-size:0.6rem; color:white; font-weight:600;">{field}</div>
+                                            <div style="font-size:0.8rem; color:white;">{value}</div>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+
+
+
+                    # 📌 Layout: add spacer
+                    col1, _, col2 = st.columns([1, 0.1, 1])
+
+                    surveyor_last_row = surveyor_report_trends_df.iloc[-1].to_dict()
+                    route_last_row = route_report_trends_df.iloc[-1].to_dict()
+
+
+
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        render_metrics(surveyor_last_row, "TRIP LOGIC & QAQC REPORT - SURVEYOR REPORT")
+                        display_filtered_or_unfiltered_report(
+                            unfiltered_df=dataframes['surveyor_report_trends_df'],
+                            filtered_df=dataframes['surveyor_report_date_trends_df'],
+                            filter_column_name="Date_Surveyor",
+                            display_column_name="INTERV_INIT",
+                            section_title="Surveyor Report",
+                            date_label="Surveyor"
+                        )
+
+                    with col2:
+                        render_metrics(route_last_row, "TRIP LOGIC & QAQC REPORT - ROUTE REPORT")
+                        display_filtered_or_unfiltered_report(
+                            unfiltered_df=dataframes['route_report_trends_df'],
+                            filtered_df=dataframes['route_report_date_trends_df'],
+                            filter_column_name="Date_Route",
+                            display_column_name="ROUTE",
+                            section_title="Route Report",
+                            date_label="Route"
+                        )
+
             else:
                 if 'tucson' in selected_project:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',

@@ -114,7 +114,7 @@ PROJECTS = {
         "files": {
             "details": "details_saint_louis_MO_od_excel.xlsx",
             "cr": "STL_MO_CR.xlsx",
-            # 'kingelvis':'VTA_CA_OB_KINGElvis.xlsx'
+            'kingelvis':'STL_MO_2025_KINGElvis.xlsx'
         }
     }
 }
@@ -352,7 +352,7 @@ def fetch_and_process_data(project,schema):
         print("Files read for TUCSON")
 
     if project=='STL':
-        # ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
+        ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
 
         detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
         detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
@@ -1246,6 +1246,54 @@ def fetch_and_process_data(project,schema):
 
         interviewer_pivot, route_pivot, detail_table = process_survey_data(baby_elvis_df)
 
+        survey_report_df = process_surveyor_data(ke_df, df)
+        route_report_df = process_route_data(ke_df, df)
+
+        # Parse date columns and create combination keys
+        ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date']).dt.date
+        df['Completed'] = pd.to_datetime(df['Completed']).dt.date
+
+        # Ensure both have INTERV_INIT and ROUTE_ROOT as strings
+        ke_df['INTERV_INIT'] = ke_df['INTERV_INIT'].astype(str)
+        df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+
+        # Clean route names
+        def clean_route_name(route_series):
+            return (
+                route_series
+                .astype(str)
+                .str.replace(r' \\[(INBOUND|OUTBOUND)\\]', '', regex=True)
+                .str.strip()
+            )
+
+        ke_df['ROUTE_ROOT'] = clean_route_name(ke_df['ROUTE_SURVEYED'])
+        df['ROUTE_ROOT'] = clean_route_name(df['ROUTE_SURVEYED'])
+
+        # Determine full date range from both files
+        min_date = min(ke_df['Elvis_Date'].min(), df['Completed'].min())
+        max_date = max(ke_df['Elvis_Date'].max(), df['Completed'].max())
+        all_dates = pd.date_range(min_date, max_date).date
+
+        # Get all unique surveyors and routes
+        all_surveyors = sorted(set(pd.concat([ke_df['INTERV_INIT'], df['INTERV_INIT']]).unique()))
+        all_routes = sorted(set(pd.concat([ke_df['ROUTE_ROOT'], df['ROUTE_ROOT']]).unique()))
+
+        # Create all combinations for date-surveyor and date-route
+        survey_date_surveyor = pd.DataFrame([(d, s) for d in all_dates for s in all_surveyors], columns=['Date', 'INTERV_INIT'])
+        survey_date_surveyor['Date_Surveyor'] = survey_date_surveyor['Date'].astype(str) + "_" + survey_date_surveyor['INTERV_INIT']
+
+        survey_date_route = pd.DataFrame([(d, r) for d in all_dates for r in all_routes], columns=['Date', 'ROUTE_ROOT'])
+        survey_date_route['Date_Route'] = survey_date_route['Date'].astype(str) + "_" + survey_date_route['ROUTE_ROOT']
+
+        # Assign keys to each dataframe
+        ke_df = ke_df.merge(survey_date_surveyor, left_on=['Elvis_Date', 'INTERV_INIT'], right_on=['Date', 'INTERV_INIT'], how='left')
+        ke_df = ke_df.merge(survey_date_route, left_on=['Elvis_Date', 'ROUTE_ROOT'], right_on=['Date', 'ROUTE_ROOT'], how='left', suffixes=('', '_r'))
+        df = df.merge(survey_date_surveyor, left_on=['Completed', 'INTERV_INIT'], right_on=['Date', 'INTERV_INIT'], how='left')
+        df = df.merge(survey_date_route, left_on=['Completed', 'ROUTE_ROOT'], right_on=['Date', 'ROUTE_ROOT'], how='left', suffixes=('', '_r'))
+
+        survey_report_by_date_df = process_surveyor_date_data(ke_df, df, survey_date_surveyor)
+        route_report_by_date_df = process_route_date_data(ke_df, df, survey_date_route)
+
         # Rename the column as per requirement
         wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
         wkday_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
@@ -1462,6 +1510,10 @@ def fetch_and_process_data(project,schema):
             'By_Interviewer': interviewer_pivot,
             'By_Route': route_pivot,
             'Survey_Detail': detail_table,
+            'Surveyor Report': survey_report_df,
+            'Route Report': route_report_df,
+            'Surveyor Report with Date': survey_report_by_date_df,
+            'Route Report with Date': route_report_by_date_df
         }
 
         # Table mapping
@@ -1478,6 +1530,10 @@ def fetch_and_process_data(project,schema):
             'By_Interviewer': 'by_interv_totals',
             'By_Route': 'by_route_totals',
             'Survey_Detail': 'survey_detail_totals',
+            'Surveyor Report': 'surveyor_report_trends',
+            'Route Report': 'route_report_trends',
+            'Surveyor Report with Date': 'surveyor_report_date_trends',
+            'Route Report with Date': 'route_report_date_trends'
         }
 
     # Call the function
