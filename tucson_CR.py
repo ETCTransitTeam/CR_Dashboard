@@ -330,6 +330,11 @@ else:
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+            elif 'kcata' in selected_project:
+                wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                        '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
             else:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
@@ -385,6 +390,12 @@ else:
                     wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
                 # wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Day' ,'Route Level Goal', '# of Surveys', 'Remaining']
             elif 'stl' in selected_project:
+                wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                        '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
+            elif 'kcata' in selected_project:
                 wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
@@ -453,7 +464,7 @@ else:
 
 
         def daily_totals_page():
-            if 'stl' in selected_project:
+            if 'stl' in selected_project or 'kcata' in selected_project:
                 st.title("📊 Daily Totals - Interviewer and Route Level")
                 # Load Snowflake-extracted DataFrames
                 by_interv_totals_df = dataframes['by_interv_totals_df']
@@ -632,6 +643,8 @@ else:
                     st.query_params["page"] = "main"
                     st.rerun()
 
+        # Function to extract date and clean a column
+        # This function extracts the date from a column and creates a new column with the cleaned data
         def extract_date_and_clean_column(df, column_name, new_column_name, split_char='_'):
             df = df.copy()
             df['date'] = df[column_name].str.split(split_char).str[0]
@@ -649,8 +662,36 @@ else:
         ):
             st.subheader(section_title)
 
+            # Debug print
+            print(f"\nProcessing {section_title}")
+            print(f"Filter column in DataFrame: {filter_column_name in filtered_df.columns}")
+            print(f"All columns: {filtered_df.columns.tolist()}")
+
+            # Handle case where filter column doesn't exist
+            if filter_column_name not in filtered_df.columns:
+                # Try alternative column names
+                possible_date_columns = ['Date', 'DATE', 'date', 'Survey_Date']
+                for col in possible_date_columns:
+                    if col in filtered_df.columns:
+                        filter_column_name = col
+                        break
+                else:
+                    st.error(f"Could not find date column in {section_title} data")
+                    return
+
             # Prepare date filter options
-            temp_df = extract_date_and_clean_column(filtered_df, filter_column_name, display_column_name)
+            temp_df = filtered_df.copy()
+            
+            # Ensure we have a date column
+            temp_df['date'] = pd.to_datetime(temp_df[filter_column_name], errors='coerce')
+            
+            # Drop rows with invalid dates
+            temp_df = temp_df.dropna(subset=['date'])
+            
+            # Convert to date strings for display
+            temp_df['date'] = temp_df['date'].dt.strftime('%Y-%m-%d')
+            
+            # Get unique dates (now guaranteed to be valid)
             unique_dates = sorted(temp_df['date'].unique())
 
             # Show filter
@@ -661,10 +702,15 @@ else:
             else:
                 df_filtered = temp_df[temp_df['date'] == selected_date]
                 df_filtered = df_filtered.drop(columns=[filter_column_name])
-                df_filtered = df_filtered.rename(columns={display_column_name: display_column_name.upper()})
-
-                # Reorder columns to show 'date' and 'INTERV_INIT' or 'ROUTE' first
-                first_cols = ['date', display_column_name.upper()]
+                
+                # Rename and reorder columns
+                df_filtered = df_filtered.rename(columns={
+                    display_column_name: display_column_name.upper(),
+                    'date': 'Date'
+                })
+                
+                # Reorder columns
+                first_cols = ['Date', display_column_name.upper()]
                 remaining_cols = [col for col in df_filtered.columns if col not in first_cols]
                 reordered_df = df_filtered[first_cols + remaining_cols]
 
@@ -711,8 +757,10 @@ else:
             st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
             # Get the most recent "Completed" date from both wkday_raw_df and wkend_raw_df
-
-            completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
+            if 'kcata' in selected_project:
+                completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
+            else:
+                completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
             most_recent_completed_date = pd.to_datetime(completed_dates).max()
 
             # # # Display the most recent "Completed" date
@@ -753,7 +801,7 @@ else:
                 st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
 
-            if 'stl' in selected_project:
+            if 'stl' in selected_project or 'kcata' in selected_project:
                 if st.button("DAILY TOTALS"):
                     st.query_params["page"] = "dailytotals"
                     st.rerun()
@@ -806,6 +854,12 @@ else:
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                     wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
 
+                elif 'kcata' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+
                 else:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
                                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
@@ -825,10 +879,10 @@ else:
             elif current_page=='timedetails':
                 time_details(detail_df)
             elif current_page == "dailytotals":
-                if 'stl' in selected_project:
+                if 'stl' in selected_project or 'kcata' in selected_project:
                     daily_totals_page()
             elif current_page == "surveyreport":
-                if 'stl' in selected_project:
+                if 'stl' in selected_project or 'kcata' in selected_project:
                     # 📌 Fields you want to show
                     percentage_fields = [
                         "% of Incomplete Home Address", "% of 0 Transfers",
@@ -899,11 +953,15 @@ else:
                     col1, col2 = st.columns(2)
 
                     with col1:
+                        print("Columns in surveyor_report_trends_df:", dataframes['surveyor_report_trends_df'].columns.tolist())
+                        print("Columns in surveyor_report_date_trends_df:", dataframes['surveyor_report_date_trends_df'].columns.tolist())
+
                         render_metrics(surveyor_last_row, "TRIP LOGIC & QAQC REPORT - SURVEYOR REPORT")
+                        filter_col = "Date_Surveyor" if 'stl' in selected_project else "Date"
                         display_filtered_or_unfiltered_report(
                             unfiltered_df=dataframes['surveyor_report_trends_df'],
                             filtered_df=dataframes['surveyor_report_date_trends_df'],
-                            filter_column_name="Date_Surveyor",
+                            filter_column_name=filter_col,
                             display_column_name="INTERV_INIT",
                             section_title="Surveyor Report",
                             date_label="Surveyor"
@@ -927,6 +985,12 @@ else:
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                     wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
                 elif 'stl' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+
+                elif 'kcata' in selected_project:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']

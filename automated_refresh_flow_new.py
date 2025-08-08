@@ -117,6 +117,23 @@ PROJECTS = {
             'kingelvis':'STL_MO_2025_KINGElvis.xlsx'
         }
     }
+    # "KCATA": {
+    #     "databases": {
+    #                 "elvis": {
+    #                     "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
+    #                     "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
+    #                 },
+    #                 "baby_elvis": {
+    #                     "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
+    #                     "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
+    #                 }
+    #             },
+    #     "files": {
+    #         "details": "details_KCATA_od_excel.xlsx",
+    #         "cr": "KCATA_MO_CR_UPDATE.xlsx",
+    #         'kingelvis':'KCATA_2025_KINGElvis.xlsx'
+    #     }
+    # }
 }
 
 

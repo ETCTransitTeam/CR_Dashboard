@@ -11,12 +11,13 @@ def create_snowflake_connection():
         account=config('SNOWFLAKE_ACCOUNT'),
         warehouse=config('SNOWFLAKE_WAREHOUSE'),
         database=config('SNOWFLAKE_DATABASE'),
-        schema='stl_bus',
+        schema='kcata_bus',
         role=config('SNOWFLAKE_ROLE')
     )
     return conn
 
 def create_tables_and_insert_data(file_path, sheet_info):
+    print("Creating tables and inserting data into Snowflake...")
     # File path and dtype mapping
     dtype_mapping = {
         'object': 'VARCHAR',
@@ -25,9 +26,10 @@ def create_tables_and_insert_data(file_path, sheet_info):
         'datetime64[ns]': 'TIMESTAMP',
         'bool': 'BOOLEAN'
     }
-    
+    print("Connecting to Snowflake...")
     # Create Snowflake connection
     conn = create_snowflake_connection()
+    print("Connection established successfully.")
     cur = conn.cursor()
     
     # Check if the file exists
@@ -63,6 +65,16 @@ def create_tables_and_insert_data(file_path, sheet_info):
                     
                     # Remove invalid rows
                     df = df.dropna(subset=['DATE', 'COUNT'])
+
+                # Special handling for sheets with date columns
+                if sheet_name in ['Surveyor Report with Date', 'Route Report with Date']:
+                    if 'Date' in df.columns:
+                        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+                        # Keep as datetime or convert to date string
+                        df['Date'] = df['Date'].dt.strftime('%Y-%m-%d')
+
+                # Clean column names (convert all to strings)
+                df.columns = [str(col) for col in df.columns]
 
                 # Drop the table if it exists
                 drop_table_sql = f"DROP TABLE IF EXISTS {table_name};"
@@ -100,7 +112,7 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250714_STL_RouteLevelComparison(Wkday & WkEnd)_Latest_02.xlsx'
+file_path = 'reviewtool_20250807_KCATA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
 # #  For bus transport project
 sheet_info = {
     'WkDAY RAW DATA': 'wkday_raw', 
