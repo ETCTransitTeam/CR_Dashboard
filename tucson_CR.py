@@ -222,10 +222,27 @@ else:
             return df
 
         def time_details(details_df):
+            if 'kcata' in selected_project:
+                # Check if columns exist before renaming
+                column_mapping = {
+                    'OPPO_TIME[CODE]': 'Time Period Code',
+                    'TIME_ON[Code]': 'Time Code',
+                    'TIME_ON': 'Time Description',
+                    'TIME_PERIOD[Code]': 'Period Code',
+                    'TIME_PERIOD': 'Period Description',
+                    'START_TIME': 'Start Time',
+                    'AGENCY': 'Agency',
+                    'WKEND_TIME_PERIOD[Code]': 'Weekend Period Code',
+                    'WKEND_TIME_PERIOD': 'Weekend Period Description'
+                }
+                details_df = details_df.rename(columns=column_mapping)
+            
             st.dataframe(details_df, height=670, use_container_width=True)
+            
             if st.button("Home Page"):
                 st.query_params["page"] = "main"
                 st.rerun()
+
 
         
         def check_all_characters_present(df, columns_to_check):
@@ -1002,7 +1019,13 @@ else:
                                             '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
                     wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
                 
-
-                main_page(wkday_dir_df[wkday_dir_columns],
-                                wkday_time_df[wkday_time_columns],
-                                wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+                try:
+                    main_page(wkday_dir_df[wkday_dir_columns],
+                            wkday_time_df[wkday_time_columns],
+                            wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+                    
+                except KeyError as e:
+                    st.error(f"⚠️ Missing columns in data: {e}")
+                    st.error("Available columns in weekday direction data:")
+                    st.write(wkday_dir_df.columns.tolist())
+                    st.stop()  # Prevent further execution

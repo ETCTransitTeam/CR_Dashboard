@@ -21,6 +21,7 @@ import os
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
+from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
 
 warnings.filterwarnings('ignore')
 
@@ -116,24 +117,24 @@ PROJECTS = {
             "cr": "STL_MO_CR.xlsx",
             'kingelvis':'STL_MO_2025_KINGElvis.xlsx'
         }
+    },
+    "KCATA": {
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
+                    },
+                    "baby_elvis": {
+                        "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
+                    }
+                },
+        "files": {
+            "details": "details_KCATA_od_excel.xlsx",
+            "cr": "KCATA_MO_CR_UPDATE.xlsx",
+            'kingelvis':'KCATA_2025_KINGElvis.xlsx'
+        }
     }
-    # "KCATA": {
-    #     "databases": {
-    #                 "elvis": {
-    #                     "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
-    #                     "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
-    #                 },
-    #                 "baby_elvis": {
-    #                     "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
-    #                     "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
-    #                 }
-    #             },
-    #     "files": {
-    #         "details": "details_KCATA_od_excel.xlsx",
-    #         "cr": "KCATA_MO_CR_UPDATE.xlsx",
-    #         'kingelvis':'KCATA_2025_KINGElvis.xlsx'
-    #     }
-    # }
 }
 
 
@@ -226,6 +227,18 @@ def fetch_and_process_data(project,schema):
     # Display DataFrame if available
     if st.session_state.df is not None:
         df = st.session_state.df
+
+        # Apply KCATA header mapping if this is the KCATA project
+        if project == "KCATA":
+            # First clean up column names by removing any extra whitespace
+            df.columns = df.columns.str.strip()
+            
+            # Apply the header mapping
+            df = df.rename(columns=KCATA_HEADER_MAPPING)
+            
+            # After renaming, you might want to standardize the case (optional)
+            # df.columns = df.columns.str.upper()
+
         # Apply filters only after confirming df is loaded
         time_value_code_check=['have5minforsurvecode']
         route_surveyed_code_check=['routesurveyedcode']
@@ -317,8 +330,8 @@ def fetch_and_process_data(project,schema):
     )
 
     # Fetch baby_elvis data (new code)
-    if "baby_elvis" in PROJECTS["STL"]["databases"]:
-        baby_elvis_config = PROJECTS["STL"]["databases"]["baby_elvis"]
+    if "baby_elvis" in PROJECTS[project]["databases"]:
+        baby_elvis_config = PROJECTS[project]["databases"]["baby_elvis"]
         baby_table_name = baby_elvis_config['table']
         baby_database_name = baby_elvis_config["database"]
 
@@ -331,6 +344,13 @@ def fetch_and_process_data(project,schema):
         if baby_csv_buffer:  # Ensure data was fetched successfully
             st.session_state.baby_elvis_df = pd.read_csv(baby_csv_buffer)  # Load into DataFrame
             baby_elvis_df = st.session_state.baby_elvis_df  # Create local reference
+
+            # Apply KCATA header mapping to baby_elvis if this is the KCATA project
+            if project == "KCATA":
+                baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
+                baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+
+                # baby_elvis_df.columns = baby_elvis_df.columns.str.upper()
 
             # Display success message
             st.success(f"Successfully loaded {len(baby_elvis_df)} records from baby_elvis")
@@ -368,7 +388,7 @@ def fetch_and_process_data(project,schema):
 
         print("Files read for TUCSON")
 
-    if project=='STL':
+    elif project=='STL':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
 
         detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
@@ -391,6 +411,20 @@ def fetch_and_process_data(project,schema):
 
 
         print("Files read for STL")
+
+    elif project=='KCATA':
+        ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
+
+        detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
+
+        wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-Overall')
+        wkend_route_df = read_excel_from_s3(bucket_name,project_config["files"]["cr"], 'WkEND-RouteTotal')
+
+        wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-Overall')
+        wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
+
+        print("Files read for KCATA")
 
     elif project=='TUCSON RAIL':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
@@ -777,7 +811,6 @@ def fetch_and_process_data(project,schema):
 
     print(f'reviewtool_{today_date}_{project_name}_ROUTE_DIRECTION_CHECk CREATED SUCCESSFULLY')
 
-    # print("df.columns", df.columns.tolist())
     # # if we have generated route_direction_database file using route_direction_refator_database.py file then have to replace and rename the columns
     df.drop(columns=['ROUTE_SURVEYEDCode','ROUTE_SURVEYED'],inplace=True)
     df.rename(columns={'ROUTE_SURVEYEDCode_New':'ROUTE_SURVEYEDCode','ROUTE_SURVEYED_NEW':'ROUTE_SURVEYED'},inplace=True) 
@@ -865,12 +898,21 @@ def fetch_and_process_data(project,schema):
     else:
         pass
 
-    weekday_df.dropna(subset=[time_column[0]],inplace=True)
-    weekday_raw_df=weekday_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
-    weekend_df.dropna(subset=[time_column[0]],inplace=True)
-    weekend_raw_df=weekend_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
-    weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
-    weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+
+    if project=='KCATA':
+        weekday_df.dropna(subset=[time_column[0]],inplace=True)
+        weekday_raw_df=weekday_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
+        weekend_df.dropna(subset=[time_column[0]],inplace=True)
+        weekend_raw_df=weekend_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
+        weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+        weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+    else:
+        weekday_df.dropna(subset=[time_column[0]],inplace=True)
+        weekday_raw_df=weekday_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        weekend_df.dropna(subset=[time_column[0]],inplace=True)
+        weekend_raw_df=weekend_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+        weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
 
 
     wkday_route_level =create_route_level_df(wkday_overall_df,wkday_route_df,weekday_df,time_column,project)
@@ -1334,7 +1376,160 @@ def fetch_and_process_data(project,schema):
         for _,row in wkend_route_direction_df.iterrows():
             route_surveyed=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_NAME'].iloc[0]
             route_surveyed_ID=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_ID'].iloc[0]
-            wkend_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed  
+            wkend_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed
+
+    elif project == 'KCATA':
+        # First rename all columns consistently
+        rename_dict = {
+            'CR_AM_Peak': '(1) Goal',
+            'CR_Midday': '(2) Goal',
+            'CR_PM_Peak': '(3) Goal',
+            'CR_Evening': '(4) Goal',
+            'DB_AM_Peak': '(1) Collect',
+            'DB_Midday': '(2) Collect',
+            'DB_PM_Peak': '(3) Collect',
+            'DB_Evening': '(4) Collect',
+            'AM_DIFFERENCE': '(1) Remain',
+            'Midday_DIFFERENCE': '(2) Remain',
+            'PM_PEAK_DIFFERENCE': '(3) Remain',
+            'Evening_DIFFERENCE': '(4) Remain'
+        }
+
+        wkend_comparison_df.rename(columns={**rename_dict, 
+            'CR_Overall_Goal': 'Route Level Goal',
+            'DB_Total': '# of Surveys',
+            'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
+
+        wkday_comparison_df.rename(columns={**rename_dict,
+            'CR_Overall_Goal': 'Route Level Goal',
+            'DB_Total': '# of Surveys',
+            'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
+
+        wkday_route_direction_df.rename(columns=rename_dict, inplace=True)
+        wkend_route_direction_df.rename(columns=rename_dict, inplace=True)
+
+        # Create a unified route lookup from detail_df_stops
+        route_lookup = detail_df_stops[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']].drop_duplicates()
+        
+        # Function to safely merge route names
+        def add_route_names(df):
+            df = df.merge(
+                route_lookup,
+                left_on='ROUTE_SURVEYEDCode',
+                right_on='ETC_ROUTE_ID',
+                how='left'
+            )
+            df['ROUTE_SURVEYED'] = df['ETC_ROUTE_NAME'].fillna('Unknown Route (' + df['ROUTE_SURVEYEDCode'] + ')')
+            return df.drop(columns=['ETC_ROUTE_ID', 'ETC_ROUTE_NAME'], errors='ignore')
+
+        # Apply to all DataFrames that need route names
+        wkday_comparison_df = add_route_names(wkday_comparison_df)
+        wkend_comparison_df = add_route_names(wkend_comparison_df)
+        wkday_route_direction_df = add_route_names(wkday_route_direction_df)
+        wkend_route_direction_df = add_route_names(wkend_route_direction_df)
+
+        # Process survey data
+        df_for_processing = baby_elvis_df.rename(columns={
+            'DATE_SUBMITTED': 'Completed',
+            'HAVE_5_MIN_FOR_SURVECode': 'HAVE_5_MIN_FOR_SURVE_Code_',
+            'ROUTE_SURVEYEDCode': 'ROUTE_SURVEYED_Code_'
+        })
+
+        interviewer_pivot, route_pivot, detail_table = process_survey_data(df_for_processing)
+        survey_report_df = process_surveyor_data_kcata(ke_df, df)
+        route_report_df = process_route_data_kcata(ke_df, df)
+
+        # Date processing
+        ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date']).dt.date
+        df['DATE_SUBMITTED'] = pd.to_datetime(df['DATE_SUBMITTED']).dt.date
+
+        # Clean route names
+        def clean_route_name(route_series):
+            return (
+                route_series
+                .astype(str)
+                .str.replace(r' \[(INBOUND|OUTBOUND)\]', '', regex=True)
+                .str.strip()
+            )
+
+        ke_df['ROUTE_ROOT'] = clean_route_name(ke_df['ROUTE_SURVEYED'])
+        df['ROUTE_ROOT'] = clean_route_name(df['ROUTE_SURVEYED'])
+
+        # Create date-surveyor and date-route mappings
+        min_date = min(ke_df['Elvis_Date'].min(), df['DATE_SUBMITTED'].min())
+        max_date = max(ke_df['Elvis_Date'].max(), df['DATE_SUBMITTED'].max())
+        all_dates = pd.date_range(min_date, max_date).date
+
+        all_surveyors = sorted(set(ke_df['INTERV_INIT'].astype(str).unique()) | set(df['INTERV_INIT'].astype(str).unique()))
+        all_routes = sorted(set(ke_df['ROUTE_ROOT'].unique()) | set(df['ROUTE_ROOT'].unique()))
+
+            # Create mappings with concatenated keys
+        survey_date_surveyor = pd.MultiIndex.from_product(
+            [all_dates, all_surveyors],
+            names=['Date', 'INTERV_INIT']
+        ).to_frame(index=False)
+        survey_date_surveyor['Date_Surveyor'] = (
+            survey_date_surveyor['Date'].astype(str) + "_" + 
+            survey_date_surveyor['INTERV_INIT']
+        )
+
+        survey_date_route = pd.MultiIndex.from_product(
+            [all_dates, all_routes],
+            names=['Date', 'ROUTE_ROOT']
+        ).to_frame(index=False)
+        survey_date_route['Date_Route'] = (
+            survey_date_route['Date'].astype(str) + "_" + 
+            survey_date_route['ROUTE_ROOT']
+        )
+
+        # Merge into main DataFrames
+        ke_df = ke_df.merge(
+            survey_date_surveyor,
+            left_on=['Elvis_Date', 'INTERV_INIT'],
+            right_on=['Date', 'INTERV_INIT'],
+            how='left'
+        )
+
+        ke_df = ke_df.merge(
+            survey_date_route,
+            left_on=['Elvis_Date', 'ROUTE_ROOT'],
+            right_on=['Date', 'ROUTE_ROOT'],
+            how='left',
+            suffixes=('', '_r')
+        )
+
+        df = df.merge(
+            survey_date_surveyor,
+            left_on=['DATE_SUBMITTED', 'INTERV_INIT'],
+            right_on=['Date', 'INTERV_INIT'],
+            how='left'
+        )
+
+        df = df.merge(
+            survey_date_route,
+            left_on=['DATE_SUBMITTED', 'ROUTE_ROOT'],
+            right_on=['Date', 'ROUTE_ROOT'],
+            how='left',
+            suffixes=('', '_r')
+        )
+
+        # Now process with the merged data
+        survey_report_by_date_df = process_surveyor_date_data_kcata(ke_df, df, survey_date_surveyor)
+        route_report_by_date_df = process_route_date_data_kcata(ke_df, df, survey_date_route)
+
+        # Final DataFrame cleanup
+        wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
+        # print("WKDAY COLUMN NAMES", wkday_comparison_df.columns.tolist())
+        # wkday_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+
+        wkend_comparison_df = wkend_comparison_df.merge(
+            detail_df_xfers[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']],
+            left_on='ROUTE_SURVEYEDCode',
+            right_on='ETC_ROUTE_ID',
+            how='left'
+        )
+        wkend_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
+        wkend_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
 
     def create_snowflake_connection():
         print("Creating connection with snowflake")
@@ -1368,9 +1563,38 @@ def fetch_and_process_data(project,schema):
         cur = conn.cursor()
 
         for sheet_name, table_name in table_info.items():
-            print("In loop 1483")
+            print(f"Processing {sheet_name} into {table_name}")
             df = dataframes.get(sheet_name)
             if df is not None:
+                # Drop duplicate columns before creating table
+                df = df.loc[:, ~df.columns.duplicated()]
+                
+                # Convert column names to strings to avoid attribute errors
+                df.columns = df.columns.astype(str)
+                
+                # Convert date columns to proper datetime format
+                for col in df.columns:
+                    col_str = str(col)  # Ensure column name is string
+                    if 'date' in col_str.lower() or 'completed' in col_str.lower():
+                        try:
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                            # Convert to date string format that Snowflake understands
+                            df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                        except Exception as e:
+                            print(f"Could not convert column {col} to datetime: {str(e)}")
+                            # If conversion fails, keep as string
+                            df[col] = df[col].astype(str)
+
+                # Ensure all columns are string type if they contain mixed types
+                for col in df.columns:
+                    if df[col].dtype == 'object':
+                        try:
+                            # Try converting to numeric first
+                            df[col] = pd.to_numeric(df[col], errors='ignore')
+                        except:
+                            # If that fails, keep as string
+                            df[col] = df[col].astype(str)
+
                 # Drop the table if it exists
                 drop_table_sql = f"DROP TABLE IF EXISTS {table_name};"
                 cur.execute(drop_table_sql)
@@ -1380,18 +1604,24 @@ def fetch_and_process_data(project,schema):
                 create_table_sql = f"CREATE TABLE {table_name} (\n"
                 for column, dtype in df.dtypes.items():
                     sanitized_column = f'"{column}"'  # Handle special characters
-                    snowflake_dtype = dtype_mapping.get(str(dtype), 'VARCHAR')  # Default to VARCHAR for unknown types
+                    snowflake_dtype = dtype_mapping.get(str(dtype), 'VARCHAR')
                     create_table_sql += f"  {sanitized_column} {snowflake_dtype},\n"
                 create_table_sql = create_table_sql.rstrip(",\n") + "\n);"
 
-                # Print the create table SQL for reference (optional)
                 # Execute the CREATE TABLE statement
                 cur.execute(create_table_sql)
                 print(f"Table {table_name} created successfully.")
 
                 # Insert data into the Snowflake table
-                write_pandas(conn, df, table_name=table_name.upper())
-                print(f"Data inserted into table {table_name} successfully.")
+                try:
+                    write_pandas(conn, df, table_name=table_name.upper())
+                    print(f"Data inserted into table {table_name} successfully.")
+                except Exception as e:
+                    print(f"Error writing to table {table_name}: {str(e)}")
+                    # Try again with all columns as strings if first attempt fails
+                    df = df.astype(str)
+                    write_pandas(conn, df, table_name=table_name.upper())
+                    print(f"Data inserted as strings into table {table_name}")
 
         # Close the Snowflake connection
         cur.close()
@@ -1422,8 +1652,7 @@ def fetch_and_process_data(project,schema):
             'WkEND Time Data': 'wkend_time_data', 
             'WkDAY Time Data': 'wkday_time_data',
             'LAST SURVEY DATE': 'last_survey_date'
-        }
-
+        } 
     elif project=='VTA':
         dataframes = {
             'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
@@ -1512,7 +1741,7 @@ def fetch_and_process_data(project,schema):
         'LAST SURVEY DATE': 'last_survey_date',
         }
         
-    elif project=='STL':
+    elif project=='STL' or project=='KCATA':
         # DataFrames preparation
         dataframes = {
             'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),

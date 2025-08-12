@@ -3,16 +3,34 @@ import pandas as pd
 from snowflake.connector.pandas_tools import write_pandas
 from decouple import config
 import os
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from dotenv import load_dotenv
+load_dotenv()
+
 
 def create_snowflake_connection():
+    with open("path/to/key.p8", "rb") as key:
+        private_key = serialization.load_pem_private_key(
+            key.read(),
+            password=os.environ["SNOWFLAKE_PASSPHRASE"].encode(),
+            backend=default_backend(),
+        )
+
+    private_key_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
     conn = snowflake.connector.connect(
-        user=config('SNOWFLAKE_USER'),
-        password=config('SNOWFLAKE_PASSWORD'),
-        account=config('SNOWFLAKE_ACCOUNT'),
-        warehouse=config('SNOWFLAKE_WAREHOUSE'),
-        database=config('SNOWFLAKE_DATABASE'),
+        user=os.getenv('SNOWFLAKE_USER'),
+        private_key=private_key_bytes,
+        account=os.getenv('SNOWFLAKE_ACCOUNT'),
+        warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
+        database=os.getenv('SNOWFLAKE_DATABASE'),
+        authenticator="SNOWFLAKE_JWT",
         schema='kcata_bus',
-        role=config('SNOWFLAKE_ROLE')
+        role=os.getenv('SNOWFLAKE_ROLE'),
     )
     return conn
 
@@ -148,7 +166,7 @@ sheet_info = {
 #     'LAST SURVEY DATE': 'last_survey_date',
 # }
 
-# file_path = 'details_saint_louis_MO_od_excel.xlsx'
+# file_path = 'details_KCATA_od_excel.xlsx'
 # # detail_df=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='TOD')
 # # # detail_df=detail_df[['OPPO_TIME[CODE]', 'TIME_ON[Code]', 'TIME_ON', 'TIME_PERIOD[Code]',
 # # #                               'TIME_PERIOD', 'START_TIME']]

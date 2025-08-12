@@ -419,6 +419,73 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
 
         # Add a display text column with sequential numbering
         new_df['Display_Text'] = range(1, len(new_df) + 1)
+    elif project=='KCATA':
+        """
+        Create a time-value DataFrame summarizing counts and time ranges.
+        """
+        early_am_values = ['AM1','AM2']
+        am_values = ['AM3', 'MID1','MID2','MID7']
+        midday_values = [ 'MID3', 'MID4', 'MID5', 'MID6','PM1']
+        pm_peak_values = ['PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        # Mapping time groups to corresponding columns
+        time_group_mapping = {
+            1: early_am_values,
+            2: am_values,
+            3: midday_values,
+            4: pm_peak_values,
+            5: evening_values,
+        }
+
+        time_mapping = {
+            'AM1': 'Before 5:00 am',
+            'AM2': '5:00 am - 6:00 am',
+            'AM3': '6:00 am - 7:00 am',
+            'MID1': '7:00 am - 8:00 am',
+            'MID2': '8:00 am - 9:00 am',
+            'MID7': '9:00 am - 10:00 am',
+            'MID3': '10:00 am - 11:00 am',
+            'MID4': '11:00 am - 12:00 pm',
+            'MID5': '12:00 pm - 1:00 pm',
+            'MID6': '1:00 pm - 2:00 pm',
+            'PM1': '2:00 pm - 3:00 pm',
+            'PM2': '3:00 pm - 4:00 pm',
+            'PM3': '4:00 pm - 5:00 pm',
+            'PM4': '5:00 pm - 6:00 pm',
+            'PM5': '6:00 pm - 7:00 pm',
+            'PM6': '7:00 pm - 8:00 pm',
+            'PM7': '8:00 pm - 9:00 pm',
+            'PM8': '9:00 pm - 10:00 pm',
+            'PM9': 'After 10:00 pm'
+        }
+
+        # Initialize the new DataFrame
+        new_df = pd.DataFrame(columns=["Original Text", 0, 1, 2, 3, 4,5,6])
+
+        # Populate the DataFrame with counts
+        for col, values in time_group_mapping.items():
+            for value in values:
+                count = df[df[time_column[0]] == value].shape[0]
+                row = {"Original Text": value}
+
+                # Initialize all columns to 0
+                for c in range(6):
+                    row[c] = 0
+
+                # Update the corresponding column with the count
+                row[col] = count
+                new_df = pd.concat([new_df, pd.DataFrame([row])], ignore_index=True)
+
+        # Map time values to time ranges
+        new_df['Time Range'] = new_df['Original Text'].map(time_mapping)
+
+        # Drop rows with missing time ranges
+        new_df.dropna(subset=['Time Range'], inplace=True)
+
+        # Add a display text column with sequential numbering
+        new_df['Display_Text'] = range(1, len(new_df) + 1)
+    
     return new_df
 
 
@@ -759,7 +826,74 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
                 new_df.loc[index, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_diff))
                 new_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
                 new_df.loc[index, 'Total_DIFFERENCE'] =math.ceil(max(0, am_peak_diff))+math.ceil(max(0, midday_diff))+math.ceil(max(0, pm_diff))+math.ceil(max(0, evening_diff))
+    elif project=='KCATA':
+        # Time period values
+        early_am_values = ['AM1','AM2']
+        am_values = ['AM3', 'MID1','MID2','MID7']
+        midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+        pm_peak_values = ['PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        # Column names in the DataFrame (as strings)
+        early_am_column = ['1']  
+        am_column = ['2']        
+        midday_colum = ['3']     
+        pm_peak_column = ['4']   
+        evening_column = ['5']   
+
+        # Initialize new DataFrame
+        new_df = pd.DataFrame()
+        new_df['ROUTE_SURVEYEDCode'] = overalldf['LS_NAME_CODE']
+
+        # Convert and clean numeric columns
+        def safe_convert(x):
+            try:
+                return math.ceil(float(x)) if pd.notnull(x) else 0
+            except (ValueError, TypeError):
+                return 0
+
+        # Process each time period column
+        for col, col_name in [(early_am_column, 'CR_Early_AM'),
+                            (am_column, 'CR_AM_Peak'),
+                            (midday_colum, 'CR_Midday'),
+                            (pm_peak_column, 'CR_PM_Peak'),
+                            (evening_column, 'CR_Evening')]:
+            overalldf[col[0]] = pd.to_numeric(overalldf[col[0]], errors='coerce').fillna(0)
+            new_df[col_name] = overalldf[col[0]].apply(safe_convert)
+
+        # Calculate totals
+        new_df['CR_Total'] = new_df['CR_Early_AM'] + new_df['CR_AM_Peak'] + new_df['CR_Midday'] + new_df['CR_PM_Peak'] + new_df['CR_Evening']
+
+        # Get counts from the database
+        for index, row in new_df.iterrows():
+            route_code = row['ROUTE_SURVEYEDCode']
+
+            def get_counts(time_values):
+                subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+                return subset_df.drop_duplicates(subset='id').shape[0]
+
+            # Initialize all DB columns first
+            new_df.at[index, 'DB_Early_AM_Peak'] = get_counts(early_am_values)
+            new_df.at[index, 'DB_AM_Peak'] = get_counts(am_values)
+            new_df.at[index, 'DB_Midday'] = get_counts(midday_values)
+            new_df.at[index, 'DB_PM_Peak'] = get_counts(pm_peak_values)
+            new_df.at[index, 'DB_Evening'] = get_counts(evening_values)
+            new_df.at[index, 'DB_Total'] = (new_df.at[index, 'DB_Early_AM_Peak'] + 
+                                            new_df.at[index, 'DB_AM_Peak'] + 
+                                            new_df.at[index, 'DB_Midday'] + 
+                                            new_df.at[index, 'DB_PM_Peak'] + 
+                                            new_df.at[index, 'DB_Evening'])
+
+        # Calculate differences
+        new_df['Early_AM_DIFFERENCE'] = (new_df['CR_Early_AM'] - new_df['DB_Early_AM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['AM_DIFFERENCE'] = (new_df['CR_AM_Peak'] - new_df['DB_AM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['Midday_DIFFERENCE'] = (new_df['CR_Midday'] - new_df['DB_Midday']).clip(lower=0).apply(math.ceil)
+        new_df['PM_PEAK_DIFFERENCE'] = (new_df['CR_PM_Peak'] - new_df['DB_PM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['Evening_DIFFERENCE'] = (new_df['CR_Evening'] - new_df['DB_Evening']).clip(lower=0).apply(math.ceil)
+        new_df['Total_DIFFERENCE'] = (new_df[['Early_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 
+                                            'PM_PEAK_DIFFERENCE', 'Evening_DIFFERENCE']].sum(axis=1))
     return new_df
+
 
 def create_tucson_weekend_route_direction_level_df(overalldf,df,time_column,project):
     # For Tucson PROJECT Have to change values TIME PERIOD VALUES
@@ -1899,6 +2033,106 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
             route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
             route_level_df.loc[index, 'Total_DIFFERENCE'] = (math.ceil(max(0, am_peak_diff)) +math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_diff)) + math.ceil(max(0, evening_diff)))
             route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
+    elif project=='KCATA':
+        early_am_values = ['AM1','AM2']
+        am_values = ['AM3', 'MID1','MID2','MID7']
+        midday_values = [ 'MID3', 'MID4', 'MID5', 'MID6','PM1']
+        pm_peak_values = ['PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        early_am_column = ['1']
+        am_column=['2']
+        midday_colum=['3']
+        pm_peak_column=['4']
+        evening_column=['5']
+
+        def convert_string_to_integer(x):
+            try:
+                return float(x)
+            except (ValueError, TypeError):
+                return 0
+
+        new_df=pd.DataFrame()
+        new_df['ROUTE_SURVEYEDCode']=overall_df['LS_NAME_CODE']
+        new_df['CR_Early_AM']=overall_df[early_am_column[0]].apply(math.ceil)
+        new_df['CR_AM_Peak']=overall_df[am_column[0]].apply(math.ceil)
+        new_df['CR_Midday']=overall_df[midday_colum[0]].apply(math.ceil)
+        new_df['CR_PM_Peak']=overall_df[pm_peak_column[0]].apply(math.ceil)
+        new_df['CR_Evening']=overall_df[evening_column[0]].apply(math.ceil)
+        new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
+        new_df.fillna(0,inplace=True)
+
+        for index, row in new_df.iterrows():
+            route_code = row['ROUTE_SURVEYEDCode']
+
+            def get_counts_and_ids(time_values):
+                subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+                subset_df=subset_df.drop_duplicates(subset='id')
+                count = subset_df.shape[0]
+                ids = subset_df['id'].values
+                return count, ids
+            
+            early_am_value, early_am_value_ids = get_counts_and_ids(early_am_values)
+            am_value, am_value_ids = get_counts_and_ids(am_values)
+            midday_value, midday_value_ids = get_counts_and_ids(midday_values)
+            pm_peak_value, pm_peak_value_ids = get_counts_and_ids(pm_peak_values)
+            evening_value, evening_value_ids = get_counts_and_ids(evening_values)
+            
+            new_df.loc[index, 'CR_Total'] = row['CR_Early_AM'] + row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+            new_df.loc[index, 'CR_AM_Peak'] = row['CR_AM_Peak']
+
+            new_df.loc[index, 'DB_Early_AM_Peak'] = early_am_value
+            new_df.loc[index, 'DB_AM_Peak'] = am_value
+            new_df.loc[index, 'DB_Midday'] = midday_value
+            new_df.loc[index, 'DB_PM_Peak'] = pm_peak_value
+            new_df.loc[index, 'DB_Evening'] = evening_value
+            new_df.loc[index, 'DB_Total'] = evening_value + early_am_value + am_value + midday_value + pm_peak_value
+            
+        new_df['ROUTE_SURVEYEDCode_Splited']=new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]) )
+
+        route_level_df=pd.DataFrame()
+        unique_routes=new_df['ROUTE_SURVEYEDCode_Splited'].unique()
+        route_level_df['ROUTE_SURVEYEDCode']=unique_routes
+
+        route_df.rename(columns={'ROUTE_TOTAL':'CR_Overall_Goal','SURVEY_ROUTE_CODE':'ROUTE_SURVEYEDCode','LS_NAME_CODE':'ROUTE_SURVEYEDCode'},inplace=True)
+        route_df.dropna(subset=['ROUTE_SURVEYEDCode'],inplace=True)
+        route_level_df=pd.merge(route_level_df,route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']],on='ROUTE_SURVEYEDCode')
+
+        for index , row in route_level_df.iterrows():
+            subset_df=new_df[new_df['ROUTE_SURVEYEDCode_Splited']==row['ROUTE_SURVEYEDCode']]
+            sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
+            sum_per_route_db = subset_df[['DB_Early_AM_Peak','DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+            
+            route_level_df.loc[index,'CR_Early_AM']=sum_per_route_cr['CR_Early_AM']
+            route_level_df.loc[index,'CR_AM_Peak']=sum_per_route_cr['CR_AM_Peak']
+            route_level_df.loc[index,'CR_Midday']=sum_per_route_cr['CR_Midday']
+            route_level_df.loc[index,'CR_PM_Peak']=sum_per_route_cr['CR_PM_Peak']
+            route_level_df.loc[index,'CR_Evening']=sum_per_route_cr['CR_Evening']
+            route_level_df.loc[index,'CR_Total']=sum_per_route_cr['CR_Total']
+            
+            route_level_df.loc[index,'DB_Early_AM_Peak']=sum_per_route_db['DB_Early_AM_Peak']
+            route_level_df.loc[index,'DB_AM_Peak']=sum_per_route_db['DB_AM_Peak']
+            route_level_df.loc[index,'DB_Midday']=sum_per_route_db['DB_Midday']
+            route_level_df.loc[index,'DB_PM_Peak']=sum_per_route_db['DB_PM_Peak']
+            route_level_df.loc[index,'DB_Evening']=sum_per_route_db['DB_Evening']
+            route_level_df.loc[index,'DB_Total']=sum_per_route_db['DB_Total']   
+
+        for index, row in route_level_df.iterrows():
+            early_am_peak_diff=row['CR_Early_AM']-row['DB_Early_AM_Peak']
+            am_peak_diff=row['CR_AM_Peak']-row['DB_AM_Peak']
+            midday_diff=row['CR_Midday']-row['DB_Midday']    
+            pm_peak_diff=row['CR_PM_Peak']-row['DB_PM_Peak']
+            evening_diff=row['CR_Evening']-row['DB_Evening']
+            total_diff=row['CR_Total']-row['DB_Total']
+            overall_difference=row['CR_Overall_Goal']-row['DB_Total']
+            
+            route_level_df.loc[index, 'Early_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
+            route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+            route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+            route_level_df.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+            route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+            route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff)) + math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
+            route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0,overall_difference))
     return route_level_df
 
 
@@ -2206,6 +2440,247 @@ def process_survey_data(df):
     detail_table['Date'] = pd.to_datetime(detail_table['Date']).dt.date
 
     return interviewer_pivot, route_pivot, detail_table
+
+def process_surveyor_data_kcata(df, elvis_df):
+    """Process data for surveyor-level report"""
+    # Clean and filter data
+    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    filtered_df = df[df['INTERV_INIT'] != "999"]
+    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1]
+    
+    # Base counts
+    record_counts = (
+        valid_surveys_df
+        .groupby('INTERV_INIT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records'})
+    )
+    
+    interv_list = sorted(filtered_df['INTERV_INIT'].unique())
+    summary_df = pd.DataFrame({'INTERV_INIT': interv_list}).merge(record_counts, how='left').fillna(0)
+    
+    # Supervisor Deletes
+    delete_counts = (
+        filtered_df[
+            (filtered_df['ELVIS_STATUS'] == 'Delete') & 
+            (filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+        ]
+        .groupby('INTERV_INIT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Supervisor Delete'})
+    )
+    summary_df = summary_df.merge(delete_counts, how='left').fillna(0)
+    
+    # Records Remove
+    remove_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'] == 'Remove']
+        .groupby('INTERV_INIT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Remove'})
+    )
+    summary_df = summary_df.merge(remove_counts, how='left').fillna(0)
+    
+    # Records Reviewed/Not Reviewed
+    reviewed_df = valid_surveys_df[valid_surveys_df['Final_Usage'].notna()]
+    reviewed_counts = (
+        reviewed_df
+        .groupby('INTERV_INIT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Reviewed'})
+    )
+    summary_df = summary_df.merge(reviewed_counts, how='left').fillna(0)
+    
+    not_reviewed_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'].isna()]
+        .groupby('INTERV_INIT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Not Reviewed'})
+    )
+    summary_df = summary_df.merge(not_reviewed_counts, how='left').fillna(0)
+    
+    # Process elvis data for additional metrics
+    elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
+    address_filtered = elvis_df[
+        (elvis_df['INTERV_INIT'] != "999") &
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+    ].copy()
+    
+    # Address completeness
+    address_fields = [
+        'HOME_ADDRESS_LAT', 'HOME_ADDRESS_LONG', 'HOME_ADDRESS_PLACE',
+        'HOME_ADDRESS_ADDR', 'HOME_ADDRESS_CITY', 'HOME_ADDRESS_STATE', 'HOME_ADDRESS_ZIP'
+    ]
+    address_filtered['Incomplete_Address'] = address_filtered[address_fields].isnull().any(axis=1)
+    
+    address_group = address_filtered.groupby('INTERV_INIT').agg(
+        total_records=('id', 'count'),
+        incomplete_count=('Incomplete_Address', 'sum')
+    ).reset_index()
+    
+    address_group['% of Incomplete Home Address'] = (
+        (address_group['incomplete_count'] / address_group['total_records']) * 100
+    ).round(2).astype(str) + '%'
+    
+    summary_df = summary_df.merge(
+        address_group[['INTERV_INIT', '% of Incomplete Home Address']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    # Survey times
+    time_cols = ['HOMEADD_TIME', 'NOTE_TIME', 'REVIEWSCR_TIME']
+    for col in time_cols:
+        address_filtered[col] = pd.to_datetime(address_filtered[col], errors='coerce')
+    
+    address_filtered['SurveyTime (All)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (TripLogic)'] = (
+        address_filtered['REVIEWSCR_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (DemoLogic)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['REVIEWSCR_TIME']
+    ).dt.total_seconds()
+    
+    # Format times
+    survey_time_group = address_filtered.groupby('INTERV_INIT').agg({
+        'SurveyTime (All)': 'mean',
+        'SurveyTime (TripLogic)': 'mean',
+        'SurveyTime (DemoLogic)': 'mean'
+    }).reset_index()
+    
+    for col in ['SurveyTime (All)', 'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)']:
+        survey_time_group[col] = survey_time_group[col].apply(
+            lambda x: "00:00:00" if pd.isna(x) or x < 0 else 
+            f"{int(x//3600):02}:{int((x%3600)//60):02}:{int(x%60):02}"
+        )
+    
+    summary_df = summary_df.merge(survey_time_group, how='left').fillna("00:00:00")
+    
+    # Other metrics (0 transfers, access walk, etc.)
+    metrics = [
+        ('0 Transfers', 
+         (address_filtered['PREV_TRANSFERSCode'] == '(0) None') & 
+         (address_filtered['NEXT_TRANSFERSCode'] == '(0) None')),
+        ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
+        ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
+        ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
+        ('No Income', 
+         (address_filtered['INCOMECode'].isna()) | 
+         (address_filtered['INCOMECode'].astype(str) == 'REFUSED')),
+        ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
+        ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
+        ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
+    ]
+    
+    for name, condition in metrics:
+        metric_group = (
+            address_filtered[condition]
+            .groupby('INTERV_INIT')['id']
+            .count()
+            .reset_index()
+            .rename(columns={'id': f'{name.lower()}_count'})
+        )
+        
+        metric_percent = address_group[['INTERV_INIT', 'total_records']].merge(
+            metric_group, how='left'
+        ).fillna(0)
+        
+        metric_percent[f'% of {name}'] = (
+            (metric_percent[f'{name.lower()}_count'] / metric_percent['total_records']) * 100
+        ).apply(format_percentage)
+        
+        summary_df = summary_df.merge(
+            metric_percent[['INTERV_INIT', f'% of {name}']], 
+            how='left'
+        ).fillna('0.0%')
+    
+    # Contest metrics (keeping only contest-related metrics)
+    contest_filtered = elvis_df[
+        (elvis_df['INTERV_INIT'] != "999") & 
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+    ].copy()
+    
+    contest_filtered['contest_yes'] = (
+        contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper() == 'YES'
+    )
+    
+    contest_group = contest_filtered.groupby('INTERV_INIT').agg(
+        total_records=('id', 'count'),
+        contest_yes_count=('contest_yes', 'sum')
+    ).reset_index()
+    
+    contest_group['% of Contest - Yes'] = (
+        (contest_group['contest_yes_count'] / contest_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    summary_df = summary_df.merge(
+        contest_group[['INTERV_INIT', '% of Contest - Yes']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    contest_filtered['valid_contest'] = (
+        contest_filtered['contest_yes'] &
+        contest_filtered['REG_2_WIN_CONTACT_NAME'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_NAME'].astype(str).str.strip() != '') &
+        contest_filtered['REG_2_WIN_CONTACT_PHONE'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_PHONE'].astype(str).str.strip() != '')
+    )
+    
+    contest_valid_group = contest_filtered.groupby('INTERV_INIT').agg(
+        total_records=('id', 'count'),
+        valid_contest_count=('valid_contest', 'sum')
+    ).reset_index()
+    
+    contest_valid_group['% of Contest - (Yes & Good Info)/Overall # of Records'] = (
+        (contest_valid_group['valid_contest_count'] / contest_valid_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    summary_df = summary_df.merge(
+        contest_valid_group[['INTERV_INIT', '% of Contest - (Yes & Good Info)/Overall # of Records']],
+        how='left'
+    ).fillna('0.0%')
+    
+    # Add total row
+    total_row = {
+        'INTERV_INIT': 'Total',
+        '# of Records': summary_df['# of Records'].sum(),
+        '# of Supervisor Delete': summary_df['# of Supervisor Delete'].sum(),
+        '# of Records Remove': summary_df['# of Records Remove'].sum(),
+        '# of Records Reviewed': summary_df['# of Records Reviewed'].sum(),
+        '# of Records Not Reviewed': summary_df['# of Records Not Reviewed'].sum(),
+        'SurveyTime (All)': calculate_avg_time(
+            summary_df.loc[summary_df['INTERV_INIT'] != 'Total', 'SurveyTime (All)']),
+        'SurveyTime (TripLogic)': calculate_avg_time(
+            summary_df.loc[summary_df['INTERV_INIT'] != 'Total', 'SurveyTime (TripLogic)']),
+        'SurveyTime (DemoLogic)': calculate_avg_time(
+            summary_df.loc[summary_df['INTERV_INIT'] != 'Total', 'SurveyTime (DemoLogic)']),
+    }
+    
+    # Add average percentages
+    percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
+    for col in percent_cols:
+        avg = summary_df.loc[summary_df['INTERV_INIT'] != 'Total', col]\
+              .str.rstrip('%').astype(float).mean()
+        total_row[col] = format_percentage(avg)
+    
+    summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
+    
+    column_order = [
+        'INTERV_INIT', '# of Records', '# of Supervisor Delete', '# of Records Remove',
+        '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
+        'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
+        '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
+        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    
+    return summary_df[column_order]
+
 
 def process_surveyor_data(df, elvis_df):
     """Process data for surveyor-level report"""
@@ -2793,6 +3268,760 @@ def process_route_data(df, elvis_df):
     ]
     
     return route_report_df[column_order]
+
+
+def process_route_data_kcata(df, elvis_df):
+    """Process data for route-level report"""
+    # Clean route names
+    df['ROUTE_ROOT'] = clean_route_name(df['ROUTE_SURVEYED'])
+    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    
+    # Filter data
+    filtered_df = df[df['INTERV_INIT'] != "999"]
+    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1]
+    
+    # Base counts
+    record_counts = (
+        valid_surveys_df
+        .groupby('ROUTE_ROOT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records'})
+    )
+    
+    route_list = sorted(filtered_df['ROUTE_ROOT'].unique())
+    route_report_df = pd.DataFrame({'ROUTE_ROOT': route_list}).merge(record_counts, how='left').fillna(0)
+    
+    # Supervisor Deletes
+    delete_counts = (
+        filtered_df[
+            (filtered_df['ELVIS_STATUS'] == 'Delete') & 
+            (filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+        ]
+        .groupby('ROUTE_ROOT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Supervisor Delete'})
+    )
+    route_report_df = route_report_df.merge(delete_counts, how='left').fillna(0)
+    
+    # Records Remove
+    remove_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'] == 'Remove']
+        .groupby('ROUTE_ROOT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Remove'})
+    )
+    route_report_df = route_report_df.merge(remove_counts, how='left').fillna(0)
+    
+    # Records Reviewed/Not Reviewed
+    reviewed_df = valid_surveys_df[valid_surveys_df['Final_Usage'].notna()]
+    reviewed_counts = (
+        reviewed_df
+        .groupby('ROUTE_ROOT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Reviewed'})
+    )
+    route_report_df = route_report_df.merge(reviewed_counts, how='left').fillna(0)
+    
+    not_reviewed_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'].isna()]
+        .groupby('ROUTE_ROOT')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Not Reviewed'})
+    )
+    route_report_df = route_report_df.merge(not_reviewed_counts, how='left').fillna(0)
+    
+    # Process elvis data for additional metrics
+    elvis_df['ROUTE_ROOT'] = clean_route_name(elvis_df['ROUTE_SURVEYED'])
+    elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
+    
+    address_filtered = elvis_df[
+        (elvis_df['INTERV_INIT'] != "999") & 
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+    ].copy()
+    
+    # Address completeness
+    address_fields = [
+        'HOME_ADDRESS_LAT', 'HOME_ADDRESS_LONG', 'HOME_ADDRESS_PLACE',
+        'HOME_ADDRESS_ADDR', 'HOME_ADDRESS_CITY', 'HOME_ADDRESS_STATE', 'HOME_ADDRESS_ZIP'
+    ]
+    address_filtered['Incomplete_Address'] = address_filtered[address_fields].isnull().any(axis=1)
+    
+    address_group = address_filtered.groupby('ROUTE_ROOT').agg(
+        total_records=('id', 'count'),
+        incomplete_count=('Incomplete_Address', 'sum')
+    ).reset_index()
+    
+    address_group['% of Incomplete Home Address'] = (
+        (address_group['incomplete_count'] / address_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    route_report_df = route_report_df.merge(
+        address_group[['ROUTE_ROOT', '% of Incomplete Home Address']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    # Survey times
+    time_cols = ['HOMEADD_TIME', 'NOTE_TIME', 'REVIEWSCR_TIME']
+    for col in time_cols:
+        address_filtered[col] = pd.to_datetime(address_filtered[col], errors='coerce')
+    
+    address_filtered['SurveyTime (All)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (TripLogic)'] = (
+        address_filtered['REVIEWSCR_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (DemoLogic)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['REVIEWSCR_TIME']
+    ).dt.total_seconds()
+    
+    # Format times
+    survey_time_group = address_filtered.groupby('ROUTE_ROOT').agg({
+        'SurveyTime (All)': 'mean',
+        'SurveyTime (TripLogic)': 'mean',
+        'SurveyTime (DemoLogic)': 'mean'
+    }).reset_index()
+    
+    for col in ['SurveyTime (All)', 'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)']:
+        survey_time_group[col] = survey_time_group[col].apply(
+            lambda x: "00:00:00" if pd.isna(x) or x < 0 else 
+            f"{int(x//3600):02}:{int((x%3600)//60):02}:{int(x%60):02}"
+        )
+    
+    route_report_df = route_report_df.merge(survey_time_group, how='left').fillna("00:00:00")
+    
+    # Other metrics (0 transfers, access walk, etc.)
+    metrics = [
+        ('0 Transfers', 
+         (address_filtered['PREV_TRANSFERSCode'] == '(0) None') & 
+         (address_filtered['NEXT_TRANSFERSCode'] == '(0) None')),
+        ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
+        ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
+        ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
+        ('No Income', 
+         (address_filtered['INCOMECode'].isna()) | 
+         (address_filtered['INCOMECode'].astype(str) == 'REFUSED')),
+        ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
+        ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
+        ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
+    ]
+    
+    for name, condition in metrics:
+        metric_group = (
+            address_filtered[condition]
+            .groupby('ROUTE_ROOT')['id']
+            .count()
+            .reset_index()
+            .rename(columns={'id': f'{name.lower()}_count'})
+        )
+        
+        metric_percent = address_group[['ROUTE_ROOT', 'total_records']].merge(
+            metric_group, how='left'
+        ).fillna(0)
+        
+        metric_percent[f'% of {name}'] = (
+            (metric_percent[f'{name.lower()}_count'] / metric_percent['total_records']) * 100
+        ).apply(format_percentage)
+        
+        route_report_df = route_report_df.merge(
+            metric_percent[['ROUTE_ROOT', f'% of {name}']], 
+            how='left'
+        ).fillna('0.0%')
+    
+    # Contest metrics only (removed follow-up section)
+    contest_filtered = address_filtered.copy()
+    contest_filtered['contest_yes'] = (
+        contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper() == 'YES'
+    )
+    
+    contest_group = contest_filtered.groupby('ROUTE_ROOT').agg(
+        total_records=('id', 'count'),
+        contest_yes_count=('contest_yes', 'sum')
+    ).reset_index()
+    
+    contest_group['% of Contest - Yes'] = (
+        (contest_group['contest_yes_count'] / contest_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    route_report_df = route_report_df.merge(
+        contest_group[['ROUTE_ROOT', '% of Contest - Yes']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    contest_filtered['valid_contest'] = (
+        contest_filtered['contest_yes'] &
+        contest_filtered['REG_2_WIN_CONTACT_NAME'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_NAME'].astype(str).str.strip() != '') &
+        contest_filtered['REG_2_WIN_CONTACT_PHONE'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_PHONE'].astype(str).str.strip() != '')
+    )
+    
+    contest_valid_group = contest_filtered.groupby('ROUTE_ROOT').agg(
+        total_records=('id', 'count'),
+        valid_contest_count=('valid_contest', 'sum')
+    ).reset_index()
+    
+    contest_valid_group['% of Contest - (Yes & Good Info)/Overall # of Records'] = (
+        (contest_valid_group['valid_contest_count'] / contest_valid_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    route_report_df = route_report_df.merge(
+        contest_valid_group[['ROUTE_ROOT', '% of Contest - (Yes & Good Info)/Overall # of Records']],
+        how='left'
+    ).fillna('0.0%')
+    
+    # Add total row
+    total_row = {
+        'ROUTE_ROOT': 'Total',
+        '# of Records': route_report_df['# of Records'].sum(),
+        '# of Supervisor Delete': route_report_df['# of Supervisor Delete'].sum(),
+        '# of Records Remove': route_report_df['# of Records Remove'].sum(),
+        '# of Records Reviewed': route_report_df['# of Records Reviewed'].sum(),
+        '# of Records Not Reviewed': route_report_df['# of Records Not Reviewed'].sum(),
+        'SurveyTime (All)': calculate_avg_time(
+            route_report_df.loc[route_report_df['ROUTE_ROOT'] != 'Total', 'SurveyTime (All)']),
+        'SurveyTime (TripLogic)': calculate_avg_time(
+            route_report_df.loc[route_report_df['ROUTE_ROOT'] != 'Total', 'SurveyTime (TripLogic)']),
+        'SurveyTime (DemoLogic)': calculate_avg_time(
+            route_report_df.loc[route_report_df['ROUTE_ROOT'] != 'Total', 'SurveyTime (DemoLogic)']),
+    }
+    
+    # Add average percentages
+    percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
+    for col in percent_cols:
+        avg = route_report_df.loc[route_report_df['ROUTE_ROOT'] != 'Total', col]\
+              .str.rstrip('%').astype(float).mean()
+        total_row[col] = format_percentage(avg)
+    
+    route_report_df = pd.concat([route_report_df, pd.DataFrame([total_row])], ignore_index=True)
+    
+    # Rename and reorder columns
+    route_report_df = route_report_df.rename(columns={'ROUTE_ROOT': 'Route'})
+    
+    column_order = [
+        'Route', '# of Records', '# of Supervisor Delete', '# of Records Remove',
+        '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
+        'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
+        '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
+        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of Contest - Yes', 
+        '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    
+    return route_report_df[column_order]
+
+def process_surveyor_date_data_kcata(df, elvis_df, survey_date_surveyor):
+    """Process data for surveyor-level report with date"""
+    df = df.copy()
+    elvis_df = elvis_df.copy()
+    
+    # Clean and filter data
+    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    filtered_df = df[df['INTERV_INIT'] != "999"]
+    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1]
+    print("\n[DEBUG] Columns in valid_surveys_df:", valid_surveys_df.columns.tolist())
+    print("[DEBUG] First few rows:")
+    print(valid_surveys_df.head())
+    # Base counts
+    record_counts = (
+        valid_surveys_df
+        .groupby('Date_Surveyor')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records'})
+    )
+    
+    summary_df = survey_date_surveyor[['Date_Surveyor']].merge(record_counts, on='Date_Surveyor', how='left').fillna(0)
+    
+    # Supervisor Deletes
+    delete_counts = (
+        filtered_df[
+            (filtered_df['ELVIS_STATUS'] == 'Delete') & 
+            (filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+        ]
+        .groupby('Date_Surveyor')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Supervisor Delete'})
+    )
+    summary_df = summary_df.merge(delete_counts, how='left').fillna(0)
+    
+    # Records Remove
+    remove_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'] == 'Remove']
+        .groupby('Date_Surveyor')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Remove'})
+    )
+    summary_df = summary_df.merge(remove_counts, how='left').fillna(0)
+    
+    # Records Reviewed/Not Reviewed
+    reviewed_df = valid_surveys_df[valid_surveys_df['Final_Usage'].notna()]
+    reviewed_counts = (
+        reviewed_df
+        .groupby('Date_Surveyor')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Reviewed'})
+    )
+    summary_df = summary_df.merge(reviewed_counts, how='left').fillna(0)
+    
+    not_reviewed_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'].isna()]
+        .groupby('Date_Surveyor')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Not Reviewed'})
+    )
+    summary_df = summary_df.merge(not_reviewed_counts, how='left').fillna(0)
+    
+    # Process elvis data for additional metrics
+    elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
+    address_filtered = elvis_df[
+        (elvis_df['INTERV_INIT'] != "999") & 
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+    ].copy()
+    
+    # Address completeness
+    address_fields = [
+        'HOME_ADDRESS_LAT', 'HOME_ADDRESS_LONG', 'HOME_ADDRESS_PLACE',
+        'HOME_ADDRESS_ADDR', 'HOME_ADDRESS_CITY', 'HOME_ADDRESS_STATE', 'HOME_ADDRESS_ZIP'
+    ]
+    address_filtered['Incomplete_Address'] = address_filtered[address_fields].isnull().any(axis=1)
+    
+    address_group = address_filtered.groupby('Date_Surveyor').agg(
+        total_records=('id', 'count'),
+        incomplete_count=('Incomplete_Address', 'sum')
+    ).reset_index()
+    
+    address_group['% of Incomplete Home Address'] = (
+        (address_group['incomplete_count'] / address_group['total_records']) * 100
+    ).round(2).astype(str) + '%'
+    
+    summary_df = summary_df.merge(
+        address_group[['Date_Surveyor', '% of Incomplete Home Address']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    # Survey times
+    time_cols = ['HOMEADD_TIME', 'NOTE_TIME', 'REVIEWSCR_TIME']
+    for col in time_cols:
+        address_filtered[col] = pd.to_datetime(address_filtered[col], errors='coerce')
+    
+    address_filtered['SurveyTime (All)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (TripLogic)'] = (
+        address_filtered['REVIEWSCR_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (DemoLogic)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['REVIEWSCR_TIME']
+    ).dt.total_seconds()
+    
+    # Format times
+    survey_time_group = address_filtered.groupby('Date_Surveyor').agg({
+        'SurveyTime (All)': 'mean',
+        'SurveyTime (TripLogic)': 'mean',
+        'SurveyTime (DemoLogic)': 'mean'
+    }).reset_index()
+    
+    for col in ['SurveyTime (All)', 'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)']:
+        survey_time_group[col] = survey_time_group[col].apply(
+            lambda x: "00:00:00" if pd.isna(x) or x < 0 else 
+            f"{int(x//3600):02}:{int((x%3600)//60):02}:{int(x%60):02}"
+        )
+    
+    summary_df = summary_df.merge(survey_time_group, how='left').fillna("00:00:00")
+    
+    # Other metrics (0 transfers, access walk, etc.)
+    metrics = [
+        ('0 Transfers', 
+         (address_filtered['PREV_TRANSFERSCode'] == '(0) None') & 
+         (address_filtered['NEXT_TRANSFERSCode'] == '(0) None')),
+        ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
+        ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
+        ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
+        ('No Income', 
+         (address_filtered['INCOMECode'].isna()) | 
+         (address_filtered['INCOMECode'].astype(str) == 'REFUSED')),
+        ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
+        ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
+        ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
+    ]
+    
+    for name, condition in metrics:
+        metric_group = (
+            address_filtered[condition]
+            .groupby('Date_Surveyor')['id']
+            .count()
+            .reset_index()
+            .rename(columns={'id': f'{name.lower()}_count'})
+        )
+        
+        metric_percent = address_group[['Date_Surveyor', 'total_records']].merge(
+            metric_group, how='left'
+        ).fillna(0)
+        
+        metric_percent[f'% of {name}'] = (
+            (metric_percent[f'{name.lower()}_count'] / metric_percent['total_records']) * 100
+        ).apply(format_percentage)
+        
+        summary_df = summary_df.merge(
+            metric_percent[['Date_Surveyor', f'% of {name}']], 
+            how='left'
+        ).fillna('0.0%')
+    
+    # Contest metrics only (removed follow-up section)
+    contest_filtered = address_filtered.copy()
+    contest_filtered['contest_yes'] = (
+        contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper() == 'YES'
+    )
+    
+    contest_group = contest_filtered.groupby('Date_Surveyor').agg(
+        total_records=('id', 'count'),
+        contest_yes_count=('contest_yes', 'sum')
+    ).reset_index()
+    
+    contest_group['% of Contest - Yes'] = (
+        (contest_group['contest_yes_count'] / contest_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    summary_df = summary_df.merge(
+        contest_group[['Date_Surveyor', '% of Contest - Yes']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    contest_filtered['valid_contest'] = (
+        contest_filtered['contest_yes'] &
+        contest_filtered['REG_2_WIN_CONTACT_NAME'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_NAME'].astype(str).str.strip() != '') &
+        contest_filtered['REG_2_WIN_CONTACT_PHONE'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_PHONE'].astype(str).str.strip() != '')
+    )
+    
+    contest_valid_group = contest_filtered.groupby('Date_Surveyor').agg(
+        total_records=('id', 'count'),
+        valid_contest_count=('valid_contest', 'sum')
+    ).reset_index()
+    
+    contest_valid_group['% of Contest - (Yes & Good Info)/Overall # of Records'] = (
+        (contest_valid_group['valid_contest_count'] / contest_valid_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    summary_df = summary_df.merge(
+        contest_valid_group[['Date_Surveyor', '% of Contest - (Yes & Good Info)/Overall # of Records']],
+        how='left'
+    ).fillna('0.0%')
+    
+    # Add total row
+    total_row = {
+        'Date_Surveyor': 'Total',
+        '# of Records': summary_df['# of Records'].sum(),
+        '# of Supervisor Delete': summary_df['# of Supervisor Delete'].sum(),
+        '# of Records Remove': summary_df['# of Records Remove'].sum(),
+        '# of Records Reviewed': summary_df['# of Records Reviewed'].sum(),
+        '# of Records Not Reviewed': summary_df['# of Records Not Reviewed'].sum(),
+        'SurveyTime (All)': calculate_avg_time(
+            summary_df.loc[summary_df['Date_Surveyor'] != 'Total', 'SurveyTime (All)']),
+        'SurveyTime (TripLogic)': calculate_avg_time(
+            summary_df.loc[summary_df['Date_Surveyor'] != 'Total', 'SurveyTime (TripLogic)']),
+        'SurveyTime (DemoLogic)': calculate_avg_time(
+            summary_df.loc[summary_df['Date_Surveyor'] != 'Total', 'SurveyTime (DemoLogic)']),
+    }
+    
+    # Add average percentages
+    percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
+    for col in percent_cols:
+        avg = summary_df.loc[summary_df['Date_Surveyor'] != 'Total', col]\
+              .str.rstrip('%').astype(float).mean()
+        total_row[col] = format_percentage(avg)
+    
+    summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
+    
+    # Split Date_Surveyor back into Date and Surveyor columns
+    summary_df[['Date', 'INTERV_INIT']] = summary_df['Date_Surveyor'].str.split('_', expand=True)
+    def safe_date_parse(val):
+        try:
+            return pd.to_datetime(val).date()
+        except:
+            return val
+
+    summary_df['Date'] = summary_df['Date'].apply(safe_date_parse)
+
+    # summary_df['Date'] = pd.to_datetime(summary_df['Date']).dt.date
+    
+    column_order = [
+        'Date', 'INTERV_INIT', '# of Records', '# of Supervisor Delete', '# of Records Remove',
+        '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
+        'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
+        '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
+        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of Contest - Yes', 
+        '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    
+    return summary_df[column_order]
+
+def process_route_date_data_kcata(df, elvis_df, survey_date_route):
+    """Process data for route-level report with date"""
+    df = df.copy()
+    elvis_df = elvis_df.copy()
+
+    filtered_df = df[df['INTERV_INIT'] != "999"]
+    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1]
+    
+    # Base counts
+    record_counts = (
+        valid_surveys_df
+        .groupby('Date_Route')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records'})
+    )
+    
+    route_report_df = survey_date_route[['Date_Route']].merge(record_counts, on='Date_Route', how='left').fillna(0)
+    
+    # Supervisor Deletes
+    delete_counts = (
+        filtered_df[
+            (filtered_df['ELVIS_STATUS'] == 'Delete') & 
+            (filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+        ]
+        .groupby('Date_Route')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Supervisor Delete'})
+    )
+    route_report_df = route_report_df.merge(delete_counts, how='left').fillna(0)
+    
+    # Records Remove
+    remove_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'] == 'Remove']
+        .groupby('Date_Route')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Remove'})
+    )
+    route_report_df = route_report_df.merge(remove_counts, how='left').fillna(0)
+    
+    # Records Reviewed/Not Reviewed
+    reviewed_df = valid_surveys_df[valid_surveys_df['Final_Usage'].notna()]
+    reviewed_counts = (
+        reviewed_df
+        .groupby('Date_Route')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Reviewed'})
+    )
+    route_report_df = route_report_df.merge(reviewed_counts, how='left').fillna(0)
+    
+    not_reviewed_counts = (
+        valid_surveys_df[valid_surveys_df['Final_Usage'].isna()]
+        .groupby('Date_Route')['id']
+        .count()
+        .reset_index()
+        .rename(columns={'id': '# of Records Not Reviewed'})
+    )
+    route_report_df = route_report_df.merge(not_reviewed_counts, how='left').fillna(0)
+    
+    # Process elvis data for additional metrics
+    elvis_df['Date_Route'] = clean_route_name(elvis_df['ROUTE_SURVEYED'])
+    elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
+    
+    address_filtered = elvis_df[
+        (elvis_df['INTERV_INIT'] != "999") & 
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+    ].copy()
+    
+    # Address completeness
+    address_fields = [
+        'HOME_ADDRESS_LAT', 'HOME_ADDRESS_LONG', 'HOME_ADDRESS_PLACE',
+        'HOME_ADDRESS_ADDR', 'HOME_ADDRESS_CITY', 'HOME_ADDRESS_STATE', 'HOME_ADDRESS_ZIP'
+    ]
+    address_filtered['Incomplete_Address'] = address_filtered[address_fields].isnull().any(axis=1)
+    
+    address_group = address_filtered.groupby('Date_Route').agg(
+        total_records=('id', 'count'),
+        incomplete_count=('Incomplete_Address', 'sum')
+    ).reset_index()
+    
+    address_group['% of Incomplete Home Address'] = (
+        (address_group['incomplete_count'] / address_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    route_report_df = route_report_df.merge(
+        address_group[['Date_Route', '% of Incomplete Home Address']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    # Survey times
+    time_cols = ['HOMEADD_TIME', 'NOTE_TIME', 'REVIEWSCR_TIME']
+    for col in time_cols:
+        address_filtered[col] = pd.to_datetime(address_filtered[col], errors='coerce')
+    
+    address_filtered['SurveyTime (All)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (TripLogic)'] = (
+        address_filtered['REVIEWSCR_TIME'] - address_filtered['HOMEADD_TIME']
+    ).dt.total_seconds()
+    address_filtered['SurveyTime (DemoLogic)'] = (
+        address_filtered['NOTE_TIME'] - address_filtered['REVIEWSCR_TIME']
+    ).dt.total_seconds()
+    
+    # Format times
+    survey_time_group = address_filtered.groupby('Date_Route').agg({
+        'SurveyTime (All)': 'mean',
+        'SurveyTime (TripLogic)': 'mean',
+        'SurveyTime (DemoLogic)': 'mean'
+    }).reset_index()
+    
+    for col in ['SurveyTime (All)', 'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)']:
+        survey_time_group[col] = survey_time_group[col].apply(
+            lambda x: "00:00:00" if pd.isna(x) or x < 0 else 
+            f"{int(x//3600):02}:{int((x%3600)//60):02}:{int(x%60):02}"
+        )
+    
+    route_report_df = route_report_df.merge(survey_time_group, how='left').fillna("00:00:00")
+    
+    # Other metrics (0 transfers, access walk, etc.)
+    metrics = [
+        ('0 Transfers', 
+         (address_filtered['PREV_TRANSFERSCode'] == '(0) None') & 
+         (address_filtered['NEXT_TRANSFERSCode'] == '(0) None')),
+        ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
+        ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
+        ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
+        ('No Income', 
+         (address_filtered['INCOMECode'].isna()) | 
+         (address_filtered['INCOMECode'].astype(str) == 'REFUSED')),
+        ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
+        ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
+        ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
+    ]
+    
+    for name, condition in metrics:
+        metric_group = (
+            address_filtered[condition]
+            .groupby('Date_Route')['id']
+            .count()
+            .reset_index()
+            .rename(columns={'id': f'{name.lower()}_count'})
+        )
+        
+        metric_percent = address_group[['Date_Route', 'total_records']].merge(
+            metric_group, how='left'
+        ).fillna(0)
+        
+        metric_percent[f'% of {name}'] = (
+            (metric_percent[f'{name.lower()}_count'] / metric_percent['total_records']) * 100
+        ).apply(format_percentage)
+        
+        route_report_df = route_report_df.merge(
+            metric_percent[['Date_Route', f'% of {name}']], 
+            how='left'
+        ).fillna('0.0%')
+    
+    # Contest metrics (keeping only contest-related metrics)
+    contest_filtered = elvis_df[
+        (elvis_df['INTERV_INIT'] != "999") & 
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+    ].copy()
+    contest_filtered['Date_Route'] = clean_route_name(contest_filtered['ROUTE_SURVEYED'])
+    
+    contest_filtered['contest_yes'] = (
+        contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper() == 'YES'
+    )
+    
+    contest_group = contest_filtered.groupby('Date_Route').agg(
+        total_records=('id', 'count'),
+        contest_yes_count=('contest_yes', 'sum')
+    ).reset_index()
+    
+    contest_group['% of Contest - Yes'] = (
+        (contest_group['contest_yes_count'] / contest_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    route_report_df = route_report_df.merge(
+        contest_group[['Date_Route', '% of Contest - Yes']], 
+        how='left'
+    ).fillna('0.0%')
+    
+    contest_filtered['valid_contest'] = (
+        contest_filtered['contest_yes'] &
+        contest_filtered['REG_2_WIN_CONTACT_NAME'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_NAME'].astype(str).str.strip() != '') &
+        contest_filtered['REG_2_WIN_CONTACT_PHONE'].notna() & 
+        (contest_filtered['REG_2_WIN_CONTACT_PHONE'].astype(str).str.strip() != '')
+    )
+    
+    contest_valid_group = contest_filtered.groupby('Date_Route').agg(
+        total_records=('id', 'count'),
+        valid_contest_count=('valid_contest', 'sum')
+    ).reset_index()
+    
+    contest_valid_group['% of Contest - (Yes & Good Info)/Overall # of Records'] = (
+        (contest_valid_group['valid_contest_count'] / contest_valid_group['total_records']) * 100
+    ).apply(format_percentage)
+    
+    route_report_df = route_report_df.merge(
+        contest_valid_group[['Date_Route', '% of Contest - (Yes & Good Info)/Overall # of Records']],
+        how='left'
+    ).fillna('0.0%')
+    
+    # Add total row
+    total_row = {
+        'Date_Route': 'Total',
+        '# of Records': route_report_df['# of Records'].sum(),
+        '# of Supervisor Delete': route_report_df['# of Supervisor Delete'].sum(),
+        '# of Records Remove': route_report_df['# of Records Remove'].sum(),
+        '# of Records Reviewed': route_report_df['# of Records Reviewed'].sum(),
+        '# of Records Not Reviewed': route_report_df['# of Records Not Reviewed'].sum(),
+        'SurveyTime (All)': calculate_avg_time(
+            route_report_df.loc[route_report_df['Date_Route'] != 'Total', 'SurveyTime (All)']),
+        'SurveyTime (TripLogic)': calculate_avg_time(
+            route_report_df.loc[route_report_df['Date_Route'] != 'Total', 'SurveyTime (TripLogic)']),
+        'SurveyTime (DemoLogic)': calculate_avg_time(
+            route_report_df.loc[route_report_df['Date_Route'] != 'Total', 'SurveyTime (DemoLogic)']),
+    }
+    
+    # Add average percentages
+    percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
+    for col in percent_cols:
+        avg = route_report_df.loc[route_report_df['Date_Route'] != 'Total', col]\
+              .str.rstrip('%').astype(float).mean()
+        total_row[col] = format_percentage(avg)
+    
+    route_report_df = pd.concat([route_report_df, pd.DataFrame([total_row])], ignore_index=True)
+    
+    # Split Date_Route back into Date and Route columns
+    route_report_df[['Date', 'ROUTE_ROOT']] = route_report_df['Date_Route'].str.split('_', expand=True)
+    def safe_date_parse(val):
+        try:
+            return pd.to_datetime(val).date()
+        except:
+            return val
+
+    route_report_df['Date'] = route_report_df['Date'].apply(safe_date_parse)
+    
+    column_order = [
+        'Date', 'ROUTE_ROOT', '# of Records', '# of Supervisor Delete', '# of Records Remove',
+        '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
+        'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
+        '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
+        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    
+    return route_report_df[column_order]
+
+
 
 
 def process_surveyor_date_data(df, elvis_df, survey_date_surveyor):
