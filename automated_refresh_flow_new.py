@@ -244,11 +244,11 @@ def fetch_and_process_data(project,schema):
         route_surveyed_code_check=['routesurveyedcode']
         route_surveyed_code=check_all_characters_present(df,route_surveyed_code_check)
         time_value_code_df=check_all_characters_present(df,time_value_code_check)
-        df=df[df[time_value_code_df[0]]==1]
+        # Convert both columns to string type to ensure consistent comparison
+        df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
+        df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+        df=df[df[time_value_code_df[0]]=='1']
         df=df[df['INTERV_INIT']!='999']
-        df=df[df['INTERV_INIT']!=999]
-        df = df[df[time_value_code_df[0]] == 1]
-        df=df[df['INTERV_INIT']!=999]
         elvis_status_column_check=['elvisstatus']
         elvis_status_column=check_all_characters_present(df,elvis_status_column_check)
         df=df[df[elvis_status_column[0]].str.lower()!='delete']
@@ -542,9 +542,12 @@ def fetch_and_process_data(project,schema):
 
     have5min_column_check=['have5minforsurvecode']
     have5min_column=check_all_characters_present(df,have5min_column_check)
-    df=df[df[have5min_column[0]]==1]
+    # Ensure consistent types
+    df[have5min_column[0]] = df[have5min_column[0]].astype(str)
+    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    df=df[df[have5min_column[0]]=='1']
     df=df[df['INTERV_INIT']!='999']
-    df=df[df['INTERV_INIT']!=999]
+    # df=df[df['INTERV_INIT']!=999]
 
     stop_on_column_check=['stoponaddr']
     stop_off_column_check=['stopoffaddr']
@@ -645,6 +648,11 @@ def fetch_and_process_data(project,schema):
     # Iterate through df rows to get the STOP_OFF points
     # Iterate through new_df rows
     for _, row in df.iterrows():
+        if 'STOP_ON_SEQ' not in df.columns:
+            df['STOP_ON_SEQ'] = None
+        if 'STOP_OFF_SEQ' not in df.columns:
+            df['STOP_OFF_SEQ'] = None
+            
         nearest_stop_seq = []
         
     #     stop_on_id=row[stop_on_id_column[0]]    
