@@ -134,6 +134,23 @@ PROJECTS = {
             "cr": "KCATA_MO_CR_UPDATE.xlsx",
             'kingelvis':'KCATA_2025_KINGElvis.xlsx'
         }
+    },
+    "KCATA RAIL": {
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
+                    },
+                    "baby_elvis": {
+                        "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
+                    }
+                },
+        "files": {
+            "details": "details_KCATA_od_excel.xlsx",
+            "cr": "KCATA_MO_CR_UPDATE.xlsx",
+            'kingelvis':'KCATA_2025_KINGElvis.xlsx'
+        }
     }
 }
 
@@ -229,7 +246,7 @@ def fetch_and_process_data(project,schema):
         df = st.session_state.df
 
         # Apply KCATA header mapping if this is the KCATA project
-        if project == "KCATA":
+        if project == "KCATA" or project == "KCATA RAIL":
             # First clean up column names by removing any extra whitespace
             df.columns = df.columns.str.strip()
             
@@ -346,7 +363,7 @@ def fetch_and_process_data(project,schema):
             baby_elvis_df = st.session_state.baby_elvis_df  # Create local reference
 
             # Apply KCATA header mapping to baby_elvis if this is the KCATA project
-            if project == "KCATA":
+            if project == "KCATA" or project == "KCATA RAIL":
                 baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
                 baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
 
@@ -441,6 +458,51 @@ def fetch_and_process_data(project,schema):
         print("Files read for TUCSON")
         ke_df=ke_df[ke_df['INTERV_INIT']!='999']
         ke_df=ke_df[ke_df['INTERV_INIT']!=999]
+        ke_df=ke_df[ke_df['1st Cleaner']!='No 5 MIN']
+        ke_df=ke_df[ke_df['1st Cleaner']!='Test']
+        ke_df=ke_df[ke_df['1st Cleaner']!='Test/No 5 MIN']
+        ke_df=ke_df[ke_df['Final_Usage'].str.lower()=='use']
+        df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join([str(x).split('_')[0], '1'] + str(x).split('_')[2:]))
+        df=pd.merge(df,ke_df['id'],on='id',how='inner')
+
+
+        df['ROUTE_SURVEYEDCode_Splited']=df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(str(x).split('_')[:-1]) )
+        stop_on_clntid=['stoponclntid']
+        stop_on_clntid=check_all_characters_present(df,stop_on_clntid)
+        df['STATION_ID_SPLITTED']=df[stop_on_clntid[0]].apply(lambda x:str(x).split('_')[-1])
+
+
+        wkend_overall_df['STATION_ID_SPLITTED']=wkend_overall_df['STATION_ID'].apply(lambda x: str(x).split('_')[-1])
+        wkday_overall_df['STATION_ID_SPLITTED']=wkday_overall_df['STATION_ID'].apply(lambda x: str(x).split('_')[-1])
+
+        wkday_route_df['ROUTE_TOTAL'] = pd.to_numeric(wkday_route_df['ROUTE_TOTAL'], errors='coerce')
+        wkday_route_df['ROUTE_TOTAL'].fillna(0, inplace=True)
+        wkend_route_df['ROUTE_TOTAL'] = pd.to_numeric(wkend_route_df['ROUTE_TOTAL'], errors='coerce')
+        wkend_route_df['ROUTE_TOTAL'].fillna(0, inplace=True)
+
+        wkday_route_df['ROUTE_TOTAL'] = np.ceil(wkday_route_df['ROUTE_TOTAL']).astype(int)
+        wkend_route_df['ROUTE_TOTAL'] = np.ceil(wkend_route_df['ROUTE_TOTAL']).astype(int)
+
+        wkday_overall_df[[0,1,2,3,4,5]]=wkday_overall_df[[0,1,2,3,4,5]].fillna(0)
+        wkend_overall_df[[0,1,2,3,4,5]]=wkend_overall_df[[0,1,2,3,4,5]].fillna(0)
+
+    elif project=='KCATA RAIL':
+        ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
+
+        detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
+
+        wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-RAIL')
+        wkend_route_df = read_excel_from_s3(bucket_name,project_config["files"]["cr"], 'WkEND-RailTotal')
+
+        wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RAIL')
+        wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RailTotal')
+
+        print("Files read for KCATA RAIL")
+        ke_df['1st Cleaner'] = ke_df['1st Cleaner'].astype(str)
+        ke_df['INTERV_INIT'] = ke_df['INTERV_INIT'].astype(str)
+        ke_df=ke_df[ke_df['INTERV_INIT']!='999']
+        # ke_df=ke_df[ke_df['INTERV_INIT']!=999]
         ke_df=ke_df[ke_df['1st Cleaner']!='No 5 MIN']
         ke_df=ke_df[ke_df['1st Cleaner']!='Test']
         ke_df=ke_df[ke_df['1st Cleaner']!='Test/No 5 MIN']
@@ -652,7 +714,7 @@ def fetch_and_process_data(project,schema):
             df['STOP_ON_SEQ'] = None
         if 'STOP_OFF_SEQ' not in df.columns:
             df['STOP_OFF_SEQ'] = None
-            
+
         nearest_stop_seq = []
         
     #     stop_on_id=row[stop_on_id_column[0]]    
@@ -880,10 +942,11 @@ def fetch_and_process_data(project,schema):
     wkday_overall_df.dropna(subset=['LS_NAME_CODE'],inplace=True)
 
  
-    if project not in ["UTA", "TUCSON RAIL"]:
+    if project not in ["UTA", "TUCSON RAIL", "KCATA RAIL"]:
         wkend_time_value_df=create_time_value_df_with_display(wkend_overall_df,weekend_df,time_column,project)
         wkday_time_value_df=create_time_value_df_with_display(wkday_overall_df,weekday_df,time_column,project)
-
+    
+    # ----- Route Direction DF -----
     if project=='UTA':
             wkend_route_direction_df=create_uta_route_direction_level_df(wkend_overall_df,weekend_df,time_column,'weekend')
             wkday_route_direction_df=create_uta_route_direction_level_df(wkday_overall_df,weekday_df,time_column,None)        
@@ -894,7 +957,7 @@ def fetch_and_process_data(project,schema):
             wkend_route_direction_df=create_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
         wkday_route_direction_df=create_route_direction_level_df(wkday_overall_df,weekday_df,time_column,project)
 
-
+    # ----- Station-wise Route DF -----
     if project=='UTA':
         wkend_stationwise_route_df=create_uta_station_wise_route_level_df(wkend_overall_df,weekend_df,time_column,'weekend')
         wkday_stationwise_route_df=create_uta_station_wise_route_level_df(wkday_overall_df,weekday_df,time_column,None)
@@ -903,11 +966,15 @@ def fetch_and_process_data(project,schema):
         wkend_stationwise_route_df=create_station_wise_route_level_df(wkend_overall_df,weekend_df,time_column)
         wkday_stationwise_route_df=create_station_wise_route_level_df(wkday_overall_df,weekday_df,time_column)
     
+    elif project=='KCATA RAIL':
+        wkend_stationwise_route_df=create_station_wise_route_level_df_kcata(wkend_overall_df,weekend_df,time_column)
+        wkday_stationwise_route_df=create_station_wise_route_level_df_kcata(wkday_overall_df,weekday_df,time_column)
+
     else:
         pass
 
 
-    if project=='KCATA':
+    if project=='KCATA' or project=='KCATA RAIL':
         weekday_df.dropna(subset=[time_column[0]],inplace=True)
         weekday_raw_df=weekday_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_df.dropna(subset=[time_column[0]],inplace=True)
@@ -936,7 +1003,7 @@ def fetch_and_process_data(project,schema):
     wkend_comparison_df=copy.deepcopy(wkend_route_level)
     wkend_new_route_level_df=copy.deepcopy(wkend_route_level)
     # this is for time value data
-    if project in ["UTA", "TUCSON RAIL"]:
+    if project in ["UTA", "TUCSON RAIL", "KCATA RAIL"]:
         wkend_time_value_df = create_time_value_df_with_display(wkend_comparison_df,weekend_df,time_column,project)
         wkday_time_value_df = create_time_value_df_with_display(wkday_comparison_df,weekday_df,time_column,project)
 
@@ -1539,6 +1606,121 @@ def fetch_and_process_data(project,schema):
         wkend_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
         wkend_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
 
+    elif project == 'KCATA RAIL':
+        # For comparison dataframes (with route level goals)
+        for df in [wkend_comparison_df, wkday_comparison_df]:
+            df.rename(columns={
+                'CR_Early_AM': '(1) Goal',
+                'CR_AM_Peak': '(2) Goal',
+                'CR_Midday': '(3) Goal',
+                'CR_PM_Peak': '(4) Goal', 
+                'CR_Evening': '(5) Goal',
+                'DB_Early_AM_Peak': '(1) Collect',
+                'DB_AM_Peak': '(2) Collect',
+                'DB_Midday': '(3) Collect',
+                'DB_PM_Peak': '(4) Collect',
+                'DB_Evening': '(5) Collect',
+                'Early_AM_DIFFERENCE': '(1) Remain',
+                'AM_DIFFERENCE': '(2) Remain',
+                'Midday_DIFFERENCE': '(3) Remain',
+                'PM_PEAK_DIFFERENCE': '(4) Remain',
+                'Evening_DIFFERENCE': '(5) Remain',
+                'CR_Overall_Goal': 'Route Level Goal',
+                'DB_Total': '# of Surveys',
+                'Total_DIFFERENCE': 'Remaining'
+            }, inplace=True)
+
+        # For route direction dataframes (without route level goals)
+        for df in [wkday_route_direction_df, wkend_route_direction_df]:
+            df.rename(columns={
+                'CR_Early_AM': '(1) Goal',
+                'CR_AM_Peak': '(2) Goal',
+                'CR_Midday': '(3) Goal',
+                'CR_PM_Peak': '(4) Goal',
+                'CR_Evening': '(5) Goal',
+                'DB_Early_AM_Peak': '(1) Collect',
+                'DB_AM_Peak': '(2) Collect',
+                'DB_Midday': '(3) Collect',
+                'DB_PM_Peak': '(4) Collect',
+                'DB_Evening': '(5) Collect',
+                'Early_AM_DIFFERENCE': '(1) Remain',
+                'AM_DIFFERENCE': '(2) Remain',
+                'Midday_DIFFERENCE': '(3) Remain',
+                'PM_PEAK_DIFFERENCE': '(4) Remain',
+                'Evening_DIFFERENCE': '(5) Remain'
+            }, inplace=True)
+
+        # For station-wise route dataframes
+        for df in [wkday_stationwise_route_df, wkend_stationwise_route_df]:
+            df.rename(columns={
+                'CR_Early_AM': '(1) Goal',
+                'CR_AM_Peak': '(2) Goal',
+                'CR_Midday': '(3) Goal',
+                'CR_PM_Peak': '(4) Goal',
+                'CR_Evening': '(5) Goal',
+                'DB_Early_AM_Peak': '(1) Collect',
+                'DB_AM_Peak': '(2) Collect',
+                'DB_Midday': '(3) Collect',
+                'DB_PM_Peak': '(4) Collect',
+                'DB_Evening': '(5) Collect',
+                'Early_AM_DIFFERENCE': '(1) Remain',
+                'AM_DIFFERENCE': '(2) Remain',
+                'Midday_DIFFERENCE': '(3) Remain',
+                'PM_PEAK_DIFFERENCE': '(4) Remain',
+                'Evening_DIFFERENCE': '(5) Remain'
+            }, inplace=True)
+
+        # Merge route names for comparison dataframes
+        wkday_comparison_df = wkday_comparison_df.merge(
+            detail_df_xfers[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']],
+            left_on='ROUTE_SURVEYEDCode',
+            right_on='ETC_ROUTE_ID',
+            how='left'
+        )
+        wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
+        wkday_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+
+        wkend_comparison_df = wkend_comparison_df.merge(
+            detail_df_xfers[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']],
+            left_on='ROUTE_SURVEYEDCode',
+            right_on='ETC_ROUTE_ID',
+            how='left'
+        )
+        wkend_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
+        wkend_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+
+        # Function to add route and station info
+        def add_route_and_station_info(df, overall_df, detail_df_stops, detail_df_xfers=None):
+            """Helper function to add route and station information with error handling"""
+            for _, row in df.iterrows():
+                # Get route information
+                try:
+                    route_surveyed = detail_df_stops[detail_df_stops['ETC_ROUTE_ID'] == row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_NAME'].iloc[0]
+                except IndexError:
+                    if detail_df_xfers is not None:
+                        try:
+                            route_surveyed = detail_df_xfers[detail_df_xfers['ETC_ROUTE_ID'] == row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_NAME'].iloc[0]
+                        except IndexError:
+                            route_surveyed = "Unknown Route"
+                    else:
+                        route_surveyed = "Unknown Route"
+                
+                # Get station information
+                try:
+                    station_name = overall_df[overall_df['STATION_ID'] == row['STATION_ID']]['STATION_NAME'].iloc[0]
+                except IndexError:
+                    station_name = "Unknown Station"
+                
+                df.loc[row.name, 'ROUTE_SURVEYED'] = route_surveyed
+                df.loc[row.name, 'STATION_NAME'] = station_name
+
+        # Apply to all dataframes
+        add_route_and_station_info(wkday_route_direction_df, wkday_overall_df, detail_df_stops, detail_df_xfers)
+        add_route_and_station_info(wkend_route_direction_df, wkend_overall_df, detail_df_stops, detail_df_xfers)
+        add_route_and_station_info(wkday_stationwise_route_df, wkday_overall_df, detail_df_stops, detail_df_xfers)
+        add_route_and_station_info(wkend_stationwise_route_df, wkend_overall_df, detail_df_stops, detail_df_xfers)
+
+
     def create_snowflake_connection():
         print("Creating connection with snowflake")
         conn = snowflake.connector.connect(
@@ -1747,8 +1929,7 @@ def fetch_and_process_data(project,schema):
         'WkEND Time Data': 'wkend_time_data', 
         'WkDAY Time Data': 'wkday_time_data',
         'LAST SURVEY DATE': 'last_survey_date',
-        }
-        
+        } 
     elif project=='STL' or project=='KCATA':
         # DataFrames preparation
         dataframes = {
@@ -1789,6 +1970,40 @@ def fetch_and_process_data(project,schema):
             'Surveyor Report with Date': 'surveyor_report_date_trends',
             'Route Report with Date': 'route_report_date_trends'
         }
+    elif project == 'KCATA RAIL':
+        def safe_drop_columns(df, columns_to_drop):
+            """Safely drop columns that exist in the DataFrame"""
+            existing_cols = [col for col in columns_to_drop if col in df.columns]
+            return df.drop(columns=existing_cols, errors='ignore')
+        # Create dictionaries for dataframes and table info similar to TUCSON RAIL
+        dataframes = {
+            'WkDAY Route DIR Comparison': safe_drop_columns(wkday_route_direction_df, ['STATION_ID_SPLITTED', 'CR_Total', 'Total_DIFFERENCE']),
+            'WkEND Route DIR Comparison': safe_drop_columns(wkend_route_direction_df, ['STATION_ID_SPLITTED', 'CR_Total', 'Total_DIFFERENCE']),
+            'WkEND Time Data': wkend_time_value_df,
+            'WkDAY Time Data': wkday_time_value_df,
+            'WkEND Stationwise Comparison': safe_drop_columns(wkend_stationwise_route_df, ['CR_Total', 'Total_DIFFERENCE', 'DB_Total']),
+            'WkDAY Stationwise Comparison': safe_drop_columns(wkday_stationwise_route_df, ['CR_Total', 'Total_DIFFERENCE', 'DB_Total']),
+            'WkDAY Route Comparison': safe_drop_columns(wkday_comparison_df, ['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
+            'WkEND Route Comparison': safe_drop_columns(wkend_comparison_df, ['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
+            "WkDAY RAW DATA": weekday_raw_df[['id', 'DATE_SUBMITTED', route_survey_column[0], 'ROUTE_SURVEYED', 'BOARDING LOCATION', 'ALIGHTING LOCATION', time_column[0], time_period_column[0], 'Day', 'ElvisStatus']],
+            'WkEND RAW DATA': weekend_raw_df[['id', 'DATE_SUBMITTED', route_survey_column[0], 'ROUTE_SURVEYED', 'BOARDING LOCATION', 'ALIGHTING LOCATION', time_column[0], time_period_column[0], 'Day', 'ElvisStatus']],
+            'LAST SURVEY DATE': latest_date_df
+        }
+        
+        table_info = {
+            'WkDAY RAW DATA': 'wkday_raw', 
+            'WkEND RAW DATA': 'wkend_raw', 
+            'WkEND Stationwise Comparison': 'wkday_stationwise_comparison', 
+            'WkDAY Stationwise Comparison': 'wkend_stationwise_comparison',
+            'WkDAY Route Comparison': 'wkday_comparison', 
+            'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+            'WkEND Route Comparison': 'wkend_comparison', 
+            'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+            'WkEND Time Data': 'wkend_time_data', 
+            'WkDAY Time Data': 'wkday_time_data',
+            'LAST SURVEY DATE': 'last_survey_date',
+        }
+
 
     # Call the function
     print("Final call")

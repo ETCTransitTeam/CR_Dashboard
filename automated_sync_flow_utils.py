@@ -94,7 +94,7 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
     Returns:
         pd.DataFrame: Processed DataFrame with counts, time ranges, and display text.
     """
-
+    
     if project=='TUCSON':
         am_values = ['AM1','AM2','AM3', 'AM4']
         midday_values = [ 'MID1', 'MID2','MID3', 'MID4', 'MID5', 'MID6' ]
@@ -154,7 +154,6 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
 
         # Add a display text column with sequential numbering
         new_df['Display_Text'] = range(1, len(new_df) + 1)
-
     elif project=='TUCSON RAIL':
             # Filter df where overall_df['ROUTE_SURVEYEDCode'] == df['ROUTE_SURVEYEDCode_Splited']
         matched_df = df[df['ROUTE_SURVEYEDCode_Splited'].isin(overall_df['ROUTE_SURVEYEDCode'])]
@@ -467,6 +466,74 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
         for col, values in time_group_mapping.items():
             for value in values:
                 count = df[df[time_column[0]] == value].shape[0]
+                row = {"Original Text": value}
+
+                # Initialize all columns to 0
+                for c in range(6):
+                    row[c] = 0
+
+                # Update the corresponding column with the count
+                row[col] = count
+                new_df = pd.concat([new_df, pd.DataFrame([row])], ignore_index=True)
+
+        # Map time values to time ranges
+        new_df['Time Range'] = new_df['Original Text'].map(time_mapping)
+
+        # Drop rows with missing time ranges
+        new_df.dropna(subset=['Time Range'], inplace=True)
+
+        # Add a display text column with sequential numbering
+        new_df['Display_Text'] = range(1, len(new_df) + 1)
+    elif project=='KCATA RAIL':
+        # Filter df where overall_df['ROUTE_SURVEYEDCode'] == df['ROUTE_SURVEYEDCode_Splited']
+        matched_df = df[df['ROUTE_SURVEYEDCode_Splited'].isin(overall_df['ROUTE_SURVEYEDCode'])]
+
+        # Define time value groups
+        early_am_values = ['AM1','AM2']
+        am_values = ['AM3', 'MID1','MID2','MID7']
+        midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+        pm_peak_values = ['PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        # Mapping time groups to corresponding columns
+        time_group_mapping = {
+            1: early_am_values,
+            2: am_values,
+            3: midday_values,
+            4: pm_peak_values,
+            5: evening_values,
+        }
+
+        # Mapping time values to time ranges
+        time_mapping = {
+            'AM1': 'Before 5:00 am',
+            'AM2': '5:00 am - 6:00 am',
+            'AM3': '6:00 am - 7:00 am',
+            'MID1': '7:00 am - 8:00 am',
+            'MID2': '8:00 am - 9:00 am',
+            'MID7': '9:00 am - 10:00 am',
+            'MID3': '10:00 am - 11:00 am',
+            'MID4': '11:00 am - 12:00 pm',
+            'MID5': '12:00 pm - 1:00 pm',
+            'MID6': '1:00 pm - 2:00 pm',
+            'PM1': '2:00 pm - 3:00 pm',
+            'PM2': '3:00 pm - 4:00 pm',
+            'PM3': '4:00 pm - 5:00 pm',
+            'PM4': '5:00 pm - 6:00 pm',
+            'PM5': '6:00 pm - 7:00 pm',
+            'PM6': '7:00 pm - 8:00 pm',
+            'PM7': '8:00 pm - 9:00 pm',
+            'PM8': 'After 9:00 pm',
+            'PM9': 'After 9:00 pm'
+        }
+
+        # Initialize the new DataFrame
+        new_df = pd.DataFrame(columns=["Original Text", 1, 2, 3, 4, 5])
+
+        # Populate the DataFrame with counts
+        for col, values in time_group_mapping.items():
+            for value in values:
+                count = matched_df[matched_df[time_column[0]] == value].shape[0]
                 row = {"Original Text": value}
 
                 # Initialize all columns to 0
@@ -892,6 +959,96 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
         new_df['Evening_DIFFERENCE'] = (new_df['CR_Evening'] - new_df['DB_Evening']).clip(lower=0).apply(math.ceil)
         new_df['Total_DIFFERENCE'] = (new_df[['Early_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 
                                             'PM_PEAK_DIFFERENCE', 'Evening_DIFFERENCE']].sum(axis=1))
+    elif project=='KCATA RAIL':
+        early_am_values = ['AM1','AM2']
+        am_values = ['AM3', 'MID1','MID2','MID7']
+        midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+        pm_peak_values = ['PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        # Updated column names to match your actual DataFrame columns
+        time_period_columns = {
+            'CR_Early_AM': 1,  
+            'CR_AM_Peak': 2,        
+            'CR_Midday': 3,     
+            'CR_PM_Peak': 4,   
+            'CR_Evening': 5   
+        }
+
+        def convert_string_to_integer(x):
+            try:
+                return float(x)
+            except (ValueError, TypeError):
+                return 0
+
+        # Creating new dataframe with all required columns
+        new_df = pd.DataFrame()
+        new_df['ROUTE_SURVEYEDCode'] = overalldf['LS_NAME_CODE']
+        new_df['STATION_ID'] = overalldf['STATION_ID']
+        new_df['STATION_ID_SPLITTED'] = overalldf['STATION_ID_SPLITTED']
+        
+        # Process each time period column
+        for col_name, col in time_period_columns.items():
+            overalldf[col] = pd.to_numeric(overalldf[col], errors='coerce').fillna(0)
+            new_df[col_name] = overalldf[col].apply(math.ceil)
+        
+        # Convert all numeric columns and fill NA
+        numeric_cols = list(time_period_columns.keys())
+        new_df[numeric_cols] = new_df[numeric_cols].applymap(convert_string_to_integer)
+        new_df.fillna(0, inplace=True)
+
+        for index, row in new_df.iterrows():
+            route_code = row['ROUTE_SURVEYEDCode']
+            station_id = row['STATION_ID_SPLITTED']
+
+            def get_counts_and_ids(time_values):
+                subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & 
+                            (df['STATION_ID_SPLITTED'] == station_id) & 
+                            (df[time_column[0]].isin(time_values))]
+                subset_df = subset_df.drop_duplicates(subset='id')
+                count = subset_df.shape[0]
+                ids = subset_df['id'].values
+                return count, ids
+
+            # Get counts for each time period
+            early_am_count, early_am_ids = get_counts_and_ids(early_am_values)
+            am_count, am_ids = get_counts_and_ids(am_values)
+            midday_count, midday_ids = get_counts_and_ids(midday_values)
+            pm_peak_count, pm_peak_ids = get_counts_and_ids(pm_peak_values)
+            evening_count, evening_ids = get_counts_and_ids(evening_values)
+            
+            # Calculate totals
+            new_df.loc[index, 'CR_Total'] = sum(row[col] for col in numeric_cols)
+            
+            # Database counts
+            new_df.loc[index, 'DB_Early_AM_Peak'] = early_am_count
+            new_df.loc[index, 'DB_AM_Peak'] = am_count
+            new_df.loc[index, 'DB_Midday'] = midday_count
+            new_df.loc[index, 'DB_PM_Peak'] = pm_peak_count
+            new_df.loc[index, 'DB_Evening'] = evening_count
+            new_df.loc[index, 'DB_Total'] = sum([early_am_count, am_count, midday_count, 
+                                            pm_peak_count, evening_count])
+            
+            # Calculate differences
+            early_am_diff = row['CR_Early_AM'] - early_am_count
+            am_diff = row['CR_AM_Peak'] - am_count
+            midday_diff = row['CR_Midday'] - midday_count
+            pm_peak_diff = row['CR_PM_Peak'] - pm_peak_count
+            evening_diff = row['CR_Evening'] - evening_count
+            
+            new_df.loc[index, 'Early_AM_DIFFERENCE'] = math.ceil(max(0, early_am_diff))
+            new_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_diff))
+            new_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+            new_df.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+            new_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+            new_df.loc[index, 'Total_DIFFERENCE'] = sum([
+                math.ceil(max(0, early_am_diff)),
+                math.ceil(max(0, am_diff)),
+                math.ceil(max(0, midday_diff)),
+                math.ceil(max(0, pm_peak_diff)),
+                math.ceil(max(0, evening_diff))
+            ])
+    
     return new_df
 
 
@@ -1301,6 +1458,123 @@ def create_station_wise_route_level_df(overall_df,df,time_column):
         # route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, total_diff))
         route_station_wise.loc[index, 'Total_DIFFERENCE'] =math.ceil(max(0, am_peak_diff))+math.ceil(max(0, midday_diff))+math.ceil(max(0, pm_peak_diff))+math.ceil(max(0, evening_diff))
         # route_station_wise.loc[index, 'Total_DIFFERENCE'] =math.ceil(max(0, pre_early_am_peak_diff))+math.ceil(max(0, early_am_peak_diff))+math.ceil(max(0, am_peak_diff))+math.ceil(max(0, midday_diff))+math.ceil(max(0, pm_peak_diff))+math.ceil(max(0, evening_diff))
+
+    return route_station_wise
+
+def create_station_wise_route_level_df_kcata(overall_df, df, time_column):
+    # Time period values (following KCATA structure)
+    early_am_values = ['AM1','AM2']
+    am_values = ['AM3', 'MID1','MID2','MID7']
+    midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+    pm_peak_values = ['PM2','PM3','PM4','PM5']
+    evening_values = ['PM6','PM7','PM8','PM9']
+
+    # Updated column mapping to match actual numeric columns in your DataFrame
+    time_period_columns = {
+        'CR_Early_AM': 1,  # Using 1 instead of '1'
+        'CR_AM_Peak': 2,
+        'CR_Midday': 3,
+        'CR_PM_Peak': 4,
+        'CR_Evening': 5
+    }
+
+    def convert_string_to_integer(x):
+        try:
+            return float(x)
+        except (ValueError, TypeError):
+            return 0
+
+    # Creating new dataframe with all required columns
+    new_df = pd.DataFrame()
+    new_df['ROUTE_SURVEYEDCode'] = overall_df['LS_NAME_CODE']
+    new_df['STATION_ID'] = overall_df['STATION_ID']
+    new_df['STATION_ID_SPLITTED'] = overall_df['STATION_ID_SPLITTED']
+    
+    # Process each time period column using the numeric column references
+    for col_name, col_num in time_period_columns.items():
+        new_df[col_name] = pd.to_numeric(overall_df[col_num], errors='coerce').fillna(0).apply(math.ceil)
+    
+    # Convert all numeric columns and fill NA
+    numeric_cols = list(time_period_columns.keys())
+    new_df[numeric_cols] = new_df[numeric_cols].applymap(convert_string_to_integer)
+    new_df.fillna(0, inplace=True)
+    new_df['ROUTE_SURVEYEDCode_Splitted'] = new_df['ROUTE_SURVEYEDCode'].apply(edit_ls_code_column)
+    
+    for index, row in new_df.iterrows():
+        route_code = row['ROUTE_SURVEYEDCode_Splitted']
+        station_id = row['STATION_ID_SPLITTED']
+
+        def get_counts_and_ids(time_values):
+            subset_df = df[(df['ROUTE_SURVEYEDCode_Splited'] == route_code) & 
+                          (df['STATION_ID_SPLITTED'] == station_id) & 
+                          (df[time_column[0]].isin(time_values))]
+            subset_df = subset_df.drop_duplicates(subset='id')
+            count = subset_df.shape[0]
+            ids = subset_df['id'].values
+            return count, ids
+
+        # Get counts for each time period
+        early_am_count, early_am_ids = get_counts_and_ids(early_am_values)
+        am_count, am_ids = get_counts_and_ids(am_values)
+        midday_count, midday_ids = get_counts_and_ids(midday_values)
+        pm_peak_count, pm_peak_ids = get_counts_and_ids(pm_peak_values)
+        evening_count, evening_ids = get_counts_and_ids(evening_values)
+        
+        # Calculate totals
+        new_df.loc[index, 'CR_Total'] = sum(row[col] for col in numeric_cols)
+        
+        # Database counts
+        new_df.loc[index, 'DB_Early_AM_Peak'] = early_am_count
+        new_df.loc[index, 'DB_AM_Peak'] = am_count
+        new_df.loc[index, 'DB_Midday'] = midday_count
+        new_df.loc[index, 'DB_PM_Peak'] = pm_peak_count
+        new_df.loc[index, 'DB_Evening'] = evening_count
+        new_df.loc[index, 'DB_Total'] = sum([early_am_count, am_count, midday_count, 
+                                           pm_peak_count, evening_count])
+    
+    # Group by station and route
+    results = []
+    unique_station_ids = new_df['STATION_ID_SPLITTED'].unique()
+
+    for station_id in unique_station_ids:
+        station_df = new_df[new_df['STATION_ID_SPLITTED'] == station_id]
+        
+        for route_code in station_df['ROUTE_SURVEYEDCode_Splitted'].unique():
+            filtered_df = station_df[station_df['ROUTE_SURVEYEDCode_Splitted'] == route_code]
+            summed_row = filtered_df.sum(numeric_only=True).to_frame().T
+            
+            # Add key identifying columns
+            summed_row['ROUTE_SURVEYEDCode'] = station_df.iloc[0]['ROUTE_SURVEYEDCode']
+            summed_row['STATION_ID'] = station_df.iloc[0]['STATION_ID']
+            summed_row['STATION_ID_SPLITTED'] = station_id
+            summed_row['ROUTE_SURVEYEDCode_Splitted'] = route_code
+            
+            results.append(summed_row)
+
+    # Create final dataframe
+    route_station_wise = pd.concat(results, ignore_index=True)
+    route_station_wise.drop(columns=['ROUTE_SURVEYEDCode_Splitted','STATION_ID_SPLITTED'], inplace=True)
+
+    # Calculate differences
+    for index, row in route_station_wise.iterrows():
+        early_am_diff = row['CR_Early_AM'] - row['DB_Early_AM_Peak']
+        am_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
+        midday_diff = row['CR_Midday'] - row['DB_Midday']
+        pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
+        evening_diff = row['CR_Evening'] - row['DB_Evening']
+        
+        route_station_wise.loc[index, 'Early_AM_DIFFERENCE'] = math.ceil(max(0, early_am_diff))
+        route_station_wise.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_diff))
+        route_station_wise.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+        route_station_wise.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+        route_station_wise.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+        route_station_wise.loc[index, 'Total_DIFFERENCE'] = sum([
+            math.ceil(max(0, early_am_diff)),
+            math.ceil(max(0, am_diff)),
+            math.ceil(max(0, midday_diff)),
+            math.ceil(max(0, pm_peak_diff)),
+            math.ceil(max(0, evening_diff))
+        ])
 
     return route_station_wise
 
@@ -2068,145 +2342,289 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                 route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
         elif project=='KCATA':
             early_am_values = ['AM1','AM2']
-        am_values = ['AM3', 'MID1','MID2','MID7']
-        midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
-        pm_peak_values = ['PM2','PM3','PM4','PM5']
-        evening_values = ['PM6','PM7','PM8','PM9']
+            am_values = ['AM3', 'MID1','MID2','MID7']
+            midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+            pm_peak_values = ['PM2','PM3','PM4','PM5']
+            evening_values = ['PM6','PM7','PM8','PM9']
 
-        # Column mappings for completion report
-        early_am_column = ['1']
-        am_column = ['2']
-        midday_colum = ['3']
-        pm_peak_column = ['4']
-        evening_column = ['5']
+            # Column mappings for completion report
+            early_am_column = ['1']
+            am_column = ['2']
+            midday_colum = ['3']
+            pm_peak_column = ['4']
+            evening_column = ['5']
 
-        def convert_string_to_integer(x):
-            """Safely convert values to integers"""
-            try:
-                return float(x)
-            except (ValueError, TypeError):
-                # logger.warning(f"Could not convert value to float: {x}")
-                return 0
+            def convert_string_to_integer(x):
+                """Safely convert values to integers"""
+                try:
+                    return float(x)
+                except (ValueError, TypeError):
+                    # logger.warning(f"Could not convert value to float: {x}")
+                    return 0
 
-        # Create new dataframe with completion report data
-        new_df = pd.DataFrame()
-        new_df['ROUTE_SURVEYEDCode'] = overall_df['LS_NAME_CODE']
-        new_df['CR_Early_AM'] = overall_df[early_am_column[0]].apply(math.ceil)
-        new_df['CR_AM_Peak'] = overall_df[am_column[0]].apply(math.ceil)
-        new_df['CR_Midday'] = overall_df[midday_colum[0]].apply(math.ceil)
-        new_df['CR_PM_Peak'] = overall_df[pm_peak_column[0]].apply(math.ceil)
-        new_df['CR_Evening'] = overall_df[evening_column[0]].apply(math.ceil)
-        
-        # Convert all values to numeric
-        new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']] = \
-            new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
-        
-        new_df.fillna(0, inplace=True)
-        # logger.info(f"Created new_df with shape: {new_df.shape}")
+            # Create new dataframe with completion report data
+            new_df = pd.DataFrame()
+            new_df['ROUTE_SURVEYEDCode'] = overall_df['LS_NAME_CODE']
+            new_df['CR_Early_AM'] = overall_df[early_am_column[0]].apply(math.ceil)
+            new_df['CR_AM_Peak'] = overall_df[am_column[0]].apply(math.ceil)
+            new_df['CR_Midday'] = overall_df[midday_colum[0]].apply(math.ceil)
+            new_df['CR_PM_Peak'] = overall_df[pm_peak_column[0]].apply(math.ceil)
+            new_df['CR_Evening'] = overall_df[evening_column[0]].apply(math.ceil)
+            
+            # Convert all values to numeric
+            new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']] = \
+                new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
+            
+            new_df.fillna(0, inplace=True)
+            # logger.info(f"Created new_df with shape: {new_df.shape}")
 
-        # Populate database counts for each time period
-        for index, row in new_df.iterrows():
-            route_code = row['ROUTE_SURVEYEDCode']
-            # logger.debug(f"\nProcessing route: {route_code}")
+            # Populate database counts for each time period
+            for index, row in new_df.iterrows():
+                route_code = row['ROUTE_SURVEYEDCode']
+                # logger.debug(f"\nProcessing route: {route_code}")
 
-            def get_counts_and_ids(time_values, time_name):
-                """Get survey counts and IDs for a time period"""
-                subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & 
-                              (df[time_column[0]].isin(time_values))]
-                original_count = subset_df.shape[0]
-                subset_df = subset_df.drop_duplicates(subset='id')
-                count = subset_df.shape[0]
-                ids = subset_df['id'].values
+                def get_counts_and_ids(time_values, time_name):
+                    """Get survey counts and IDs for a time period"""
+                    subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & 
+                                (df[time_column[0]].isin(time_values))]
+                    original_count = subset_df.shape[0]
+                    subset_df = subset_df.drop_duplicates(subset='id')
+                    count = subset_df.shape[0]
+                    ids = subset_df['id'].values
+                    
+                    # logger.debug(f"  {time_name} period - Found {count} surveys (from {original_count} raw)")
+                    return count, ids
                 
-                # logger.debug(f"  {time_name} period - Found {count} surveys (from {original_count} raw)")
-                return count, ids
-            
-            # Get counts for each time period
-            early_am_value, early_am_value_ids = get_counts_and_ids(early_am_values, "Early AM")
-            am_value, am_value_ids = get_counts_and_ids(am_values, "AM Peak")
-            midday_value, midday_value_ids = get_counts_and_ids(midday_values, "Midday")
-            pm_peak_value, pm_peak_value_ids = get_counts_and_ids(pm_peak_values, "PM Peak")
-            evening_value, evening_value_ids = get_counts_and_ids(evening_values, "Evening")
-            
-            # Calculate and store database totals
-            db_total = evening_value + early_am_value + am_value + midday_value + pm_peak_value
-            new_df.loc[index, 'CR_Total'] = row['CR_Early_AM'] + row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
-            
-            new_df.loc[index, 'DB_Early_AM_Peak'] = early_am_value
-            new_df.loc[index, 'DB_AM_Peak'] = am_value
-            new_df.loc[index, 'DB_Midday'] = midday_value
-            new_df.loc[index, 'DB_PM_Peak'] = pm_peak_value
-            new_df.loc[index, 'DB_Evening'] = evening_value
-            new_df.loc[index, 'DB_Total'] = db_total
+                # Get counts for each time period
+                early_am_value, early_am_value_ids = get_counts_and_ids(early_am_values, "Early AM")
+                am_value, am_value_ids = get_counts_and_ids(am_values, "AM Peak")
+                midday_value, midday_value_ids = get_counts_and_ids(midday_values, "Midday")
+                pm_peak_value, pm_peak_value_ids = get_counts_and_ids(pm_peak_values, "PM Peak")
+                evening_value, evening_value_ids = get_counts_and_ids(evening_values, "Evening")
+                
+                # Calculate and store database totals
+                db_total = evening_value + early_am_value + am_value + midday_value + pm_peak_value
+                new_df.loc[index, 'CR_Total'] = row['CR_Early_AM'] + row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+                
+                new_df.loc[index, 'DB_Early_AM_Peak'] = early_am_value
+                new_df.loc[index, 'DB_AM_Peak'] = am_value
+                new_df.loc[index, 'DB_Midday'] = midday_value
+                new_df.loc[index, 'DB_PM_Peak'] = pm_peak_value
+                new_df.loc[index, 'DB_Evening'] = evening_value
+                new_df.loc[index, 'DB_Total'] = db_total
 
-        # Create route-level summary
-        new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]))
-        # logger.info(f"\nAfter splitting route codes, unique routes: {new_df['ROUTE_SURVEYEDCode_Splited'].nunique()}")
+            # Create route-level summary
+            new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]))
+            # logger.info(f"\nAfter splitting route codes, unique routes: {new_df['ROUTE_SURVEYEDCode_Splited'].nunique()}")
 
-        route_level_df = pd.DataFrame()
-        unique_routes = new_df['ROUTE_SURVEYEDCode_Splited'].unique()
-        route_level_df['ROUTE_SURVEYEDCode'] = unique_routes
+            route_level_df = pd.DataFrame()
+            unique_routes = new_df['ROUTE_SURVEYEDCode_Splited'].unique()
+            route_level_df['ROUTE_SURVEYEDCode'] = unique_routes
 
-        # Merge with route goals
-        route_df.rename(columns={
-            'ROUTE_TOTAL':'CR_Overall_Goal',
-            'SURVEY_ROUTE_CODE':'ROUTE_SURVEYEDCode',
-            'LS_NAME_CODE':'ROUTE_SURVEYEDCode'
-        }, inplace=True)
-        route_df.dropna(subset=['ROUTE_SURVEYEDCode'], inplace=True)
-        
-        route_level_df = pd.merge(
-            route_level_df,
-            route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']],
-            on='ROUTE_SURVEYEDCode'
-        )
-
-        # Aggregate counts by route
-        for index, row in route_level_df.iterrows():
-            route_code = row['ROUTE_SURVEYEDCode']
-            subset_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'] == route_code]
+            # Merge with route goals
+            route_df.rename(columns={
+                'ROUTE_TOTAL':'CR_Overall_Goal',
+                'SURVEY_ROUTE_CODE':'ROUTE_SURVEYEDCode',
+                'LS_NAME_CODE':'ROUTE_SURVEYEDCode'
+            }, inplace=True)
+            route_df.dropna(subset=['ROUTE_SURVEYEDCode'], inplace=True)
             
-            sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
-            sum_per_route_db = subset_df[['DB_Early_AM_Peak','DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
-
-            # Store aggregated values
-            route_level_df.loc[index,'CR_Early_AM'] = sum_per_route_cr['CR_Early_AM']
-            route_level_df.loc[index,'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
-            route_level_df.loc[index,'CR_Midday'] = sum_per_route_cr['CR_Midday']
-            route_level_df.loc[index,'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
-            route_level_df.loc[index,'CR_Evening'] = sum_per_route_cr['CR_Evening']
-            route_level_df.loc[index,'CR_Total'] = sum_per_route_cr['CR_Total']
-            
-            route_level_df.loc[index,'DB_Early_AM_Peak'] = sum_per_route_db['DB_Early_AM_Peak']
-            route_level_df.loc[index,'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
-            route_level_df.loc[index,'DB_Midday'] = sum_per_route_db['DB_Midday']
-            route_level_df.loc[index,'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
-            route_level_df.loc[index,'DB_Evening'] = sum_per_route_db['DB_Evening']
-            route_level_df.loc[index,'DB_Total'] = sum_per_route_db['DB_Total']
-
-        # Calculate differences
-        for index, row in route_level_df.iterrows():
-            early_am_peak_diff = row['CR_Early_AM'] - row['DB_Early_AM_Peak']
-            am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
-            midday_diff = row['CR_Midday'] - row['DB_Midday']    
-            pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
-            evening_diff = row['CR_Evening'] - row['DB_Evening']
-            overall_difference = row['CR_Overall_Goal'] - row['DB_Total']
-            
-            route_level_df.loc[index, 'Early_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
-            route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
-            route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
-            route_level_df.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
-            route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
-            route_level_df.loc[index, 'Total_DIFFERENCE'] = (
-                math.ceil(max(0, early_am_peak_diff)) + 
-                math.ceil(max(0, am_peak_diff)) + 
-                math.ceil(max(0, midday_diff)) + 
-                math.ceil(max(0, pm_peak_diff)) + 
-                math.ceil(max(0, evening_diff))
+            route_level_df = pd.merge(
+                route_level_df,
+                route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']],
+                on='ROUTE_SURVEYEDCode'
             )
-            route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
 
+            # Aggregate counts by route
+            for index, row in route_level_df.iterrows():
+                route_code = row['ROUTE_SURVEYEDCode']
+                subset_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'] == route_code]
+                
+                sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
+                sum_per_route_db = subset_df[['DB_Early_AM_Peak','DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+
+                # Store aggregated values
+                route_level_df.loc[index,'CR_Early_AM'] = sum_per_route_cr['CR_Early_AM']
+                route_level_df.loc[index,'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
+                route_level_df.loc[index,'CR_Midday'] = sum_per_route_cr['CR_Midday']
+                route_level_df.loc[index,'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
+                route_level_df.loc[index,'CR_Evening'] = sum_per_route_cr['CR_Evening']
+                route_level_df.loc[index,'CR_Total'] = sum_per_route_cr['CR_Total']
+                
+                route_level_df.loc[index,'DB_Early_AM_Peak'] = sum_per_route_db['DB_Early_AM_Peak']
+                route_level_df.loc[index,'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
+                route_level_df.loc[index,'DB_Midday'] = sum_per_route_db['DB_Midday']
+                route_level_df.loc[index,'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
+                route_level_df.loc[index,'DB_Evening'] = sum_per_route_db['DB_Evening']
+                route_level_df.loc[index,'DB_Total'] = sum_per_route_db['DB_Total']
+
+            # Calculate differences
+            for index, row in route_level_df.iterrows():
+                early_am_peak_diff = row['CR_Early_AM'] - row['DB_Early_AM_Peak']
+                am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
+                midday_diff = row['CR_Midday'] - row['DB_Midday']    
+                pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
+                evening_diff = row['CR_Evening'] - row['DB_Evening']
+                overall_difference = row['CR_Overall_Goal'] - row['DB_Total']
+                
+                route_level_df.loc[index, 'Early_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
+                route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+                route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+                route_level_df.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+                route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = (
+                    math.ceil(max(0, early_am_peak_diff)) + 
+                    math.ceil(max(0, am_peak_diff)) + 
+                    math.ceil(max(0, midday_diff)) + 
+                    math.ceil(max(0, pm_peak_diff)) + 
+                    math.ceil(max(0, evening_diff))
+                )
+                route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
+        elif project=='KCATA RAIL':
+            early_am_values = ['AM1','AM2']
+            am_values = ['AM3', 'MID1','MID2','MID7']
+            midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+            pm_peak_values = ['PM2','PM3','PM4','PM5']
+            evening_values = ['PM6','PM7','PM8','PM9']
+
+            # Updated column mapping to match actual numeric columns in your DataFrame
+            time_period_columns = {
+                'CR_Early_AM': 1,  # Using 1 instead of '1'
+                'CR_AM_Peak': 2,
+                'CR_Midday': 3,
+                'CR_PM_Peak': 4,
+                'CR_Evening': 5
+            }
+
+            def convert_string_to_integer(x):
+                try:
+                    return float(x)
+                except (ValueError, TypeError):
+                    return 0
+
+            # Creating new dataframe with all required columns
+            new_df = pd.DataFrame()
+            new_df['ROUTE_SURVEYEDCode'] = overall_df['LS_NAME_CODE']
+            
+            # Process each time period column using the numeric column references
+            for col_name, col_num in time_period_columns.items():
+                new_df[col_name] = pd.to_numeric(overall_df[col_num], errors='coerce').fillna(0).apply(math.ceil)
+            
+            # Convert all numeric columns and fill NA
+            numeric_cols = list(time_period_columns.keys())
+            new_df[numeric_cols] = new_df[numeric_cols].applymap(convert_string_to_integer)
+            new_df.fillna(0, inplace=True)
+            
+            # Group by route code
+            new_df = new_df.groupby('ROUTE_SURVEYEDCode', as_index=False).sum()
+            new_df.reset_index(drop=True, inplace=True)
+
+            # Get counts from database
+            for index, row in new_df.iterrows():
+                route_code = row['ROUTE_SURVEYEDCode']
+
+                def get_counts_and_ids(time_values):
+                    subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & 
+                                (df[time_column[0]].isin(time_values))]
+                    subset_df = subset_df.drop_duplicates(subset='id')
+                    count = subset_df.shape[0]
+                    ids = subset_df['id'].values
+                    return count, ids
+
+                # Get counts for each time period
+                early_am_count, early_am_ids = get_counts_and_ids(early_am_values)
+                am_count, am_ids = get_counts_and_ids(am_values)
+                midday_count, midday_ids = get_counts_and_ids(midday_values)
+                pm_peak_count, pm_peak_ids = get_counts_and_ids(pm_peak_values)
+                evening_count, evening_ids = get_counts_and_ids(evening_values)
+                
+                # Calculate totals
+                new_df.loc[index, 'CR_Total'] = sum(row[col] for col in numeric_cols)
+                
+                # Database counts
+                new_df.loc[index, 'DB_Early_AM_Peak'] = early_am_count
+                new_df.loc[index, 'DB_AM_Peak'] = am_count
+                new_df.loc[index, 'DB_Midday'] = midday_count
+                new_df.loc[index, 'DB_PM_Peak'] = pm_peak_count
+                new_df.loc[index, 'DB_Evening'] = evening_count
+                new_df.loc[index, 'DB_Total'] = sum([early_am_count, am_count, midday_count, 
+                                                pm_peak_count, evening_count])
+                
+                # Join the IDs as comma-separated strings
+                new_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(map(str, early_am_ids))
+                new_df.loc[index, 'DB_AM_IDS'] = ', '.join(map(str, am_ids))
+                new_df.loc[index, 'DB_Midday_IDS'] = ', '.join(map(str, midday_ids))
+                new_df.loc[index, 'DB_PM_IDS'] = ', '.join(map(str, pm_peak_ids))
+                new_df.loc[index, 'DB_Evening_IDS'] = ', '.join(map(str, evening_ids))
+
+            # Create route level comparison
+            new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(lambda x: '_'.join(x.split('_')[:-1]))
+            
+            route_level_df = pd.DataFrame()
+            unique_routes = new_df['ROUTE_SURVEYEDCode_Splited'].unique()
+            route_level_df['ROUTE_SURVEYEDCode'] = unique_routes
+
+            # Merge with route_df for overall goal
+            route_df.rename(columns={'ROUTE_TOTAL':'CR_Overall_Goal','ETC_ROUTE_ID':'ROUTE_SURVEYEDCode'}, inplace=True)
+            route_df.dropna(subset=['ROUTE_SURVEYEDCode'], inplace=True)
+            route_level_df = pd.merge(route_level_df, route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']], 
+                                    on='ROUTE_SURVEYEDCode')
+            route_level_df = route_level_df.groupby('ROUTE_SURVEYEDCode', as_index=False).sum()
+            route_level_df.reset_index(drop=True, inplace=True)
+
+            # Aggregate values for route level
+            for index, row in route_level_df.iterrows():
+                subset_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'] == row['ROUTE_SURVEYEDCode']]
+                
+                sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 
+                                            'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
+                sum_per_route_db = subset_df[['DB_Early_AM_Peak', 'DB_AM_Peak', 'DB_Midday', 
+                                            'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+
+                route_level_df.loc[index, 'CR_Early_AM'] = sum_per_route_cr['CR_Early_AM']
+                route_level_df.loc[index, 'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
+                route_level_df.loc[index, 'CR_Midday'] = sum_per_route_cr['CR_Midday']
+                route_level_df.loc[index, 'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
+                route_level_df.loc[index, 'CR_Evening'] = sum_per_route_cr['CR_Evening']
+                route_level_df.loc[index, 'CR_Total'] = sum_per_route_cr['CR_Total']
+                
+                route_level_df.loc[index, 'DB_Early_AM_Peak'] = sum_per_route_db['DB_Early_AM_Peak']
+                route_level_df.loc[index, 'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
+                route_level_df.loc[index, 'DB_Midday'] = sum_per_route_db['DB_Midday']
+                route_level_df.loc[index, 'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
+                route_level_df.loc[index, 'DB_Evening'] = sum_per_route_db['DB_Evening']
+                route_level_df.loc[index, 'DB_Total'] = sum_per_route_db['DB_Total']
+                
+                # Combine IDs from all sub-routes
+                route_level_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_Early_AM_IDS'].values)
+                route_level_df.loc[index, 'DB_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_AM_IDS'].values)
+                route_level_df.loc[index, 'DB_Midday_IDS'] = ', '.join(str(value) for value in subset_df['DB_Midday_IDS'].values)
+                route_level_df.loc[index, 'DB_PM_IDS'] = ', '.join(str(value) for value in subset_df['DB_PM_IDS'].values)
+                route_level_df.loc[index, 'DB_Evening_IDS'] = ', '.join(str(value) for value in subset_df['DB_Evening_IDS'].values)
+
+            # Calculate differences
+            for index, row in route_level_df.iterrows():
+                early_am_diff = row['CR_Early_AM'] - row['DB_Early_AM_Peak']
+                am_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
+                midday_diff = row['CR_Midday'] - row['DB_Midday']
+                pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
+                evening_diff = row['CR_Evening'] - row['DB_Evening']
+                total_diff = row['CR_Total'] - row['DB_Total']
+                overall_diff = row['CR_Overall_Goal'] - row['DB_Total']
+                
+                route_level_df.loc[index, 'Early_AM_DIFFERENCE'] = math.ceil(max(0, early_am_diff))
+                route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_diff))
+                route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+                route_level_df.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+                route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = sum([
+                    math.ceil(max(0, early_am_diff)),
+                    math.ceil(max(0, am_diff)),
+                    math.ceil(max(0, midday_diff)),
+                    math.ceil(max(0, pm_peak_diff)),
+                    math.ceil(max(0, evening_diff))
+                ])
+                route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_diff))
         # logger.info("\n=== FINAL RESULTS ===")
         # logger.info(f"Final route_level_df shape: {route_level_df.shape}")
         # logger.info("Sample of final results:")

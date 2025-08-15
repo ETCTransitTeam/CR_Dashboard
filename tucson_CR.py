@@ -449,6 +449,10 @@ else:
                 wkday_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME','(1) Collect', '(1) Remain',
                                     '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', 
                                      '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+            elif 'kcata rail' in selected_project:    
+                wkday_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME','(1) Collect', '(1) Remain',
+                                    '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                                     '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
             else:
                 wkday_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
                     '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
@@ -463,10 +467,14 @@ else:
 
         def weekend_station_page():
             st.subheader('Route StationWise Comparison(WeekEND)')
-            if 'tucson' in selected_project:
+            if 'tucson' in selected_project or 'kcata_rail' in selected_project:
                 wkend_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME','(1) Collect', '(1) Remain',
                                     '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', 
                                      '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+            elif 'kcata rail' in selected_project:    
+                wkend_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME','(1) Collect', '(1) Remain',
+                                    '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                                     '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
             else:
                 wkend_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
                     '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
@@ -774,7 +782,7 @@ else:
             st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
             # Get the most recent "Completed" date from both wkday_raw_df and wkend_raw_df
-            if 'kcata' in selected_project:
+            if 'kcata' in selected_project or 'kcata_rail' in selected_project:
                 completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
             else:
                 completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
