@@ -5126,3 +5126,324 @@ def process_route_date_data(df, elvis_df, survey_date_route):
     ]
     
     return route_report_df[column_order]
+
+
+
+
+# For KCATA three functions Route Comparison, Route Level Comparison, and Route Date Comparison
+def process_route_comparison_data(cr_df, df, ke_df):
+    """
+    Process route comparison data and handle reverse direction logic
+    """
+    # Filter KINGElvis data
+    ke_df = ke_df[ke_df['INTERV_INIT'].astype(str) != '999']
+    ke_df = ke_df[ke_df['1st Cleaner'].astype(str) != 'Test/No 5 MIN']
+    ke_df = ke_df[ke_df['Final_Usage'].astype(str).str.lower() == 'use']
+
+    # Merge with filtered KINGElvis data
+    df = pd.merge(df, ke_df['id'], on='id', how='inner')
+    df.drop_duplicates(subset='id', inplace=True)
+
+    def get_int_from_series(series, default=0):
+        """
+        Safely get a single int from a Series.
+        - If empty -> default
+        - If multiple -> take first non-null
+        - Coerces to int
+        """
+        vals = pd.to_numeric(pd.Series(series).dropna(), errors='coerce').dropna().values
+        if len(vals) == 0:
+            return int(default)
+        return int(vals[0])
+
+    # Get column names
+    time_column = check_all_characters_present(df, ['timeoncode'])
+    route_survey_column = check_all_characters_present(df, ['routesurveyedcode'])
+    
+    # Time values
+    early_am_values = ['AM1','AM2']
+    am_values = ['AM3', 'MID1','MID2','MID7']
+    midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+    pm_peak_values = ['PM2','PM3','PM4','PM5']
+    evening_values = ['PM6','PM7','PM8','PM9']
+
+    # CR columns
+    early_am_column = ['1']
+    am_column = ['2']
+    midday_colum = ['3']
+    pm_column = ['4']
+    evening_column = ['5']
+
+    # cr_df.dropna(subset=['LS_NAME_CODE'], inplace=True)
+
+    # Create new dataframe with CR data
+    new_df = pd.DataFrame()
+    new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
+    new_df['CR_Early_AM'] = cr_df[early_am_column[0]]
+    new_df['CR_AM_Peak'] = cr_df[am_column[0]]
+    new_df['CR_Midday'] = cr_df[midday_colum[0]]
+    new_df['CR_PM_Peak'] = cr_df[pm_column[0]]
+    new_df['CR_Evening'] = cr_df[evening_column[0]]
+    new_df.fillna(0, inplace=True)
+
+    # Add values from database
+    for index, row in new_df.iterrows():
+        route_code = row['ROUTE_SURVEYEDCode']
+        
+        def get_counts_and_ids(time_values):
+            subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+            count = subset_df.shape[0]
+            ids = subset_df['id'].values
+            return count, ids
+        
+        early_am_value, early_am_ids = get_counts_and_ids(early_am_values)
+        am_value, am_value_ids = get_counts_and_ids(am_values)
+        midday_value, midday_value_ids = get_counts_and_ids(midday_values)
+        pm_value, pm_value_ids = get_counts_and_ids(pm_peak_values)
+        evening_value, evening_value_ids = get_counts_and_ids(evening_values)
+        
+        new_df.loc[index, 'CR_Total'] = row['CR_Early_AM'] + row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+        new_df.loc[index, 'DB_Early_AM'] = early_am_value
+        new_df.loc[index, 'DB_AM_Peak'] = am_value
+        new_df.loc[index, 'DB_Midday'] = midday_value
+        new_df.loc[index, 'DB_PM_Peak'] = pm_value
+        new_df.loc[index, 'DB_Evening'] = evening_value
+        new_df.loc[index, 'DB_Total'] = evening_value + am_value + midday_value + pm_value + early_am_value
+        
+        new_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(map(str, early_am_ids))
+        new_df.loc[index, 'DB_AM_IDS'] = ', '.join(map(str, am_value_ids))
+        new_df.loc[index, 'DB_Midday_IDS'] = ', '.join(map(str, midday_value_ids))
+        new_df.loc[index, 'DB_PM_IDS'] = ', '.join(map(str, pm_value_ids))
+        new_df.loc[index, 'DB_Evening_IDS'] = ', '.join(map(str, evening_value_ids))
+
+    return new_df
+
+def create_route_level_comparison(new_df):
+    """
+    Create route level comparison from the processed data
+    """
+    new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]))
+    
+    route_level_df = pd.DataFrame()
+    unique_routes = new_df['ROUTE_SURVEYEDCode_Splited'].unique()
+    route_level_df['ROUTE_SURVEYEDCode'] = unique_routes
+    
+    for index, row in route_level_df.iterrows():
+        subset_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'] == row['ROUTE_SURVEYEDCode']]
+        sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
+        sum_per_route_db = subset_df[['DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+        
+        route_level_df.loc[index, 'CR_Early_AM'] = sum_per_route_cr['CR_Early_AM']
+        route_level_df.loc[index, 'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
+        route_level_df.loc[index, 'CR_Midday'] = sum_per_route_cr['CR_Midday']
+        route_level_df.loc[index, 'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
+        route_level_df.loc[index, 'CR_Evening'] = sum_per_route_cr['CR_Evening']
+        route_level_df.loc[index, 'CR_Total'] = sum_per_route_cr['CR_Total']
+        
+        route_level_df.loc[index, 'DB_Early_AM'] = sum_per_route_db['DB_Early_AM']
+        route_level_df.loc[index, 'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
+        route_level_df.loc[index, 'DB_Midday'] = sum_per_route_db['DB_Midday']
+        route_level_df.loc[index, 'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
+        route_level_df.loc[index, 'DB_Evening'] = sum_per_route_db['DB_Evening']
+        route_level_df.loc[index, 'DB_Total'] = sum_per_route_db['DB_Total']   
+        
+        route_level_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_Early_AM_IDS'].values)
+        route_level_df.loc[index, 'DB_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_AM_IDS'].values)
+        route_level_df.loc[index, 'DB_Midday_IDS'] = ', '.join(str(value) for value in subset_df['DB_Midday_IDS'].values)    
+        route_level_df.loc[index, 'DB_PM_IDS'] = ', '.join(str(value) for value in subset_df['DB_PM_IDS'].values)    
+        route_level_df.loc[index, 'DB_Evening_IDS'] = ', '.join(str(value) for value in subset_df['DB_Evening_IDS'].values)
+    
+    # Calculate differences
+    for index, row in route_level_df.iterrows():
+        early_am_peak_diff = row['CR_Early_AM'] - row['DB_Early_AM']
+        am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
+        midday_diff = row['CR_Midday'] - row['DB_Midday']    
+        pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
+        evening_diff = row['CR_Evening'] - row['DB_Evening']
+        total_diff = row['CR_Total'] - row['DB_Total']
+        
+        route_level_df.loc[index, 'EARLY_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
+        route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+        route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+        route_level_df.loc[index, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+        route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+        route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff)) + math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
+    
+    return route_level_df
+
+def process_reverse_direction_logic(df, route_level_df):
+    """
+    Process reverse direction logic for the routes
+    """
+    # Get column names
+    trip_oppo_dir_column = check_all_characters_present(df, ['tripinoppodir'])
+    route_survey_column = check_all_characters_present(df, ['routesurveyedcode'])
+    route_survey_name_column = check_all_characters_present(df, ['routesurveyed'])
+    trip_code_column = check_all_characters_present(df, ['prevtransferscode', 'nexttransferscode'])
+    trip_code_column.sort()
+    
+    prev_trip_route_code_column = check_all_characters_present(df, ['tripfirstroutecode', 'tripsecondroutecode', 'tripthirdroutecode', 'tripfourthroutecode'])
+    next_trip_route_code_column = check_all_characters_present(df, ['tripnextroutecode', 'tripafterroutecode', 'trip3rdroutecode', 'triplast4thrtecode'])
+    
+    values_to_replace = ['-oth-']
+    df[[*prev_trip_route_code_column, *next_trip_route_code_column]] = df[
+        [*prev_trip_route_code_column, *next_trip_route_code_column]
+    ].replace(values_to_replace, np.nan)
+    
+    # Create reverse dataframe
+    reverse_df = df[df[trip_oppo_dir_column[0]].str.lower() == 'yes'][['id', *route_survey_column, *route_survey_name_column, *trip_code_column, *prev_trip_route_code_column, *next_trip_route_code_column]]
+    reverse_df[route_survey_column[0]] = reverse_df[route_survey_column[0]].apply(lambda x: '_'.join(x.split("_")[:-1]))
+    reverse_df.reset_index(inplace=True, drop=True)
+    reverse_df[[*prev_trip_route_code_column, *next_trip_route_code_column]].fillna('', inplace=True)
+    
+    def get_int_from_series(series, default=0):
+        vals = pd.to_numeric(pd.Series(series).dropna(), errors='coerce').dropna().values
+        if len(vals) == 0:
+            return int(default)
+        return int(vals[0])
+    
+    def get_valid_routes(row, route_code_column):
+        result_array = reverse_df[reverse_df['id'] == row['id']][route_code_column].values
+        values_in_list = result_array[0, :]
+        return [value for value in values_in_list if not (pd.isna(value) or value == '')]
+    
+    def process_route(route, counter_list, counter_prefix, target_index):
+        counter_list[0] += 1
+        rev_prefix = f'Rev-{counter_prefix}'
+        random_choice = random.choice([counter_prefix, rev_prefix])
+        
+        value = get_int_from_series(
+            route_level_df.loc[route_level_df[route_survey_column[0]] == route, 'Total_DIFFERENCE']
+        )
+        
+        if value > 0:
+            reverse_df.loc[target_index, 'Type'] = f'{random_choice}{counter_list[0]}'
+            route_level_df.loc[
+                route_level_df[route_survey_column[0]] == route, 'Total_DIFFERENCE'
+            ] = value - 1
+            return True
+        return False
+    
+    # Implement logic for handling Type values
+    for index, row in reverse_df.iterrows():
+        random_value = random.choice([0, 1])
+        value = get_int_from_series(
+            route_level_df.loc[
+                route_level_df[route_survey_column[0]] == row[route_survey_column[0]],
+                'Total_DIFFERENCE'
+            ]
+        )
+        prev_trans_value = get_int_from_series(
+            df.loc[df['id'] == row['id'], trip_code_column[1]],
+            default=0
+        )
+        next_trans_value = get_int_from_series(
+            df.loc[df['id'] == row['id'], trip_code_column[0]],
+            default=0
+        )
+        counter = [0]
+        
+        if random_value:
+            if value > 0:
+                reverse_df.loc[index, 'Type'] = 'Reverse'
+                route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+            elif prev_trans_value:
+                for route in get_valid_routes(row, prev_trip_route_code_column):
+                    result_value = process_route(route, counter, 'p', index)
+                    if result_value:
+                        break
+                    else:
+                        reverse_df.loc[index, 'Type'] = f'{random.choice(["p1","Rev-p1"])}'
+                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                        break
+            elif next_trans_value:
+                for route in get_valid_routes(row, next_trip_route_code_column):
+                    result_value = process_route(route, counter, 'n', index)
+                    if result_value:
+                        break
+                    else:
+                        reverse_df.loc[index, 'Type'] = f'{random.choice(["n1","Rev-n1"])}'
+                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                        break
+            else:
+                reverse_df.loc[index, 'Type'] = 'Reverse'
+        else:
+            if prev_trans_value:
+                for route in get_valid_routes(row, prev_trip_route_code_column):
+                    result_value = process_route(route, counter, 'p', index)
+                    if result_value:
+                        break
+                    else:
+                        reverse_df.loc[index, 'Type'] = f'{random.choice(["p1","Rev-p1"])}'
+                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                        break
+            elif next_trans_value:
+                for route in get_valid_routes(row, next_trip_route_code_column):
+                    result_value = process_route(route, counter, 'n', index)
+                    if result_value:
+                        break
+                    else:
+                        reverse_df.loc[index, 'Type'] = f'{random.choice(["n1","Rev-n1"])}'
+                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                        break
+            else:
+                reverse_df.loc[index, 'Type'] = 'Reverse'
+    
+    all_type_df = copy.deepcopy(reverse_df)
+    
+    # Second pass for reverse direction logic
+    new_route_level_df = copy.deepcopy(route_level_df)
+    
+    for index, row in reverse_df.iterrows():
+        random_value = random.choice([0, 1])
+        value = get_int_from_series(
+            new_route_level_df.loc[
+                new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]],
+                'Total_DIFFERENCE'
+            ]
+        )
+        prev_trans_value = get_int_from_series(
+            df.loc[df['id'] == row['id'], trip_code_column[1]],
+            default=0
+        )
+        next_trans_value = get_int_from_series(
+            df.loc[df['id'] == row['id'], trip_code_column[0]],
+            default=0
+        )
+        
+        counter = [0]
+        
+        if value:
+            if not random_value:
+                reverse_df.loc[index, 'Type'] = 'Reverse'
+                new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+            else:
+                if prev_trans_value:
+                    for route in get_valid_routes(row, prev_trip_route_code_column):
+                        result_value = process_route(route, counter, 'p', index)
+                        if result_value:
+                            break
+                        else:
+                            reverse_df.loc[index, 'Type'] = f'{random.choice(["p1","Rev-p1"])}'
+                            new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                            break
+                elif next_trans_value:
+                    for route in get_valid_routes(row, next_trip_route_code_column):
+                        result_value = process_route(route, counter, 'n', index)
+                        if result_value:
+                            break
+                        else:
+                            reverse_df.loc[index, 'Type'] = f'{random.choice(["n1","Rev-n1"])}'
+                            new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                            break
+                else:
+                    reverse_df.loc[index, 'Type'] = 'Reverse'
+                    new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+        else:
+            reverse_df.loc[index, 'Type'] = ''
+    
+    reverse_df['COMPLETED By'] = ''
+    all_type_df['COMPLETED By'] = ''
+    all_type_df['Type'].fillna('Reverse', inplace=True)
+    
+    return route_level_df, all_type_df, reverse_df

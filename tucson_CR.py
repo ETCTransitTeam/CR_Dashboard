@@ -130,7 +130,10 @@ else:
                 'surveyor_report_trends': 'surveyor_report_trends_df',
                 'route_report_trends': 'route_report_trends_df',
                 'surveyor_report_date_trends': 'surveyor_report_date_trends_df',
-                'route_report_date_trends': 'route_report_date_trends_df'
+                'route_report_date_trends': 'route_report_date_trends_df',
+                'route_comparison': 'route_comparison_df',
+                'reverse_routes': 'reverse_routes_df',
+                'reverse_routes_difference': 'reverse_routes_difference_df'
             }
 
             # Initialize an empty dictionary to hold DataFrames
@@ -173,7 +176,7 @@ else:
             st.session_state["cache_key"] = 0
         dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"] )
 
-        # Example: Access DataFrames
+        # Access DataFrames from the fetched dataframes dictionary
         wkday_df = dataframes['wkday_df']
         wkday_dir_df = dataframes['wkday_dir_df']
         wkend_df = dataframes['wkend_df']
@@ -188,14 +191,16 @@ else:
         surveyor_report_date_trends_df = dataframes['surveyor_report_date_trends_df']
         route_report_date_trends_df = dataframes['route_report_date_trends_df']
 
-
-
         wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
         wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
 
         by_interv_totals_df = dataframes['by_interv_totals_df']
         by_route_totals_df = dataframes['by_route_totals_df']
         survey_detail_totals_df = dataframes['survey_detail_totals_df']
+
+        route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
+        reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
+        reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
 
         st.sidebar.markdown("**User Profile**")
         st.sidebar.caption(f"**Role:** {st.session_state['user']['role']}")
@@ -741,6 +746,54 @@ else:
 
                 st.dataframe(reordered_df, use_container_width=True)
 
+        def route_comparison_page():
+            st.title("Route Comparison")
+            
+            # Use the pre-fetched dataframe
+            if not route_comparison_df.empty:
+                # Display the dataframe
+                st.dataframe(route_comparison_df, use_container_width=True, height=600)
+                
+                # Download button
+                csv_data, file_name = create_csv(route_comparison_df, "route_comparison.csv")
+                download_csv(csv_data, file_name, "Download Route Comparison Data")
+            else:
+                st.warning("No route comparison data available")
+            
+            if st.button("Home Page"):
+                st.query_params["page"] = "main"
+                st.rerun()
+
+        def reverse_routes_page():
+            st.title("Reverse Routes Comparison")
+            
+            # Use the pre-fetched dataframes
+            if not reverse_routes_df.empty:
+                # Display both tables
+                st.subheader("Reverse Routes")
+                st.dataframe(reverse_routes_df, use_container_width=True, height=300)
+                
+                # Download button
+                csv_reverse, file_reverse = create_csv(reverse_routes_df, "reverse_routes.csv")
+                download_csv(csv_reverse, file_reverse, "Download Reverse Routes Data")
+            else:
+                st.warning("No reverse routes data available")
+            
+            if not reverse_routes_difference_df.empty:
+                st.subheader("Reverse Routes Difference")
+                st.dataframe(reverse_routes_difference_df, use_container_width=True, height=300)
+                
+                # Download button
+                csv_difference, file_difference = create_csv(reverse_routes_difference_df, "reverse_routes_difference.csv")
+                download_csv(csv_difference, file_difference, "Download Reverse Routes Difference Data")
+            else:
+                st.warning("No reverse routes difference data available")
+            
+            if st.button("Home Page"):
+                st.query_params["page"] = "main"
+                st.rerun()
+
+
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
 
@@ -825,6 +878,16 @@ else:
                 st.query_params["page"] = "weekend"
                 st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
+            
+            # Add these two new buttons for kcata simple project
+            if 'kcata' in selected_project and 'rail' not in selected_schema.lower():
+                if st.button("Route Comparison"):
+                    st.query_params["page"] = "route_comparison"
+                    st.rerun()
+                    
+                if st.button("Reverse Routes"):
+                    st.query_params["page"] = "reverse_routes"
+                    st.rerun()
 
             if 'stl' in selected_project or 'kcata' in selected_project:
                 if st.button("DAILY TOTALS"):
@@ -1002,6 +1065,13 @@ else:
                             section_title="Route Report",
                             date_label="Route"
                         )
+
+            elif current_page == "route_comparison":
+                if 'kcata' in selected_project and 'rail' not in selected_schema.lower():
+                    route_comparison_page()
+            elif current_page == "reverse_routes":
+                if 'kcata' in selected_project and 'rail' not in selected_schema.lower():
+                    reverse_routes_page()
 
             else:
                 if 'tucson' in selected_project:

@@ -249,9 +249,9 @@ def fetch_and_process_data(project,schema):
         if project == "KCATA" or project == "KCATA RAIL":
             # First clean up column names by removing any extra whitespace
             df.columns = df.columns.str.strip()
-            
             # Apply the header mapping
             df = df.rename(columns=KCATA_HEADER_MAPPING)
+            elvis_df = df.drop(index=0).reset_index(drop=True)
             
             # After renaming, you might want to standardize the case (optional)
             # df.columns = df.columns.str.upper()
@@ -1511,6 +1511,17 @@ def fetch_and_process_data(project,schema):
         })
 
         interviewer_pivot, route_pivot, detail_table = process_survey_data(df_for_processing)
+
+
+
+        print("Processing route comparison data...")
+        # Process the route comparison data
+        new_df = process_route_comparison_data(wkday_overall_df, elvis_df, ke_df)
+        route_level_df = create_route_level_comparison(new_df)
+        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(elvis_df, route_level_df)
+        print("Route comparison data processed successfully.")
+
+
         survey_report_df = process_surveyor_data_kcata(ke_df, df)
         route_report_df = process_route_data_kcata(ke_df, df)
 
@@ -1605,6 +1616,91 @@ def fetch_and_process_data(project,schema):
         )
         wkend_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
         wkend_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+
+                # Just for ROUTE COMPARISON PART #
+        # Get column names for consistency
+        route_survey_column = check_all_characters_present(elvis_df, ['routesurveyedcode'])
+        route_survey_name_column = check_all_characters_present(elvis_df, ['routesurveyed'])
+
+        # Create dataframes that match the exact Excel structure
+        # 1. Route Comparison sheet
+        route_comparison_export = comparison_df.copy()
+
+        # Ensure all columns are present and in correct order as in Excel
+        expected_route_comp_columns = [
+            'ROUTE_SURVEYEDCode', 'CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 
+            'CR_PM_Peak', 'CR_Evening', 'CR_Total', 'DB_Early_AM', 'DB_AM_Peak', 
+            'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total', 'DB_Early_AM_IDS', 
+            'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 
+            'EARLY_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 
+            'PM_DIFFERENCE', 'Evening_DIFFERENCE', 'Total_DIFFERENCE'
+        ]
+
+        # Add missing columns with default values
+        for col in expected_route_comp_columns:
+            if col not in route_comparison_export.columns:
+                route_comparison_export[col] = 0 if 'DIFFERENCE' in col or col.startswith(('CR_', 'DB_')) else ''
+
+        # Reorder columns to match Excel
+        route_comparison_export = route_comparison_export[expected_route_comp_columns]
+
+        # 2. Reverse Routes sheet
+        reverse_routes_export = all_type_df[[
+            'id', route_survey_column[0], route_survey_name_column[0], 'Type', 'COMPLETED By'
+        ]].copy()
+
+        # Rename columns to match Excel format if needed
+        reverse_routes_export = reverse_routes_export.rename(columns={
+            route_survey_column[0]: 'ROUTE_SURVEYEDCode',
+            route_survey_name_column[0]: 'ROUTE_SURVEYED'
+        })
+
+        # Ensure all expected columns are present
+        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Type', 'COMPLETED By']
+        for col in expected_reverse_columns:
+            if col not in reverse_routes_export.columns:
+                reverse_routes_export[col] = ''
+
+        reverse_routes_export = reverse_routes_export[expected_reverse_columns]
+
+        # 3. Reverse Routes Difference sheet
+        reverse_diff_export = reverse_df[reverse_df['Type'] != ''][[
+            'id', route_survey_column[0], route_survey_name_column[0], 'Type', 'COMPLETED By'
+        ]].copy()
+
+        # Rename columns to match Excel format
+        reverse_diff_export = reverse_diff_export.rename(columns={
+            route_survey_column[0]: 'ROUTE_SURVEYEDCode',
+            route_survey_name_column[0]: 'ROUTE_SURVEYED'
+        })
+
+        # Ensure all expected columns are present
+        for col in expected_reverse_columns:
+            if col not in reverse_diff_export.columns:
+                reverse_diff_export[col] = ''
+
+        reverse_diff_export = reverse_diff_export[expected_reverse_columns]
+
+        # Data type conversion to match Excel/Snowflake schema
+        # Convert numeric columns to appropriate types
+        numeric_columns = ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 
+                        'CR_Total', 'DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 
+                        'DB_Evening', 'DB_Total', 'EARLY_AM_DIFFERENCE', 'AM_DIFFERENCE', 
+                        'Midday_DIFFERENCE', 'PM_DIFFERENCE', 'Evening_DIFFERENCE', 'Total_DIFFERENCE']
+
+        for col in numeric_columns:
+            if col in route_comparison_export.columns:
+                route_comparison_export[col] = pd.to_numeric(route_comparison_export[col], errors='coerce').fillna(0).astype(int)
+
+        # Convert ID columns to string
+        for df in [reverse_routes_export, reverse_diff_export]:
+            if 'id' in df.columns:
+                df['id'] = df['id'].astype(str)
+
+        # Handle NaN values
+        route_comparison_export = route_comparison_export.fillna(0)
+        reverse_routes_export = reverse_routes_export.fillna('')
+        reverse_diff_export = reverse_diff_export.fillna('')
 
     elif project == 'KCATA RAIL':
         # For comparison dataframes (with route level goals)
@@ -1930,7 +2026,7 @@ def fetch_and_process_data(project,schema):
         'WkDAY Time Data': 'wkday_time_data',
         'LAST SURVEY DATE': 'last_survey_date',
         } 
-    elif project=='STL' or project=='KCATA':
+    elif project=='STL':
         # DataFrames preparation
         dataframes = {
             'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
@@ -1970,6 +2066,54 @@ def fetch_and_process_data(project,schema):
             'Surveyor Report with Date': 'surveyor_report_date_trends',
             'Route Report with Date': 'route_report_date_trends'
         }
+    elif project=='KCATA':
+        # DataFrames preparation
+        dataframes = {
+            'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkDAY RAW DATA': weekday_raw_df,
+            'WkEND RAW DATA': weekend_raw_df,
+            'WkEND Time Data': wkend_time_value_df,
+            'WkDAY Time Data': wkday_time_value_df,
+            'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
+            'LAST SURVEY DATE': latest_date_df,
+            'By_Interviewer': interviewer_pivot,
+            'By_Route': route_pivot,
+            'Survey_Detail': detail_table,
+            'Surveyor Report': survey_report_df,
+            'Route Report': route_report_df,
+            'Surveyor Report with Date': survey_report_by_date_df,
+            'Route Report with Date': route_report_by_date_df,
+            'Route Comparison': route_comparison_export,
+            'Reverse Routes': reverse_routes_export,
+            'Reverse Routes Difference': reverse_diff_export
+        }
+
+        # Table mapping
+        table_info = {
+            'WkDAY RAW DATA': 'wkday_raw', 
+            'WkEND RAW DATA': 'wkend_raw', 
+            'WkDAY Route Comparison': 'wkday_comparison', 
+            'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+            'WkEND Route Comparison': 'wkend_comparison', 
+            'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+            'WkEND Time Data': 'wkend_time_data', 
+            'WkDAY Time Data': 'wkday_time_data',
+            'LAST SURVEY DATE': 'last_survey_date',
+            'By_Interviewer': 'by_interv_totals',
+            'By_Route': 'by_route_totals',
+            'Survey_Detail': 'survey_detail_totals',
+            'Surveyor Report': 'surveyor_report_trends',
+            'Route Report': 'route_report_trends',
+            'Surveyor Report with Date': 'surveyor_report_date_trends',
+            'Route Report with Date': 'route_report_date_trends',
+            'Route Comparison': 'route_comparison',
+            'Reverse Routes': 'reverse_routes',
+            'Reverse Routes Difference': 'reverse_routes_difference'
+        }
+
+
     elif project == 'KCATA RAIL':
         def safe_drop_columns(df, columns_to_drop):
             """Safely drop columns that exist in the DataFrame"""

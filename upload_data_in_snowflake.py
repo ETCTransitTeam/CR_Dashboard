@@ -29,7 +29,7 @@ def create_snowflake_connection():
         warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
         database=os.getenv('SNOWFLAKE_DATABASE'),
         authenticator="SNOWFLAKE_JWT",
-        schema='kcata_rail',
+        schema='kcata_bus',
         role=os.getenv('SNOWFLAKE_ROLE'),
     )
     return conn
@@ -130,33 +130,11 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250815_KCATA_RailRouteLevelComparison(Wkday & WkEnd)_Latest.xlsx'
+file_path = 'reviewtool_20250821_KCATA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
 # #  For bus transport project
-# sheet_info = {
-#     'WkDAY RAW DATA': 'wkday_raw', 
-#     'WkEND RAW DATA': 'wkend_raw', 
-#     'WkDAY Route Comparison': 'wkday_comparison', 
-#     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
-#     'WkEND Route Comparison': 'wkend_comparison', 
-#     'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
-#     'WkEND Time Data': 'wkend_time_data', 
-#     'WkDAY Time Data': 'wkday_time_data',
-#     'LAST SURVEY DATE': 'last_survey_date',
-#     'By_Interviewer': 'by_interv_totals',
-#     'By_Route': 'by_route_totals',
-#     'Survey_Detail': 'survey_detail_totals',
-#     'Surveyor Report': 'surveyor_report_trends',
-#     'Route Report': 'route_report_trends',
-#     'Surveyor Report with Date': 'surveyor_report_date_trends',
-#     'Route Report with Date': 'route_report_date_trends'
-# }
-
-#  For rail project
 sheet_info = {
     'WkDAY RAW DATA': 'wkday_raw', 
     'WkEND RAW DATA': 'wkend_raw', 
-    'WkEND Stationwise Comparison': 'wkday_stationwise_comparison', 
-    'WkDAY Stationwise Comparison': 'wkend_stationwise_comparison',
     'WkDAY Route Comparison': 'wkday_comparison', 
     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
     'WkEND Route Comparison': 'wkend_comparison', 
@@ -164,7 +142,32 @@ sheet_info = {
     'WkEND Time Data': 'wkend_time_data', 
     'WkDAY Time Data': 'wkday_time_data',
     'LAST SURVEY DATE': 'last_survey_date',
+    'By_Interviewer': 'by_interv_totals',
+    'By_Route': 'by_route_totals',
+    'Survey_Detail': 'survey_detail_totals',
+    'Surveyor Report': 'surveyor_report_trends',
+    'Route Report': 'route_report_trends',
+    'Surveyor Report with Date': 'surveyor_report_date_trends',
+    'Route Report with Date': 'route_report_date_trends',
+    'Route Comparison': 'route_comparison',
+    'Reverse Routes': 'reverse_routes',
+    'Reverse Routes Difference': 'reverse_routes_difference'
 }
+
+#  For rail project
+# sheet_info = {
+#     'WkDAY RAW DATA': 'wkday_raw', 
+#     'WkEND RAW DATA': 'wkend_raw', 
+#     'WkEND Stationwise Comparison': 'wkday_stationwise_comparison', 
+#     'WkDAY Stationwise Comparison': 'wkend_stationwise_comparison',
+#     'WkDAY Route Comparison': 'wkday_comparison', 
+#     'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
+#     'WkEND Route Comparison': 'wkend_comparison', 
+#     'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+#     'WkEND Time Data': 'wkend_time_data', 
+#     'WkDAY Time Data': 'wkday_time_data',
+#     'LAST SURVEY DATE': 'last_survey_date',
+# }
 
 # file_path = 'details_KCATA_od_excel.xlsx'
 # # detail_df=pd.read_excel('details_TUCSON_AZ_od_excel.xlsx',sheet_name='TOD')
