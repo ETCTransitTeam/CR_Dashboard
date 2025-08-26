@@ -5271,7 +5271,7 @@ def create_route_level_comparison(new_df):
     
     return route_level_df
 
-def process_reverse_direction_logic(df, route_level_df):
+def process_reverse_direction_logic(wkday_overall_df, df, route_level_df):
     """
     Process reverse direction logic for the routes
     """
@@ -5290,8 +5290,90 @@ def process_reverse_direction_logic(df, route_level_df):
         [*prev_trip_route_code_column, *next_trip_route_code_column]
     ].replace(values_to_replace, np.nan)
     
+    # CR columns
+    early_am_column = ['1']
+    am_column = ['2']
+    midday_colum = ['3']
+    pm_column = ['4']
+    evening_column = ['5']
+    # Create mapping from route code to its details from cr_df
+    cr_route_info = {}
+    for _, row in wkday_overall_df.iterrows():
+        route_code = row['LS_NAME_CODE']
+        
+        # Extract time period (1, 2, 3, 4, 5) based on which column has values
+        valid_time_periods = []
+        if pd.notna(row.get(early_am_column[0], 0)) and row[early_am_column[0]] > 0:
+            valid_time_periods.append('1')  # Early AM
+        if pd.notna(row.get(am_column[0], 0)) and row[am_column[0]] > 0:
+            valid_time_periods.append('2')  # AM Peak
+        if pd.notna(row.get(midday_colum[0], 0)) and row[midday_colum[0]] > 0:
+            valid_time_periods.append('3')  # Midday
+        if pd.notna(row.get(pm_column[0], 0)) and row[pm_column[0]] > 0:
+            valid_time_periods.append('4')  # PM Peak
+        if pd.notna(row.get(evening_column[0], 0)) and row[evening_column[0]] > 0:
+            valid_time_periods.append('5')  # Evening
+        
+        # Randomly select one time period from the valid ones
+        time_period = random.choice(valid_time_periods) if valid_time_periods else ''
+
+        # Determine day type (Weekday/Weekend) from route code
+        day_type = 'Weekday'  # Default to weekday
+        if isinstance(route_code, str):
+            if 'WKEND' in route_code.upper() or 'SAT' in route_code.upper() or 'SUN' in route_code.upper():
+                day_type = 'Weekend'
+
+        # Extract direction code from route code
+        direction_code = ''
+        if isinstance(route_code, str):
+            if route_code.endswith('00'):
+                direction_code = '00'
+            elif route_code.endswith('01'):
+                direction_code = '01'
+            elif route_code.endswith('02'):
+                direction_code = '02'
+            elif route_code.endswith('03'):
+                direction_code = '03'
+            else:
+                # If no direction code found, check if it's in the route name pattern
+                if '_' in route_code:
+                    base_route = '_'.join(route_code.split('_')[:-1])
+                    direction_code = route_code.split('_')[-1]
+
+        cr_route_info[route_code] = {
+            'TIME_PERIOD': time_period,
+            'DAY_TYPE': day_type,
+            'FINAL_DIRECTION_CODE': direction_code,
+            'BASE_ROUTE_CODE': '_'.join(route_code.split('_')[:-1]) if isinstance(route_code, str) and '_' in route_code else route_code
+        }
+
+    # Function to get route info from cr_route_info mapping
+    def get_route_info(route_code, info_type):
+        if route_code in cr_route_info:
+            return cr_route_info[route_code].get(info_type, '')
+        return ''
+
+    # Function to create the final direction code with concatenation
+    def get_final_direction_code(route_code):
+        if route_code in cr_route_info:
+            base_route = cr_route_info[route_code].get('BASE_ROUTE_CODE', '')
+            direction_code = cr_route_info[route_code].get('FINAL_DIRECTION_CODE', '')
+            if base_route and direction_code:
+                return f"{base_route}_{direction_code}"
+        return ''
+
+    def create_url(record_id):
+        return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/kc-streetcar25/lime"
+
     # Create reverse dataframe
     reverse_df = df[df[trip_oppo_dir_column[0]].str.lower() == 'yes'][['id', *route_survey_column, *route_survey_name_column, *trip_code_column, *prev_trip_route_code_column, *next_trip_route_code_column]]
+
+    # Add the new columns using the cr_df mapping
+    reverse_df['TIME_PERIOD'] = reverse_df[route_survey_column[0]].apply(lambda x: get_route_info(x, 'TIME_PERIOD'))
+    reverse_df['DAY_TYPE'] = reverse_df[route_survey_column[0]].apply(lambda x: get_route_info(x, 'DAY_TYPE'))
+    reverse_df['FINAL_DIRECTION_CODE'] = reverse_df[route_survey_column[0]].apply(get_final_direction_code)
+    reverse_df['URL'] = reverse_df['id'].apply(create_url)
+
     reverse_df[route_survey_column[0]] = reverse_df[route_survey_column[0]].apply(lambda x: '_'.join(x.split("_")[:-1]))
     reverse_df.reset_index(inplace=True, drop=True)
     reverse_df[[*prev_trip_route_code_column, *next_trip_route_code_column]].fillna('', inplace=True)

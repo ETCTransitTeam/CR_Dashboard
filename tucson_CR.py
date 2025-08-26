@@ -768,26 +768,159 @@ else:
             st.title("Reverse Routes Comparison")
             
             # Use the pre-fetched dataframes
-            if not reverse_routes_df.empty:
-                # Display both tables
-                st.subheader("Reverse Routes")
-                st.dataframe(reverse_routes_df, use_container_width=True, height=300)
+            if not reverse_routes_df.empty or not reverse_routes_difference_df.empty:
                 
-                # Download button
-                csv_reverse, file_reverse = create_csv(reverse_routes_df, "reverse_routes.csv")
-                download_csv(csv_reverse, file_reverse, "Download Reverse Routes Data")
+                # Create a merged view of both dataframes
+                if not reverse_routes_df.empty and not reverse_routes_difference_df.empty:
+                    # Merge both dataframes and remove exact duplicates
+                    merged_df = pd.concat([reverse_routes_df, reverse_routes_difference_df], ignore_index=True)
+                    
+                    # Remove exact duplicates (keeping first occurrence)
+                    merged_df = merged_df.drop_duplicates(keep='first')
+                    
+                    # Sort by ID for better organization
+                    if 'id' in merged_df.columns:
+                        merged_df = merged_df.sort_values('id')
+                    
+                elif not reverse_routes_df.empty:
+                    merged_df = reverse_routes_df.copy()
+                elif not reverse_routes_difference_df.empty:
+                    merged_df = reverse_routes_difference_df.copy()
+                
+                # Reset index to show row numbers
+                merged_df = merged_df.reset_index(drop=True)
+                merged_df.index = merged_df.index + 1  # Start index from 1 instead of 0
+                
+                # Display the merged table
+                st.subheader("Reverse Routes View")
+                
+                # Create filters - now with 5 columns
+                col1, col2, col3, col4, col5 = st.columns(5)
+                
+                with col1:
+                    # Filter by Type
+                    type_options = ['All'] + sorted(merged_df['Type'].dropna().unique().tolist())
+                    selected_type = st.selectbox("Filter by Type:", type_options)
+                    
+                with col2:
+                    # Filter by Day Type
+                    if 'DAY_TYPE' in merged_df.columns:
+                        day_type_options = ['All'] + sorted(merged_df['DAY_TYPE'].dropna().unique().tolist())
+                        selected_day_type = st.selectbox("Filter by Day Type:", day_type_options)
+                    else:
+                        selected_day_type = 'All'
+                
+                with col3:
+                    # Filter by Time Period
+                    if 'TIME_PERIOD' in merged_df.columns:
+                        time_period_options = ['All'] + sorted(merged_df['TIME_PERIOD'].dropna().unique().tolist())
+                        selected_time_period = st.selectbox("Filter by Time Period:", time_period_options)
+                    else:
+                        selected_time_period = 'All'
+                
+                with col4:
+                    # Filter by Route
+                    if 'ROUTE_SURVEYED' in merged_df.columns:
+                        route_options = ['All'] + sorted(merged_df['ROUTE_SURVEYED'].dropna().unique().tolist())
+                        selected_route = st.selectbox("Filter by Route:", route_options)
+                    else:
+                        selected_route = 'All'
+                
+                with col5:
+                    # Filter by Direction
+                    if 'FINAL_DIRECTION_CODE' in merged_df.columns:
+                        direction_options = ['All'] + sorted(merged_df['FINAL_DIRECTION_CODE'].dropna().unique().tolist())
+                        selected_direction = st.selectbox("Filter by Direction:", direction_options)
+                    else:
+                        selected_direction = 'All'
+                
+                # Apply filters
+                filtered_df = merged_df.copy()
+                
+                if selected_type != 'All':
+                    filtered_df = filtered_df[filtered_df['Type'] == selected_type]
+                
+                if selected_day_type != 'All' and 'DAY_TYPE' in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df['DAY_TYPE'] == selected_day_type]
+                
+                if selected_time_period != 'All' and 'TIME_PERIOD' in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df['TIME_PERIOD'] == selected_time_period]
+                
+                if selected_route != 'All' and 'ROUTE_SURVEYED' in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df['ROUTE_SURVEYED'] == selected_route]
+                
+                if selected_direction != 'All' and 'FINAL_DIRECTION_CODE' in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df['FINAL_DIRECTION_CODE'] == selected_direction]
+                
+                # Additional search filter
+                search_term = st.text_input("Search across all columns:", "")
+                if search_term:
+                    # Create a mask for searching across all string columns
+                    mask = pd.Series(False, index=filtered_df.index)
+                    for col in filtered_df.columns:
+                        if filtered_df[col].dtype == 'object':  # String columns
+                            mask = mask | filtered_df[col].astype(str).str.contains(search_term, case=False, na=False)
+                    filtered_df = filtered_df[mask]
+                
+                # Reset index for display
+                display_df = filtered_df.reset_index(drop=True)
+                display_df.index = display_df.index + 1
+                
+                # Display the filtered dataframe with index
+                st.dataframe(display_df, use_container_width=True, height=400)
+                
+                # Show statistics
+                st.subheader("Statistics")
+                col1, col2, col3, col4, col5 = st.columns(5)  # Updated to 5 columns
+                
+                with col1:
+                    st.metric("Total Records", len(filtered_df))
+                
+                with col2:
+                    if 'Type' in filtered_df.columns and len(filtered_df) > 0:
+                        type_counts = filtered_df['Type'].value_counts()
+                        if len(type_counts) > 0:
+                            st.metric("Most Common Type", type_counts.index[0])
+                
+                with col3:
+                    if 'TIME_PERIOD' in filtered_df.columns and len(filtered_df) > 0:
+                        time_period_counts = filtered_df['TIME_PERIOD'].value_counts()
+                        if len(time_period_counts) > 0:
+                            st.metric("Most Common Time Period", time_period_counts.index[0])
+                
+                with col4:
+                    if 'ROUTE_SURVEYED' in filtered_df.columns and len(filtered_df) > 0:
+                        route_counts = filtered_df['ROUTE_SURVEYED'].value_counts()
+                        if len(route_counts) > 0:
+                            st.metric("Most Common Route", route_counts.index[0])
+                
+                with col5:
+                    if 'FINAL_DIRECTION_CODE' in filtered_df.columns and len(filtered_df) > 0:
+                        direction_counts = filtered_df['FINAL_DIRECTION_CODE'].value_counts()
+                        if len(direction_counts) > 0:
+                            st.metric("Most Common Direction", direction_counts.index[0])
+                
+                # Download buttons for both individual and merged data
+                st.subheader("Download Data")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if not reverse_routes_df.empty:
+                        csv_reverse, file_reverse = create_csv(reverse_routes_df, "reverse_routes.csv")
+                        download_csv(csv_reverse, file_reverse, "Download Reverse Routes")
+                
+                with col2:
+                    if not reverse_routes_difference_df.empty:
+                        csv_difference, file_difference = create_csv(reverse_routes_difference_df, "reverse_routes_difference.csv")
+                        download_csv(csv_difference, file_difference, "Download Reverse Routes Difference")
+                
+                with col3:
+                    csv_merged, file_merged = create_csv(filtered_df, "merged_reverse_routes.csv")
+                    download_csv(csv_merged, file_merged, "Download Filtered View")
+                
             else:
                 st.warning("No reverse routes data available")
-            
-            if not reverse_routes_difference_df.empty:
-                st.subheader("Reverse Routes Difference")
-                st.dataframe(reverse_routes_difference_df, use_container_width=True, height=300)
-                
-                # Download button
-                csv_difference, file_difference = create_csv(reverse_routes_difference_df, "reverse_routes_difference.csv")
-                download_csv(csv_difference, file_difference, "Download Reverse Routes Difference Data")
-            else:
-                st.warning("No reverse routes difference data available")
             
             if st.button("Home Page"):
                 st.query_params["page"] = "main"
@@ -881,9 +1014,9 @@ else:
             
             # Add these two new buttons for kcata simple project
             if 'kcata' in selected_project and 'rail' not in selected_schema.lower():
-                if st.button("Route Comparison"):
-                    st.query_params["page"] = "route_comparison"
-                    st.rerun()
+                # if st.button("Route Comparison"):
+                #     st.query_params["page"] = "route_comparison"
+                #     st.rerun()
                     
                 if st.button("Reverse Routes"):
                     st.query_params["page"] = "reverse_routes"

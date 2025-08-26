@@ -1518,7 +1518,7 @@ def fetch_and_process_data(project,schema):
         # Process the route comparison data
         new_df = process_route_comparison_data(wkday_overall_df, elvis_df, ke_df)
         route_level_df = create_route_level_comparison(new_df)
-        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(elvis_df, route_level_df)
+        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,elvis_df, route_level_df)
         print("Route comparison data processed successfully.")
 
 
@@ -1646,7 +1646,7 @@ def fetch_and_process_data(project,schema):
 
         # 2. Reverse Routes sheet
         reverse_routes_export = all_type_df[[
-            'id', route_survey_column[0], route_survey_name_column[0], 'Type', 'COMPLETED By'
+            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'COMPLETED By', 'URL'
         ]].copy()
 
         # Rename columns to match Excel format if needed
@@ -1656,7 +1656,7 @@ def fetch_and_process_data(project,schema):
         })
 
         # Ensure all expected columns are present
-        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Type', 'COMPLETED By']
+        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'COMPLETED By', 'URL']
         for col in expected_reverse_columns:
             if col not in reverse_routes_export.columns:
                 reverse_routes_export[col] = ''
@@ -1665,7 +1665,7 @@ def fetch_and_process_data(project,schema):
 
         # 3. Reverse Routes Difference sheet
         reverse_diff_export = reverse_df[reverse_df['Type'] != ''][[
-            'id', route_survey_column[0], route_survey_name_column[0], 'Type', 'COMPLETED By'
+            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'COMPLETED By', 'URL'
         ]].copy()
 
         # Rename columns to match Excel format
@@ -1701,6 +1701,8 @@ def fetch_and_process_data(project,schema):
         route_comparison_export = route_comparison_export.fillna(0)
         reverse_routes_export = reverse_routes_export.fillna('')
         reverse_diff_export = reverse_diff_export.fillna('')
+        print("reverse_routes_export columns:", reverse_routes_export.head())
+        print("reverse_diff_export columns:", reverse_diff_export.head())
 
     elif project == 'KCATA RAIL':
         # For comparison dataframes (with route level goals)
