@@ -177,26 +177,26 @@ else:
         dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"] )
 
         # Access DataFrames from the fetched dataframes dictionary
-        wkday_df = dataframes['wkday_df']
-        wkday_dir_df = dataframes['wkday_dir_df']
-        wkend_df = dataframes['wkend_df']
-        wkend_dir_df = dataframes['wkend_dir_df']
-        wkend_time_df = dataframes['wkend_time_df']
-        wkday_time_df = dataframes['wkday_time_df']
-        wkend_raw_df = dataframes['wkend_raw_df']
-        wkday_raw_df = dataframes['wkday_raw_df']
-        detail_df = dataframes['detail_df']
-        surveyor_report_trends_df = dataframes['surveyor_report_trends_df']
-        route_report_trends_df = dataframes['route_report_trends_df']
-        surveyor_report_date_trends_df = dataframes['surveyor_report_date_trends_df']
-        route_report_date_trends_df = dataframes['route_report_date_trends_df']
+        wkday_df = dataframes.get('wkday_df', pd.DataFrame())
+        wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
+        wkend_df = dataframes.get('wkend_df', pd.DataFrame())
+        wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
+        wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
+        wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
+        wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
+        wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
+        detail_df = dataframes.get('detail_df', pd.DataFrame())
+        surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
+        route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
+        surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
+        route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
 
-        wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
-        wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
+        wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
+        wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
 
-        by_interv_totals_df = dataframes['by_interv_totals_df']
-        by_route_totals_df = dataframes['by_route_totals_df']
-        survey_detail_totals_df = dataframes['survey_detail_totals_df']
+        by_interv_totals_df = dataframes.get('by_interv_totals_df', pd.DataFrame())
+        by_route_totals_df = dataframes.get('by_route_totals_df', pd.DataFrame())
+        survey_detail_totals_df = dataframes.get('survey_detail_totals_df', pd.DataFrame())
 
         route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
         reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
@@ -352,7 +352,7 @@ else:
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-            elif 'kcata' in selected_project:
+            elif 'kcata' in selected_project or 'actransit' in selected_project:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
@@ -417,7 +417,7 @@ else:
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
                 wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
-            elif 'kcata' in selected_project:
+            elif 'kcata' in selected_project or 'actransit' in selected_project:
                 wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
@@ -947,28 +947,28 @@ else:
                         print("Data fetched successfully")  # Debug statement
                         
                         # Example: Access DataFrames
-                        wkday_df = dataframes['wkday_df']
-                        wkday_dir_df = dataframes['wkday_dir_df']
-                        wkend_df = dataframes['wkend_df']
-                        wkend_dir_df = dataframes['wkend_dir_df']
-                        wkend_time_df = dataframes['wkend_time_df']
-                        wkday_time_df = dataframes['wkday_time_df']
-                        wkend_raw_df = dataframes['wkend_raw_df']
-                        wkday_raw_df = dataframes['wkday_raw_df']
-                        detail_df = dataframes['detail_df']
-                        wkday_stationwise_df = dataframes.get('wkday_stationwise_df')
-                        wkend_stationwise_df = dataframes.get('wkend_stationwise_df')
-                        surveyor_report_trends_df = dataframes['surveyor_report_trends_df']
-                        route_report_trends_df = dataframes['route_report_trends_df']
-                        surveyor_report_date_trends_df = dataframes['surveyor_report_date_trends_df']
-                        route_report_date_trends_df = dataframes['route_report_date_trends_df']
+                        wkday_df = dataframes.get('wkday_df', pd.DataFrame())
+                        wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
+                        wkend_df = dataframes.get('wkend_df', pd.DataFrame())
+                        wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
+                        wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
+                        wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
+                        wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
+                        wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
+                        detail_df = dataframes.get('detail_df', pd.DataFrame())
+                        wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
+                        wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
+                        surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
+                        route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
+                        surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
+                        route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
                     st.success(f"Data Synced Successfully!")
             current_date = datetime.datetime.now()
             formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
             st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
             # Get the most recent "Completed" date from both wkday_raw_df and wkend_raw_df
-            if 'kcata' in selected_project or 'kcata_rail' in selected_project:
+            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project:
                 completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
             else:
                 completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
@@ -1007,13 +1007,14 @@ else:
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
 
             # WEEKEND-OVERALL button
-            if st.button("WEEKEND-OVERALL"):
-                st.query_params["page"] = "weekend"
-                st.rerun()
+            if "actransit" not in selected_project:
+                if st.button("WEEKEND-OVERALL"):
+                    st.query_params["page"] = "weekend"
+                    st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
             
             # Add these two new buttons for kcata simple project
-            if 'kcata' in selected_project and 'rail' not in selected_schema.lower():
+            if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
                 # if st.button("Route Comparison"):
                 #     st.query_params["page"] = "route_comparison"
                 #     st.rerun()
@@ -1103,7 +1104,7 @@ else:
                 if 'stl' in selected_project or 'kcata' in selected_project:
                     daily_totals_page()
             elif current_page == "surveyreport":
-                if 'stl' in selected_project or 'kcata' in selected_project:
+                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
                     # 📌 Fields you want to show
                     percentage_fields = [
                         "% of Incomplete Home Address", "% of 0 Transfers",
@@ -1174,8 +1175,8 @@ else:
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        print("Columns in surveyor_report_trends_df:", dataframes['surveyor_report_trends_df'].columns.tolist())
-                        print("Columns in surveyor_report_date_trends_df:", dataframes['surveyor_report_date_trends_df'].columns.tolist())
+                        # print("Columns in surveyor_report_trends_df:", dataframes['surveyor_report_trends_df'].columns.tolist())
+                        # print("Columns in surveyor_report_date_trends_df:", dataframes['surveyor_report_date_trends_df'].columns.tolist())
 
                         render_metrics(surveyor_last_row, "TRIP LOGIC & QAQC REPORT - SURVEYOR REPORT")
                         filter_col = "Date_Surveyor" if 'stl' in selected_project else "Date"
@@ -1200,10 +1201,10 @@ else:
                         )
 
             elif current_page == "route_comparison":
-                if 'kcata' in selected_project and 'rail' not in selected_schema.lower():
+                if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
                     route_comparison_page()
             elif current_page == "reverse_routes":
-                if 'kcata' in selected_project and 'rail' not in selected_schema.lower():
+                if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
                     reverse_routes_page()
 
             else:
@@ -1218,7 +1219,7 @@ else:
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                     wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
 
-                elif 'kcata' in selected_project:
+                elif 'kcata' in selected_project or 'actransit' in selected_project:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']

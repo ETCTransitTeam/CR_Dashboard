@@ -151,6 +151,23 @@ PROJECTS = {
             "cr": "KCATA_MO_CR_UPDATE.xlsx",
             'kingelvis':'KCATA_2025_KINGElvis.xlsx'
         }
+    },
+    "ACTRANSIT": {
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("ACTRANSIT_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("ACTRANSIT_ELVIS_TABLE_NAME")
+                    },
+                    "baby_elvis": {
+                        "database": os.getenv("ACTRANSIT_BABY_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("ACTRANSIT_BABY_ELVIS_TABLE_NAME")
+                    }
+                },
+        "files": {
+            "details": "details_AC_Transit_od_excel.xlsx",
+            "cr": "ACTRANSIT_CA_CR.xlsx",
+            'kingelvis':'ACT_2025_KINGElvis.xlsx'
+        }
     }
 }
 
@@ -198,8 +215,6 @@ def fetch_and_process_data(project,schema):
             
             select_query = f"SELECT * FROM {table_name}"
             df = pd.read_sql(select_query, connection)  # Load data into DataFrame
-            print(df.tail(2))
-            
             db_connector.disconnect()  # Close database connection
 
             # Store DataFrame in memory
@@ -236,6 +251,7 @@ def fetch_and_process_data(project,schema):
 
     # Streamlit button to fetch data
     csv_buffer = fetch_data(database_name,table_name)
+    
     if csv_buffer:  # Ensure data was fetched successfully
         st.session_state.df = pd.read_csv(csv_buffer)  # Load into DataFrame from memory
     else:
@@ -244,9 +260,8 @@ def fetch_and_process_data(project,schema):
     # Display DataFrame if available
     if st.session_state.df is not None:
         df = st.session_state.df
-
         # Apply KCATA header mapping if this is the KCATA project
-        if project == "KCATA" or project == "KCATA RAIL":
+        if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT":
             # First clean up column names by removing any extra whitespace
             df.columns = df.columns.str.strip()
             # Apply the header mapping
@@ -363,7 +378,7 @@ def fetch_and_process_data(project,schema):
             baby_elvis_df = st.session_state.baby_elvis_df  # Create local reference
 
             # Apply KCATA header mapping to baby_elvis if this is the KCATA project
-            if project == "KCATA" or project == "KCATA RAIL":
+            if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT":
                 baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
                 baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
 
@@ -430,6 +445,20 @@ def fetch_and_process_data(project,schema):
         print("Files read for STL")
 
     elif project=='KCATA':
+        ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
+
+        detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
+
+        wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-Overall')
+        wkend_route_df = read_excel_from_s3(bucket_name,project_config["files"]["cr"], 'WkEND-RouteTotal')
+
+        wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-Overall')
+        wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
+
+        print("Files read for KCATA")
+        
+    elif project=='ACTRANSIT':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
 
         detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
@@ -878,7 +907,7 @@ def fetch_and_process_data(project,schema):
     df.drop(columns=['ROUTE_SURVEYEDCode_SPLITED','SEQ_DIFFERENCE'],inplace=True)
     df.drop_duplicates(subset=['id'],inplace=True)
     # df.to_csv(f'reviewtool_{today_date}_{project_name}_ROUTE_DIRECTION_CHECk.csv',index=False)
-
+    
     print(f'reviewtool_{today_date}_{project_name}_ROUTE_DIRECTION_CHECk CREATED SUCCESSFULLY')
 
     # # if we have generated route_direction_database file using route_direction_refator_database.py file then have to replace and rename the columns
@@ -954,7 +983,9 @@ def fetch_and_process_data(project,schema):
         if project in ["TUCSON", "TUCSON RAIL"]:
             wkend_route_direction_df=create_tucson_weekend_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
         else:
-            wkend_route_direction_df=create_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
+            if project not in ["ACTRANSIT"]:
+                print("Creating weekend route direction df")
+                wkend_route_direction_df=create_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
         wkday_route_direction_df=create_route_direction_level_df(wkday_overall_df,weekday_df,time_column,project)
 
     # ----- Station-wise Route DF -----
@@ -974,7 +1005,7 @@ def fetch_and_process_data(project,schema):
         pass
 
 
-    if project=='KCATA' or project=='KCATA RAIL':
+    if project=='KCATA' or project=='KCATA RAIL' or project=='ACTRANSIT':
         weekday_df.dropna(subset=[time_column[0]],inplace=True)
         weekday_raw_df=weekday_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_df.dropna(subset=[time_column[0]],inplace=True)
@@ -1453,7 +1484,7 @@ def fetch_and_process_data(project,schema):
             route_surveyed_ID=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_ID'].iloc[0]
             wkend_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed
 
-    elif project == 'KCATA':
+    elif project == 'KCATA' or project == 'ACTRANSIT':
         # First rename all columns consistently
         rename_dict = {
             'CR_AM_Peak': '(1) Goal',
@@ -1470,18 +1501,33 @@ def fetch_and_process_data(project,schema):
             'Evening_DIFFERENCE': '(4) Remain'
         }
 
-        wkend_comparison_df.rename(columns={**rename_dict, 
-            'CR_Overall_Goal': 'Route Level Goal',
-            'DB_Total': '# of Surveys',
-            'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
+        # Check if weekend data exists using try/except for robustness
+        has_weekend_data = False
+        try:
+            if 'wkend_comparison_df' in locals() and wkend_comparison_df is not None:
+                wkend_comparison_df.rename(columns={**rename_dict, 
+                    'CR_Overall_Goal': 'Route Level Goal',
+                    'DB_Total': '# of Surveys',
+                    'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
+                has_weekend_data = True
+        except NameError:
+            has_weekend_data = False
+            print(f"No weekend comparison data available for {project}")
 
+        try:
+            if 'wkend_route_direction_df' in locals() and wkend_route_direction_df is not None:
+                wkend_route_direction_df.rename(columns=rename_dict, inplace=True)
+                has_weekend_data = has_weekend_data or True
+        except NameError:
+            print(f"No weekend route direction data available for {project}")
+
+        # Process weekday data (always exists)
         wkday_comparison_df.rename(columns={**rename_dict,
             'CR_Overall_Goal': 'Route Level Goal',
             'DB_Total': '# of Surveys',
             'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
 
         wkday_route_direction_df.rename(columns=rename_dict, inplace=True)
-        wkend_route_direction_df.rename(columns=rename_dict, inplace=True)
 
         # Create a unified route lookup from detail_df_stops
         route_lookup = detail_df_stops[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']].drop_duplicates()
@@ -1499,9 +1545,16 @@ def fetch_and_process_data(project,schema):
 
         # Apply to all DataFrames that need route names
         wkday_comparison_df = add_route_names(wkday_comparison_df)
-        wkend_comparison_df = add_route_names(wkend_comparison_df)
         wkday_route_direction_df = add_route_names(wkday_route_direction_df)
-        wkend_route_direction_df = add_route_names(wkend_route_direction_df)
+        
+        # Only process weekend data if it exists
+        if has_weekend_data:
+            try:
+                wkend_comparison_df = add_route_names(wkend_comparison_df)
+                wkend_route_direction_df = add_route_names(wkend_route_direction_df)
+            except NameError as e:
+                print(f"Error processing weekend route names: {e}")
+                has_weekend_data = False
 
         # Process survey data
         df_for_processing = baby_elvis_df.rename(columns={
@@ -1512,15 +1565,12 @@ def fetch_and_process_data(project,schema):
 
         interviewer_pivot, route_pivot, detail_table = process_survey_data(df_for_processing)
 
-
-
         print("Processing route comparison data...")
         # Process the route comparison data
         new_df = process_route_comparison_data(wkday_overall_df, elvis_df, ke_df)
         route_level_df = create_route_level_comparison(new_df)
         comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,elvis_df, route_level_df)
         print("Route comparison data processed successfully.")
-
 
         survey_report_df = process_surveyor_data_kcata(ke_df, df)
         route_report_df = process_route_data_kcata(ke_df, df)
@@ -1549,7 +1599,7 @@ def fetch_and_process_data(project,schema):
         all_surveyors = sorted(set(ke_df['INTERV_INIT'].astype(str).unique()) | set(df['INTERV_INIT'].astype(str).unique()))
         all_routes = sorted(set(ke_df['ROUTE_ROOT'].unique()) | set(df['ROUTE_ROOT'].unique()))
 
-            # Create mappings with concatenated keys
+        # Create mappings with concatenated keys
         survey_date_surveyor = pd.MultiIndex.from_product(
             [all_dates, all_surveyors],
             names=['Date', 'INTERV_INIT']
@@ -1605,19 +1655,22 @@ def fetch_and_process_data(project,schema):
 
         # Final DataFrame cleanup
         wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
-        # print("WKDAY COLUMN NAMES", wkday_comparison_df.columns.tolist())
-        # wkday_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
 
-        wkend_comparison_df = wkend_comparison_df.merge(
-            detail_df_xfers[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']],
-            left_on='ROUTE_SURVEYEDCode',
-            right_on='ETC_ROUTE_ID',
-            how='left'
-        )
-        wkend_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
-        wkend_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+        # Only process weekend comparison if data exists
+        if has_weekend_data:
+            try:
+                wkend_comparison_df = wkend_comparison_df.merge(
+                    detail_df_xfers[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']],
+                    left_on='ROUTE_SURVEYEDCode',
+                    right_on='ETC_ROUTE_ID',
+                    how='left'
+                )
+                wkend_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
+                wkend_comparison_df.drop(columns=['ETC_ROUTE_ID'], inplace=True)
+            except NameError as e:
+                print(f"Error processing weekend comparison merge: {e}")
 
-                # Just for ROUTE COMPARISON PART #
+        # Just for ROUTE COMPARISON PART #
         # Get column names for consistency
         route_survey_column = check_all_characters_present(elvis_df, ['routesurveyedcode'])
         route_survey_name_column = check_all_characters_present(elvis_df, ['routesurveyed'])
@@ -1693,9 +1746,9 @@ def fetch_and_process_data(project,schema):
                 route_comparison_export[col] = pd.to_numeric(route_comparison_export[col], errors='coerce').fillna(0).astype(int)
 
         # Convert ID columns to string
-        for df in [reverse_routes_export, reverse_diff_export]:
-            if 'id' in df.columns:
-                df['id'] = df['id'].astype(str)
+        for df_export in [reverse_routes_export, reverse_diff_export]:
+            if 'id' in df_export.columns:
+                df_export['id'] = df_export['id'].astype(str)
 
         # Handle NaN values
         route_comparison_export = route_comparison_export.fillna(0)
@@ -2068,17 +2121,29 @@ def fetch_and_process_data(project,schema):
             'Surveyor Report with Date': 'surveyor_report_date_trends',
             'Route Report with Date': 'route_report_date_trends'
         }
-    elif project=='KCATA':
-        # DataFrames preparation
+    elif project=='KCATA' or project=='ACTRANSIT':
+        # Check if weekend data exists
+        has_weekend_data = False
+        weekend_dataframes = {}
+        
+        try:
+            if 'wkend_route_direction_df' in locals() and wkend_route_direction_df is not None:
+                weekend_dataframes.update({
+                    'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+                    'WkEND RAW DATA': weekend_raw_df,
+                    'WkEND Time Data': wkend_time_value_df,
+                    'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'Total_DIFFERENCE'])
+                })
+                has_weekend_data = True
+        except NameError:
+            has_weekend_data = False
+
+        # DataFrames preparation - start with common dataframes
         dataframes = {
             'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
-            'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
             'WkDAY RAW DATA': weekday_raw_df,
-            'WkEND RAW DATA': weekend_raw_df,
-            'WkEND Time Data': wkend_time_value_df,
             'WkDAY Time Data': wkday_time_value_df,
             'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
-            'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'Total_DIFFERENCE']),
             'LAST SURVEY DATE': latest_date_df,
             'By_Interviewer': interviewer_pivot,
             'By_Route': route_pivot,
@@ -2092,15 +2157,15 @@ def fetch_and_process_data(project,schema):
             'Reverse Routes Difference': reverse_diff_export
         }
 
-        # Table mapping
+        # Add weekend dataframes only if they exist
+        if has_weekend_data:
+            dataframes.update(weekend_dataframes)
+
+        # Table mapping - include weekend tables conditionally
         table_info = {
             'WkDAY RAW DATA': 'wkday_raw', 
-            'WkEND RAW DATA': 'wkend_raw', 
             'WkDAY Route Comparison': 'wkday_comparison', 
             'WkDAY Route DIR Comparison': 'wkday_dir_comparison', 
-            'WkEND Route Comparison': 'wkend_comparison', 
-            'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
-            'WkEND Time Data': 'wkend_time_data', 
             'WkDAY Time Data': 'wkday_time_data',
             'LAST SURVEY DATE': 'last_survey_date',
             'By_Interviewer': 'by_interv_totals',
@@ -2114,6 +2179,15 @@ def fetch_and_process_data(project,schema):
             'Reverse Routes': 'reverse_routes',
             'Reverse Routes Difference': 'reverse_routes_difference'
         }
+
+        # Add weekend table mappings only if weekend data exists
+        if has_weekend_data:
+            table_info.update({
+                'WkEND RAW DATA': 'wkend_raw', 
+                'WkEND Route Comparison': 'wkend_comparison', 
+                'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
+                'WkEND Time Data': 'wkend_time_data'
+            })
 
 
     elif project == 'KCATA RAIL':

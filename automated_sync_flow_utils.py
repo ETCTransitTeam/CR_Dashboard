@@ -418,7 +418,7 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
 
         # Add a display text column with sequential numbering
         new_df['Display_Text'] = range(1, len(new_df) + 1)
-    elif project=='KCATA':
+    elif project=='KCATA' or project=='ACTRANSIT':
         """
         Create a time-value DataFrame summarizing counts and time ranges.
         """
@@ -893,7 +893,7 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
                 new_df.loc[index, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_diff))
                 new_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
                 new_df.loc[index, 'Total_DIFFERENCE'] =math.ceil(max(0, am_peak_diff))+math.ceil(max(0, midday_diff))+math.ceil(max(0, pm_diff))+math.ceil(max(0, evening_diff))
-    elif project=='KCATA':
+    elif project=='KCATA' or project== 'ACTRANSIT':
         # Time period values
         early_am_values = ['AM1','AM2']
         am_values = ['AM3', 'MID1','MID2','MID7']
@@ -2340,7 +2340,7 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                 route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
                 route_level_df.loc[index, 'Total_DIFFERENCE'] = (math.ceil(max(0, am_peak_diff)) +math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_diff)) + math.ceil(max(0, evening_diff)))
                 route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
-        elif project=='KCATA':
+        elif project=='KCATA' or project=='ACTRANSIT':
             early_am_values = ['AM1','AM2']
             am_values = ['AM3', 'MID1','MID2','MID7']
             midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']

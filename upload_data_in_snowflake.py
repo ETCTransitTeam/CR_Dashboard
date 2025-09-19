@@ -29,7 +29,7 @@ def create_snowflake_connection():
         warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
         database=os.getenv('SNOWFLAKE_DATABASE'),
         authenticator="SNOWFLAKE_JWT",
-        schema='kcata_bus',
+        schema='actransit_bus',
         role=os.getenv('SNOWFLAKE_ROLE'),
     )
     return conn
@@ -130,7 +130,7 @@ def create_tables_and_insert_data(file_path, sheet_info):
     cur.close()
     conn.close()
 
-file_path = 'reviewtool_20250821_KCATA_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
+file_path = 'reviewtool_20250917_AC_TRANSIT_RouteLevelComparison(Wkday & WkEnd)_Latest_01.xlsx'
 # #  For bus transport project
 sheet_info = {
     'WkDAY RAW DATA': 'wkday_raw', 
