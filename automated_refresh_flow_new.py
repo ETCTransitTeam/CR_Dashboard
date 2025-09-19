@@ -158,7 +158,7 @@ PROJECTS = {
                         "database": os.getenv("ACTRANSIT_ELVIS_DATABASE_NAME"),
                         "table": os.getenv("ACTRANSIT_ELVIS_TABLE_NAME")
                     },
-                    "baby_elvis": {
+                    "main": {
                         "database": os.getenv("ACTRANSIT_BABY_ELVIS_DATABASE_NAME"),
                         "table": os.getenv("ACTRANSIT_BABY_ELVIS_TABLE_NAME")
                     }
@@ -362,8 +362,8 @@ def fetch_and_process_data(project,schema):
     )
 
     # Fetch baby_elvis data (new code)
-    if "baby_elvis" in PROJECTS[project]["databases"]:
-        baby_elvis_config = PROJECTS[project]["databases"]["baby_elvis"]
+    if "main" in PROJECTS[project]["databases"]:
+        baby_elvis_config = PROJECTS[project]["databases"]["main"]
         baby_table_name = baby_elvis_config['table']
         baby_database_name = baby_elvis_config["database"]
 
@@ -1555,7 +1555,7 @@ def fetch_and_process_data(project,schema):
             except NameError as e:
                 print(f"Error processing weekend route names: {e}")
                 has_weekend_data = False
-
+        print("Processing survey data...")  
         # Process survey data
         df_for_processing = baby_elvis_df.rename(columns={
             'DATE_SUBMITTED': 'Completed',
@@ -1575,9 +1575,12 @@ def fetch_and_process_data(project,schema):
         survey_report_df = process_surveyor_data_kcata(ke_df, df)
         route_report_df = process_route_data_kcata(ke_df, df)
 
-        # Date processing
-        ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date']).dt.date
-        df['DATE_SUBMITTED'] = pd.to_datetime(df['DATE_SUBMITTED']).dt.date
+        # Convert both columns to datetime, handling errors
+        ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
+        df['DATE_SUBMITTED'] = pd.to_datetime(df['DATE_SUBMITTED'], errors='coerce')
+        # Get valid dates (non-NaN)
+        ke_valid_dates = ke_df['Elvis_Date'].dropna()
+        df_valid_dates = df['DATE_SUBMITTED'].dropna()
 
         # Clean route names
         def clean_route_name(route_series):
@@ -1587,13 +1590,24 @@ def fetch_and_process_data(project,schema):
                 .str.replace(r' \[(INBOUND|OUTBOUND)\]', '', regex=True)
                 .str.strip()
             )
-
+        
         ke_df['ROUTE_ROOT'] = clean_route_name(ke_df['ROUTE_SURVEYED'])
         df['ROUTE_ROOT'] = clean_route_name(df['ROUTE_SURVEYED'])
 
         # Create date-surveyor and date-route mappings
-        min_date = min(ke_df['Elvis_Date'].min(), df['DATE_SUBMITTED'].min())
-        max_date = max(ke_df['Elvis_Date'].max(), df['DATE_SUBMITTED'].max())
+        if len(ke_valid_dates) > 0 and len(df_valid_dates) > 0:
+            min_date = min(ke_valid_dates.min(), df_valid_dates.min())
+            max_date = max(ke_valid_dates.max(), df_valid_dates.max())
+        elif len(ke_valid_dates) > 0:
+            min_date = ke_valid_dates.min()
+            max_date = ke_valid_dates.max()
+        elif len(df_valid_dates) > 0:
+            min_date = df_valid_dates.min()
+            max_date = df_valid_dates.max()
+        else:
+            min_date = pd.Timestamp.today()
+            max_date = pd.Timestamp.today()
+
         all_dates = pd.date_range(min_date, max_date).date
 
         all_surveyors = sorted(set(ke_df['INTERV_INIT'].astype(str).unique()) | set(df['INTERV_INIT'].astype(str).unique()))
@@ -1617,6 +1631,10 @@ def fetch_and_process_data(project,schema):
             survey_date_route['Date'].astype(str) + "_" + 
             survey_date_route['ROUTE_ROOT']
         )
+
+        # Convert survey_date dataframes' Date column to datetime to match ke_df and df
+        survey_date_surveyor['Date'] = pd.to_datetime(survey_date_surveyor['Date'])
+        survey_date_route['Date'] = pd.to_datetime(survey_date_route['Date'])
 
         # Merge into main DataFrames
         ke_df = ke_df.merge(
