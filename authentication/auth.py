@@ -205,7 +205,7 @@ def create_new_user_page():
         password = st.text_input("Password", type="password")
         confirm_password = st.text_input("Confirm Password", type="password")
         
-        submit_button = st.form_submit_button(label="ADD User")
+        submit_button = st.form_submit_button(label="Add User")
 
         if submit_button:
             st.session_state["error_message"] = ""
@@ -230,7 +230,7 @@ def create_new_user_page():
                     st.session_state["error_message"] = f"Error: {str(e)}"
 
     # Navigation button
-    if st.button("Login"):
+    if st.button("Go to Login Page"):
         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
         
 

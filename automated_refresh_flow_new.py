@@ -348,7 +348,7 @@ def fetch_and_process_data(project,schema):
         # Fill the missing/empty values in df using the mapping
         df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
         # Code for Adding Time_ONCode values from baby elvis to elvis database file ends here
-
+        baby_elvis_df_merged = df
         print("Data merged successfully!")
     else:
         print("One or both dataframes failed to load.")
@@ -385,7 +385,7 @@ def fetch_and_process_data(project,schema):
                 # baby_elvis_df.columns = baby_elvis_df.columns.str.upper()
 
             # Display success message
-            st.success(f"Successfully loaded {len(baby_elvis_df)} records from baby_elvis")
+            st.success(f"Hamsters pulled {len(baby_elvis_df)} records from baby_elvis 📦🐹 … now flexing for the heavy lifting ⏳💪!")
         else:
             st.error("Failed to load baby_elvis data.")
 
@@ -671,7 +671,6 @@ def fetch_and_process_data(project,schema):
     detail_df_stops['ETC_ROUTE_ID_SPLITED']=detail_df_stops['ETC_ROUTE_ID'].apply(lambda x : '_'.join(str(x).split('_')[0:-1]))
     detail_df_stops[['ETC_ROUTE_ID_SPLITED']].head(2)
 
-    # ke_df=ke_df[ke_df['id']==8492]
 
 
     detail_df_stops['ETC_STOP_DIRECTION']=detail_df_stops['ETC_STOP_ID'].apply(lambda x : str(x).split('_')[-2])
@@ -906,9 +905,7 @@ def fetch_and_process_data(project,schema):
 
     df.drop(columns=['ROUTE_SURVEYEDCode_SPLITED','SEQ_DIFFERENCE'],inplace=True)
     df.drop_duplicates(subset=['id'],inplace=True)
-    # df.to_csv(f'reviewtool_{today_date}_{project_name}_ROUTE_DIRECTION_CHECk.csv',index=False)
-    
-    print(f'reviewtool_{today_date}_{project_name}_ROUTE_DIRECTION_CHECk CREATED SUCCESSFULLY')
+
 
     # # if we have generated route_direction_database file using route_direction_refator_database.py file then have to replace and rename the columns
     df.drop(columns=['ROUTE_SURVEYEDCode','ROUTE_SURVEYED'],inplace=True)
@@ -964,7 +961,7 @@ def fetch_and_process_data(project,schema):
     stopoff_clntid_column=check_all_characters_present(df,stopoff_clntid_column_check)
 
 
-    df[['id','Day',route_survey_column[0]]].to_csv('Checking Day Names.csv',index=False)
+    # df[['id','Day',route_survey_column[0]]].to_csv('Checking Day Names.csv',index=False)
 
 
     wkend_overall_df.dropna(subset=['LS_NAME_CODE'],inplace=True)
@@ -1408,8 +1405,8 @@ def fetch_and_process_data(project,schema):
             right_on='ETC_ROUTE_ID',
             how='left'
         )
-
-        interviewer_pivot, route_pivot, detail_table = process_survey_data(baby_elvis_df)
+        print("Before processing babyelvis data columns", baby_elvis_df_merged.columns.tolist())
+        interviewer_pivot, route_pivot, detail_table = process_survey_data(baby_elvis_df_merged)
 
         survey_report_df = process_surveyor_data(ke_df, df)
         route_report_df = process_route_data(ke_df, df)
@@ -1557,7 +1554,7 @@ def fetch_and_process_data(project,schema):
                 has_weekend_data = False
         print("Processing survey data...")  
         # Process survey data
-        df_for_processing = baby_elvis_df.rename(columns={
+        df_for_processing = baby_elvis_df_merged.rename(columns={
             'DATE_SUBMITTED': 'Completed',
             'HAVE_5_MIN_FOR_SURVECode': 'HAVE_5_MIN_FOR_SURVE_Code_',
             'ROUTE_SURVEYEDCode': 'ROUTE_SURVEYED_Code_'
@@ -1567,9 +1564,9 @@ def fetch_and_process_data(project,schema):
 
         print("Processing route comparison data...")
         # Process the route comparison data
-        new_df = process_route_comparison_data(wkday_overall_df, elvis_df, ke_df)
+        new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_df_merged, ke_df)
         route_level_df = create_route_level_comparison(new_df)
-        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,elvis_df, route_level_df)
+        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_df_merged, route_level_df, project)
         print("Route comparison data processed successfully.")
 
         survey_report_df = process_surveyor_data_kcata(ke_df, df)
@@ -1772,8 +1769,7 @@ def fetch_and_process_data(project,schema):
         route_comparison_export = route_comparison_export.fillna(0)
         reverse_routes_export = reverse_routes_export.fillna('')
         reverse_diff_export = reverse_diff_export.fillna('')
-        print("reverse_routes_export columns:", reverse_routes_export.head())
-        print("reverse_diff_export columns:", reverse_diff_export.head())
+
 
     elif project == 'KCATA RAIL':
         # For comparison dataframes (with route level goals)
@@ -1931,6 +1927,14 @@ def fetch_and_process_data(project,schema):
                 # Convert column names to strings to avoid attribute errors
                 df.columns = df.columns.astype(str)
                 
+                # SPECIAL HANDLING FOR PIVOT TABLES - Ensure first column is properly typed
+                if sheet_name in ['By_Interviewer', 'By_Route']:
+                    # Get the first column name
+                    first_col = df.columns[0]
+                    # Ensure the first column is treated as string
+                    df[first_col] = df[first_col].astype(str)
+                    print(f"Converted first column '{first_col}' to string for sheet {sheet_name}")
+                
                 # Convert date columns to proper datetime format
                 for col in df.columns:
                     col_str = str(col)  # Ensure column name is string
@@ -1944,12 +1948,19 @@ def fetch_and_process_data(project,schema):
                             # If conversion fails, keep as string
                             df[col] = df[col].astype(str)
 
-                # Ensure all columns are string type if they contain mixed types
+                # Ensure all columns are properly typed
                 for col in df.columns:
+                    # Skip the first column for pivot tables as we already handled it
+                    if sheet_name in ['By_Interviewer', 'By_Route'] and col == df.columns[0]:
+                        continue
+                        
                     if df[col].dtype == 'object':
                         try:
-                            # Try converting to numeric first
+                            # Try converting to numeric first for numeric-looking strings
                             df[col] = pd.to_numeric(df[col], errors='ignore')
+                            # If conversion worked but we want to keep as string for certain columns
+                            if col.lower() in ['interviewer', 'route', 'interv_init']:
+                                df[col] = df[col].astype(str)
                         except:
                             # If that fails, keep as string
                             df[col] = df[col].astype(str)
@@ -1964,6 +1975,11 @@ def fetch_and_process_data(project,schema):
                 for column, dtype in df.dtypes.items():
                     sanitized_column = f'"{column}"'  # Handle special characters
                     snowflake_dtype = dtype_mapping.get(str(dtype), 'VARCHAR')
+                    
+                    # Special handling for first columns of pivot tables
+                    if sheet_name in ['By_Interviewer', 'By_Route'] and column == df.columns[0]:
+                        snowflake_dtype = 'VARCHAR'  # Force VARCHAR for the first column
+                        
                     create_table_sql += f"  {sanitized_column} {snowflake_dtype},\n"
                 create_table_sql = create_table_sql.rstrip(",\n") + "\n);"
 
@@ -1985,6 +2001,8 @@ def fetch_and_process_data(project,schema):
         # Close the Snowflake connection
         cur.close()
         conn.close()
+
+
 
     if project=='TUCSON':
         # DataFrames preparation
@@ -2206,6 +2224,41 @@ def fetch_and_process_data(project,schema):
                 'WkEND Route DIR Comparison': 'wkend_dir_comparison', 
                 'WkEND Time Data': 'wkend_time_data'
             })
+
+        # # CREATE EXCEL FILE WITH ALL SHEETS
+        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # excel_filename = f"{project}_survey_report_{timestamp}.xlsx"
+        
+        # try:
+        #     with pd.ExcelWriter(excel_filename, engine='openpyxl') as writer:
+        #         # Write each dataframe to a separate sheet
+        #         for sheet_name, dataframe in dataframes.items():
+        #             if dataframe is not None and not dataframe.empty:
+        #                 # Special handling for different sheet types
+        #                 if sheet_name == 'Survey_Detail':
+        #                     dataframe.to_excel(writer, sheet_name=sheet_name, index=False)
+        #                 else:
+        #                     dataframe.to_excel(writer, sheet_name=sheet_name, index=True)
+                        
+        #                 # Auto-adjust column widths for better readability
+        #                 worksheet = writer.sheets[sheet_name]
+        #                 for column in worksheet.columns:
+        #                     max_length = 0
+        #                     column_letter = column[0].column_letter
+        #                     for cell in column:
+        #                         try:
+        #                             if len(str(cell.value)) > max_length:
+        #                                 max_length = len(str(cell.value))
+        #                         except:
+        #                             pass
+        #                     adjusted_width = min(max_length + 2, 50)
+        #                     worksheet.column_dimensions[column_letter].width = adjusted_width
+            
+        #     print(f"✅ Excel file '{excel_filename}' created successfully!")
+        #     print(f"📊 Sheets included: {len(dataframes)}")
+            
+        # except Exception as e:
+        #     print(f"❌ Error creating Excel file: {e}")
 
 
     elif project == 'KCATA RAIL':

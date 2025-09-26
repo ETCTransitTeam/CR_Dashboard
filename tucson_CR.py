@@ -494,7 +494,7 @@ else:
 
 
         def daily_totals_page():
-            if 'stl' in selected_project or 'kcata' in selected_project:
+            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
                 st.title("📊 Daily Totals - Interviewer and Route Level")
                 # Load Snowflake-extracted DataFrames
                 by_interv_totals_df = dataframes['by_interv_totals_df']
@@ -937,7 +937,7 @@ else:
         
             if st.session_state['user']["role"].lower()=='admin':
                 if st.button("Sync"):
-                    with st.spinner("Syncing... Please wait...It will take 2 to 3 mints"):
+                    with st.spinner("Our hamsters are sprinting on the wheel 🐹⚡ … syncing will wrap up in 2–3 mins!"):
                         result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
                         if "cache_key" not in st.session_state:
                             st.session_state["cache_key"] = 0
@@ -962,7 +962,7 @@ else:
                         route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
                         surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
                         route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
-                    st.success(f"Data Synced Successfully!")
+                    st.success(f"Data synced successfully 🎉🐹 … hamsters can finally take a snack break 🥜!")
             current_date = datetime.datetime.now()
             formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
             st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
@@ -1023,7 +1023,7 @@ else:
                     st.query_params["page"] = "reverse_routes"
                     st.rerun()
 
-            if 'stl' in selected_project or 'kcata' in selected_project:
+            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
                 if st.button("DAILY TOTALS"):
                     st.query_params["page"] = "dailytotals"
                     st.rerun()
@@ -1101,7 +1101,7 @@ else:
             elif current_page=='timedetails':
                 time_details(detail_df)
             elif current_page == "dailytotals":
-                if 'stl' in selected_project or 'kcata' in selected_project:
+                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
                     daily_totals_page()
             elif current_page == "surveyreport":
                 if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:

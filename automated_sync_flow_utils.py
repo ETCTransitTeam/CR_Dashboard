@@ -2896,12 +2896,10 @@ def process_survey_data(df):
     # Convert 'Completed' column to datetime
     df['Completed'] = pd.to_datetime(df['Completed'], errors='coerce').dt.date
     df['HAVE_5_MIN_FOR_SURVE_Code_'] = df['HAVE_5_MIN_FOR_SURVE_Code_'].astype(str)
-    df['RANDOM_NUMBER'] = df['RANDOM_NUMBER'].astype(str)
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
 
     # Apply filters
     filtered_df = df[
-        (df['RANDOM_NUMBER'] == '1') &
         (df['HAVE_5_MIN_FOR_SURVE_Code_'] == '1') &
         (df['INTERV_INIT'] != "999")
     ].copy()
@@ -2912,7 +2910,7 @@ def process_survey_data(df):
     # Fallback for cases without _dd pattern
     filtered_df['ROUTE_MAIN'] = filtered_df['ROUTE_MAIN'].fillna(filtered_df['ROUTE_SURVEYED_Code_'])
 
-    # Create Interviewer-by-Date pivot
+    # Create Interviewer-by-Date pivot - RESET INDEX to make INTERV_INIT a proper column
     interviewer_pivot = pd.pivot_table(
         filtered_df,
         values='ROUTE_SURVEYED_Code_',
@@ -2922,9 +2920,9 @@ def process_survey_data(df):
         fill_value=0,
         margins=True,
         margins_name='Total'
-    )
+    ).reset_index()  # Add this line to convert index to column
 
-    # Create Route-by-Date pivot (using cleaned route name)
+    # Create Route-by-Date pivot - RESET INDEX to make ROUTE_MAIN a proper column
     route_pivot = pd.pivot_table(
         filtered_df,
         values='INTERV_INIT',
@@ -2934,10 +2932,11 @@ def process_survey_data(df):
         fill_value=0,
         margins=True,
         margins_name='Total'
-    )
+    ).reset_index()  # Add this line to convert index to column
 
-    # Rename index to "ROUTE"
-    route_pivot.index.name = 'ROUTE'
+    # Rename the index column appropriately
+    interviewer_pivot = interviewer_pivot.rename(columns={'INTERV_INIT': 'Interviewer'})
+    route_pivot = route_pivot.rename(columns={'ROUTE_MAIN': 'Route'})
 
     # Create detail table
     detail_table = (
@@ -2951,6 +2950,7 @@ def process_survey_data(df):
     detail_table['Date'] = pd.to_datetime(detail_table['Date']).dt.date
 
     return interviewer_pivot, route_pivot, detail_table
+
 
 def process_surveyor_data_kcata(df, elvis_df):
     """Process data for surveyor-level report"""
@@ -5271,7 +5271,7 @@ def create_route_level_comparison(new_df):
     
     return route_level_df
 
-def process_reverse_direction_logic(wkday_overall_df, df, route_level_df):
+def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, project_name):
     """
     Process reverse direction logic for the routes
     """
@@ -5363,7 +5363,10 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df):
         return ''
 
     def create_url(record_id):
-        return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/kc-streetcar25/lime"
+        if project_name.lower() == 'actransit':
+            return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/ac-transit25/lime"
+        else:
+            return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/kc-streetcar25/lime"
 
     # Create reverse dataframe
     reverse_df = df[df[trip_oppo_dir_column[0]].str.lower() == 'yes'][['id', *route_survey_column, *route_survey_name_column, *trip_code_column, *prev_trip_route_code_column, *next_trip_route_code_column]]
