@@ -385,7 +385,7 @@ def fetch_and_process_data(project,schema):
                 # baby_elvis_df.columns = baby_elvis_df.columns.str.upper()
 
             # Display success message
-            st.success(f"Hamsters pulled {len(baby_elvis_df)} records from baby_elvis 📦🐹 … now flexing for the heavy lifting ⏳💪!")
+            st.success(f"Collected {len(baby_elvis_df)} records from baby_elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
         else:
             st.error("Failed to load baby_elvis data.")
 
@@ -1571,6 +1571,7 @@ def fetch_and_process_data(project,schema):
 
         survey_report_df = process_surveyor_data_kcata(ke_df, df)
         route_report_df = process_route_data_kcata(ke_df, df)
+        low_response_questions_df = create_low_response_report(df)
 
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
@@ -2190,7 +2191,8 @@ def fetch_and_process_data(project,schema):
             'Route Report with Date': route_report_by_date_df,
             'Route Comparison': route_comparison_export,
             'Reverse Routes': reverse_routes_export,
-            'Reverse Routes Difference': reverse_diff_export
+            'Reverse Routes Difference': reverse_diff_export,
+            'LOW RESPONSE QUESTIONS': low_response_questions_df,
         }
 
         # Add weekend dataframes only if they exist
@@ -2213,7 +2215,8 @@ def fetch_and_process_data(project,schema):
             'Route Report with Date': 'route_report_date_trends',
             'Route Comparison': 'route_comparison',
             'Reverse Routes': 'reverse_routes',
-            'Reverse Routes Difference': 'reverse_routes_difference'
+            'Reverse Routes Difference': 'reverse_routes_difference',
+            'LOW RESPONSE QUESTIONS': 'low_response_questions',
         }
 
         # Add weekend table mappings only if weekend data exists

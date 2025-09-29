@@ -5532,3 +5532,332 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     all_type_df['Type'].fillna('Reverse', inplace=True)
     
     return route_level_df, all_type_df, reverse_df
+
+
+# For ACTRANSIT 
+def create_low_response_report(elvis_df):
+    """
+    Generate Low Response Questions DataFrame
+    Call this function with the elvis_df to create the report DataFrame
+    
+    Parameters:
+    elvis_df (DataFrame): Input data as pandas DataFrame
+    
+    Returns:
+    DataFrame: Low response questions report as DataFrame
+    """
+    
+    def apply_relevance_conditions(df):
+        """
+        Apply relevance conditions to filter or create boolean columns
+        """
+        conditions = {}
+        
+        # COMPANION_ID - always relevant (1 means always True)
+        conditions['COMPANION_ID'] = pd.Series([True] * len(df))
+        
+        # EXTRATRIP_ID - always relevant
+        conditions['EXTRATRIP_ID'] = pd.Series([True] * len(df))
+        
+        # FIRSTWAITTIME - complex condition
+        try:
+            prev_naok_0 = (~df['PrevTransfers'].isna()) & (df['PrevTransfersCode'] == 0)
+            prev_naok_1_to_4 = (~df['PrevTransfers'].isna()) & (df['PrevTransfersCode'].isin([1, 2, 3, 4]))
+            trip_first_route_not_empty = ~df['TripFirstRoute'].isna()
+            conditions['FIRSTWAITTIME'] = prev_naok_0 | (prev_naok_1_to_4 & trip_first_route_not_empty)
+        except:
+            conditions['FIRSTWAITTIME'] = pd.Series([False] * len(df))
+        
+        # REVERSE_TRIPS - always relevant
+        conditions['REVERSE_TRIPS'] = pd.Series([True] * len(df))
+        
+        # SELECT_LANGUAGE - condition on Have5MinForSurve.NAOK
+        try:
+            conditions['SELECT_LANGUAGE'] = (~df['Have5MinForSurve'].isna()) & (df['Have5MinForSurveCode'] == 5)
+        except:
+            conditions['SELECT_LANGUAGE'] = pd.Series([False] * len(df))
+        
+        # SUPERVISOR_REMARK - always relevant
+        conditions['SUPERVISOR_REMARK'] = pd.Series([True] * len(df))
+        
+        # SUPERVISOR_STATUS - always relevant
+        conditions['SUPERVISOR_STATUS'] = pd.Series([True] * len(df))
+        
+        # USERTYPE - condition on Have5MinForSurve.NAOK
+        try:
+            conditions['USERTYPE'] = (~df['Have5MinForSurve'].isna()) & (df['Have5MinForSurveCode'].isin([1, 2]))
+        except:
+            conditions['USERTYPE'] = pd.Series([False] * len(df))
+        
+        # X_MOBILE_APP - condition on PayToRide.NAOK
+        try:
+            conditions['X_MOBILE_APP'] = (~df['PayToRide'].isna()) & (df['PayToRideCode'] == 3)
+        except:
+            conditions['X_MOBILE_APP'] = pd.Series([False] * len(df))
+        
+        # X_OTHER_FARE - condition on PayToRide.NAOK
+        try:
+            conditions['X_OTHER_FARE'] = (~df['PayToRide'].isna()) & (df['PayToRideCode'] == 4)
+        except:
+            conditions['X_OTHER_FARE'] = pd.Series([False] * len(df))
+        
+        # ACCESS_BIKE - condition on OriginTransport.NAOK
+        try:
+            conditions['ACCESS_BIKE'] = (~df['OriginTransport'].isna()) & (df['OriginTransportCode'].isin([3, 4]))
+        except:
+            conditions['ACCESS_BIKE'] = pd.Series([False] * len(df))
+        
+        # EGRESS_BIKE - condition on DestinTransport.NAOK
+        try:
+            conditions['EGRESS_BIKE'] = (~df['DestinTransport'].isna()) & (df['DestinTransportCode'].isin([3, 4]))
+        except:
+            conditions['EGRESS_BIKE'] = pd.Series([False] * len(df))
+        
+        # DID_MAKE_SCHOOL_TRIP - complex condition
+        try:
+            origin_valid_school = df['OriginPlaceTypeCode'].isin(["-oth-", 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13])
+            destin_valid_school = df['DestinPlaceTypeCode'].isin(["-oth-", 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13])
+            student_status_valid = (~df['StudentStatus'].isna()) & (df['StudentStatusCode'].isin([2, 3, 4]))
+            conditions['DID_MAKE_SCHOOL_TRIP'] = origin_valid_school & destin_valid_school & student_status_valid
+        except:
+            conditions['DID_MAKE_SCHOOL_TRIP'] = pd.Series([False] * len(df))
+        
+        # WILL_MAKE_SCHOOL_TRIP - same condition as DID_MAKE_SCHOOL_TRIP
+        try:
+            conditions['WILL_MAKE_SCHOOL_TRIP'] = conditions['DID_MAKE_SCHOOL_TRIP']
+        except:
+            conditions['WILL_MAKE_SCHOOL_TRIP'] = pd.Series([False] * len(df))
+        
+        # DAYS_PER_WEEK - condition on Have5MinForSurve.NAOK
+        try:
+            conditions['DAYS_PER_WEEK'] = (~df['Have5MinForSurve'].isna()) & (df['Have5MinForSurveCode'].isin([1, 2]))
+        except:
+            conditions['DAYS_PER_WEEK'] = pd.Series([False] * len(df))
+        
+        # DID_MAKE_WORK_TRIP - complex condition
+        try:
+            origin_valid_work = df['OriginPlaceTypeCode'].isin(["-oth-", 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+            destin_valid_work = df['DestinPlaceTypeCode'].isin(["-oth-", 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+            employment_valid = (~df['EmploymentStatus'].isna()) & (df['EmploymentStatusCode'].isin([1, 2]))
+            conditions['DID_MAKE_WORK_TRIP'] = origin_valid_work & destin_valid_work & employment_valid
+        except:
+            conditions['DID_MAKE_WORK_TRIP'] = pd.Series([False] * len(df))
+        
+        # WILL_MAKE_WORK_TRIP - same condition as DID_MAKE_WORK_TRIP
+        try:
+            conditions['WILL_MAKE_WORK_TRIP'] = conditions['DID_MAKE_WORK_TRIP']
+        except:
+            conditions['WILL_MAKE_WORK_TRIP'] = pd.Series([False] * len(df))
+        
+        # ALT_INCOME - condition on Income.NAOK
+        try:
+            conditions['ALT_INCOME'] = (~df['Income'].isna()) & (df['IncomeCode'] == 10)
+        except:
+            conditions['ALT_INCOME'] = pd.Series([False] * len(df))
+        
+        # TIME_ADJUST - always relevant
+        conditions['TIME_ADJUST'] = pd.Series([True] * len(df))
+        
+        # WORK_DAYS - condition on EmploymentStatus.NAOK
+        try:
+            conditions['WORK_DAYS'] = (~df['EmploymentStatus'].isna()) & (df['EmploymentStatusCode'].isin([1, 2]))
+        except:
+            conditions['WORK_DAYS'] = pd.Series([False] * len(df))
+        
+        # CLIPPER_DISCOUNT - condition on PayToRide.NAOK
+        try:
+            conditions['CLIPPER_DISCOUNT'] = (~df['PayToRide'].isna()) & (df['PayToRideCode'] == 1)
+        except:
+            conditions['CLIPPER_DISCOUNT'] = pd.Series([False] * len(df))
+        
+        # ACCESS_WALK - condition on OriginTransport.NAOK
+        try:
+            conditions['ACCESS_WALK'] = (~df['OriginTransport'].isna()) & (df['OriginTransportCode'] == 1)
+        except:
+            conditions['ACCESS_WALK'] = pd.Series([False] * len(df))
+        
+        # EGRESS_WALK - condition on DestinTransport.NAOK
+        try:
+            conditions['EGRESS_WALK'] = (~df['DestinTransport'].isna()) & (df['DestinTransportCode'] == 1)
+        except:
+            conditions['EGRESS_WALK'] = pd.Series([False] * len(df))
+        
+        return conditions
+
+    def get_original_relevance_logic(column_name):
+        """
+        Return the original LimeSurvey format relevance conditions as provided
+        """
+        relevance_logic = {
+            'COMPANION_ID': '1',
+            'EXTRATRIP_ID': '1',
+            'FIRSTWAITTIME': '(((!is_empty(PrevTransfers.NAOK) && (PrevTransfers.NAOK == 0)))) or (((!is_empty(PrevTransfers.NAOK) && (PrevTransfers.NAOK == 1)) or (!is_empty(PrevTransfers.NAOK) && (PrevTransfers.NAOK == 2)) or (!is_empty(PrevTransfers.NAOK) && (PrevTransfers.NAOK == 3)) or (!is_empty(PrevTransfers.NAOK) && (PrevTransfers.NAOK == 4))) and (!is_empty(TripFirstRoute.NAOK)))',
+            'REVERSE_TRIPS': '1',
+            'SELECT_LANGUAGE': '(((!is_empty(Have5MinForSurve.NAOK) && (Have5MinForSurve.NAOK == 5))))',
+            'SUPERVISOR_REMARK': '1',
+            'SUPERVISOR_STATUS': '1',
+            'USERTYPE': '(((!is_empty(Have5MinForSurve.NAOK) && (Have5MinForSurve.NAOK == 1)) or (!is_empty(Have5MinForSurve.NAOK) && (Have5MinForSurve.NAOK == 2))))',
+            'X_MOBILE_APP': '(((!is_empty(PayToRide.NAOK) && (PayToRide.NAOK == 3))))',
+            'X_OTHER_FARE': '(((!is_empty(PayToRide.NAOK) && (PayToRide.NAOK == 4))))',
+            'ACCESS_BIKE': '(((!is_empty(OriginTransport.NAOK) && (OriginTransport.NAOK == 3)) or (!is_empty(OriginTransport.NAOK) && (OriginTransport.NAOK == 4))))',
+            'EGRESS_BIKE': '(((!is_empty(DestinTransport.NAOK) && (DestinTransport.NAOK == 3)) or (!is_empty(DestinTransport.NAOK) && (DestinTransport.NAOK == 4))))',
+            'DID_MAKE_SCHOOL_TRIP': '((OriginPlaceType.NAOK == "-oth-" or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 1)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 10)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 11)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 12)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 13)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 2)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 3)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 4)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 7)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 8)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 9))) and (DestinPlaceType.NAOK == "-oth-" or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 1)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 10)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 11)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 12)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 13)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 2)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 3)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 4)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 7)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 8)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 9))) and ((!is_empty(StudentStatus.NAOK) && (StudentStatus.NAOK == 2)) or (!is_empty(StudentStatus.NAOK) && (StudentStatus.NAOK == 3)) or (!is_empty(StudentStatus.NAOK) && (StudentStatus.NAOK == 4))))',
+            'WILL_MAKE_SCHOOL_TRIP': '((OriginPlaceType.NAOK == "-oth-" or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 1)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 10)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 11)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 12)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 13)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 2)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 3)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 4)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 7)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 8)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 9))) and (DestinPlaceType.NAOK == "-oth-" or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 1)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 10)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 11)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 12)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 13)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 2)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 3)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 4)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 7)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 8)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 9))) and ((!is_empty(StudentStatus.NAOK) && (StudentStatus.NAOK == 2)) or (!is_empty(StudentStatus.NAOK) && (StudentStatus.NAOK == 3)) or (!is_empty(StudentStatus.NAOK) && (StudentStatus.NAOK == 4))))',
+            'DAYS_PER_WEEK': '(((!is_empty(Have5MinForSurve.NAOK) && (Have5MinForSurve.NAOK == 1)) or (!is_empty(Have5MinForSurve.NAOK) && (Have5MinForSurve.NAOK == 2))))',
+            'DID_MAKE_WORK_TRIP': '((OriginPlaceType.NAOK == "-oth-" or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 10)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 11)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 12)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 13)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 2)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 3)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 4)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 5)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 6)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 7)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 8)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 9))) and (DestinPlaceType.NAOK == "-oth-" or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 10)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 11)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 12)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 13)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 2)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 3)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 4)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 5)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 6)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 7)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 8)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 9))) and ((!is_empty(EmploymentStatus.NAOK) && (EmploymentStatus.NAOK == 1)) or (!is_empty(EmploymentStatus.NAOK) && (EmploymentStatus.NAOK == 2))))',
+            'WILL_MAKE_WORK_TRIP': '((OriginPlaceType.NAOK == "-oth-" or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 10)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 11)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 12)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 13)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 2)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 3)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 4)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 5)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 6)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 7)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 8)) or (!is_empty(OriginPlaceType.NAOK) && (OriginPlaceType.NAOK == 9))) and (DestinPlaceType.NAOK == "-oth-" or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 10)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 11)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 12)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 13)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 2)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 3)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 4)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 5)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 6)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 7)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 8)) or (!is_empty(DestinPlaceType.NAOK) && (DestinPlaceType.NAOK == 9))) and ((!is_empty(EmploymentStatus.NAOK) && (EmploymentStatus.NAOK == 1)) or (!is_empty(EmploymentStatus.NAOK) && (EmploymentStatus.NAOK == 2))))',
+            'ALT_INCOME': '(((!is_empty(Income.NAOK) && (Income.NAOK == 10))))',
+            'TIME_ADJUST': '1',
+            'WORK_DAYS': '(((!is_empty(EmploymentStatus.NAOK) && (EmploymentStatus.NAOK == 1)) or (!is_empty(EmploymentStatus.NAOK) && (EmploymentStatus.NAOK == 2))))',
+            'CLIPPER_DISCOUNT': '(((!is_empty(PayToRide.NAOK) && (PayToRide.NAOK == 1))))',
+            'ACCESS_WALK': '(((!is_empty(OriginTransport.NAOK) && (OriginTransport.NAOK == 1))))',
+            'EGRESS_WALK': '(((!is_empty(DestinTransport.NAOK) && (DestinTransport.NAOK == 1))))'
+        }
+        
+        return relevance_logic.get(column_name, 'Condition not defined')
+
+    def calculate_column_stats(df, column_name):
+        """
+        Calculate statistics for a given column - simple completion rate without relevance filtering
+        """
+        if column_name not in df.columns:
+            return "", "", 0.0
+        
+        # Use all data (don't filter by relevance condition)
+        column_data = df[column_name]
+        
+        # Remove NaN values for calculation
+        non_null_data = column_data.dropna()
+        
+        if len(non_null_data) == 0:
+            return "", "", 0.0
+        
+        # Calculate completion rate (percentage of all respondents who answered)
+        total_respondents = len(column_data)
+        non_null_count = len(non_null_data)
+        percent_filled = (non_null_count / total_respondents) * 100
+        
+        # Find most common and least common responses
+        value_counts = non_null_data.value_counts()
+        
+        if len(value_counts) == 0:
+            return "", "", percent_filled
+        
+        first_max = value_counts.index[0]  # Most common response
+        first_min = value_counts.index[-1]  # Least common response
+        
+        return first_max, first_min, percent_filled
+
+    def map_column_names(standard_headers, actual_headers):
+        """
+        Map standard column names to actual column names in the data file
+        """
+        mapping = {}
+        
+        # Common naming pattern variations
+        patterns = {
+            'COMPANION_ID': ['CompanionId', 'COMPANIONID', 'companion_id', 'companionid'],
+            'EXTRATRIP_ID': ['ExtraTripId', 'EXTRATRIPID', 'extra_trip_id', 'extratripid'],
+            'FIRSTWAITTIME': ['FirstWaitTime', 'firstwaittime', 'FIRST_WAIT_TIME'],
+            'REVERSE_TRIPS': ['ReverseTrips', 'reverse_trips', 'REVERSE_TRIPS'],
+            'SELECT_LANGUAGE': ['SelectLanguage', 'select_language', 'SELECTLANGUAGE'],
+            'SUPERVISOR_REMARK': ['SupervisorRemark', 'supervisor_remark', 'SUPERVISORREMARK'],
+            'SUPERVISOR_STATUS': ['SupervisorStatus', 'supervisor_status', 'SUPERVISORSTATUS'],
+            'USERTYPE': ['UserType', 'user_type', 'USERTYPE'],
+            'X_MOBILE_APP': ['XMobileApp', 'x_mobile_app', 'X_MOBILEAPP'],
+            'X_OTHER_FARE': ['XOtherFare', 'x_other_fare', 'X_OTHERFARE'],
+            'ACCESS_BIKE': ['AccessBike', 'access_bike', 'ACCESSBIKE'],
+            'EGRESS_BIKE': ['EgressBike', 'egress_bike', 'EGRESSBIKE'],
+            'DID_MAKE_SCHOOL_TRIP': ['DidMakeSchoolTrip', 'did_make_school_trip', 'DIDMAKESCHOOLTRIP'],
+            'WILL_MAKE_SCHOOL_TRIP': ['WillMakeSchoolTrip', 'will_make_school_trip', 'WILLMAKESCHOOLTRIP'],
+            'DAYS_PER_WEEK': ['DaysPerWeek', 'days_per_week', 'DAYSPERWEEK'],
+            'DID_MAKE_WORK_TRIP': ['DidMakeWorkTrip', 'did_make_work_trip', 'DIDMAKEWORKTRIP'],
+            'WILL_MAKE_WORK_TRIP': ['WillMakeWorkTrip', 'will_make_work_trip', 'WILLMAKEWORKTRIP'],
+            'ALT_INCOME': ['AltIncome', 'alt_income', 'ALTINCOME'],
+            'TIME_ADJUST': ['TimeAdjust', 'time_adjust', 'TIMEADJUST'],
+            'WORK_DAYS': ['WorkDays', 'work_days', 'WORKDAYS'],
+            'CLIPPER_DISCOUNT': ['ClipperDiscount', 'clipper_discount', 'CLIPPERDISCOUNT'],
+            'ACCESS_WALK': ['AccessWalk', 'access_walk', 'ACCESSWALK'],
+            'EGRESS_WALK': ['EgressWalk', 'egress_walk', 'EGRESSWALK']
+        }
+        
+        for standard_name in standard_headers:
+            # Try exact match first
+            if standard_name in actual_headers:
+                mapping[standard_name] = standard_name
+                continue
+                
+            # Try pattern matching
+            found = False
+            if standard_name in patterns:
+                for pattern in patterns[standard_name]:
+                    if pattern in actual_headers:
+                        mapping[standard_name] = pattern
+                        found = True
+                        break
+            
+            # If not found, try case-insensitive matching
+            if not found:
+                actual_lower = [header.lower() for header in actual_headers]
+                standard_lower = standard_name.lower()
+                if standard_lower in actual_lower:
+                    idx = actual_lower.index(standard_lower)
+                    mapping[standard_name] = actual_headers[idx]
+                else:
+                    # If still not found, mark as not available
+                    mapping[standard_name] = None
+        
+        return mapping
+
+    # Main execution starts here
+    df = elvis_df
+    
+    # Define all column headers we need to analyze
+    standard_headers = [
+        'COMPANION_ID', 'EXTRATRIP_ID', 'FIRSTWAITTIME', 'REVERSE_TRIPS', 
+        'SELECT_LANGUAGE', 'SUPERVISOR_REMARK', 'SUPERVISOR_STATUS', 'USERTYPE',
+        'X_MOBILE_APP', 'X_OTHER_FARE', 'ACCESS_BIKE', 'EGRESS_BIKE',
+        'DID_MAKE_SCHOOL_TRIP', 'WILL_MAKE_SCHOOL_TRIP', 'DAYS_PER_WEEK',
+        'DID_MAKE_WORK_TRIP', 'WILL_MAKE_WORK_TRIP', 'ALT_INCOME', 'TIME_ADJUST',
+        'WORK_DAYS', 'CLIPPER_DISCOUNT', 'ACCESS_WALK', 'EGRESS_WALK'
+    ]
+    
+    # Map standard column names to actual column names in the data file
+    actual_headers = df.columns.tolist()
+    column_mapping = map_column_names(standard_headers, actual_headers)
+    
+    # Prepare data for the report
+    report_data = []
+    
+    for standard_name in standard_headers:
+        actual_name = column_mapping.get(standard_name)
+        
+        if actual_name is None or actual_name not in df.columns:
+            # Column not found in data file
+            report_data.append({
+                'Column Header': standard_name,
+                'First Max': "",
+                'First Min': "", 
+                'percent_filled': 0.0,
+                'First relevance': get_original_relevance_logic(standard_name)
+            })
+        else:
+            # Calculate statistics
+            first_max, first_min, percent_filled = calculate_column_stats(df, actual_name)
+            
+            report_data.append({
+                'Column Header': standard_name,
+                'First Max': first_max,
+                'First Min': first_min,
+                'percent_filled': round(percent_filled, 2),
+                'First relevance': get_original_relevance_logic(standard_name)
+            })
+    
+    # Create DataFrame for the report
+    report_df = pd.DataFrame(report_data)
+    
+    # Sort by percent_filled (lowest first) to highlight low response questions
+    report_df = report_df.sort_values('percent_filled', ascending=True)
+    
+    return report_df
+

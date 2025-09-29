@@ -133,7 +133,8 @@ else:
                 'route_report_date_trends': 'route_report_date_trends_df',
                 'route_comparison': 'route_comparison_df',
                 'reverse_routes': 'reverse_routes_df',
-                'reverse_routes_difference': 'reverse_routes_difference_df'
+                'reverse_routes_difference': 'reverse_routes_difference_df',
+                'low_response_questions': 'low_response_questions_df'
             }
 
             # Initialize an empty dictionary to hold DataFrames
@@ -201,6 +202,7 @@ else:
         route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
         reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
         reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
+        low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
 
         st.sidebar.markdown("**User Profile**")
         st.sidebar.caption(f"**Role:** {st.session_state['user']['role']}")
@@ -492,6 +494,22 @@ else:
                 st.query_params()
                 st.rerun()
 
+        def low_response_questions_page():
+            st.title("📋 LOW RESPONSE QUESTIONS")
+            # Load the low response questions dataframe
+            low_response_questions_df = dataframes['low_response_questions_df']
+            
+            # Check if the dataframe exists and is not empty
+            if low_response_questions_df is not None and not low_response_questions_df.empty:
+                # st.subheader("📋 LOW RESPONSE QUESTIONS")
+                st.dataframe(low_response_questions_df, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No low response questions data available.")
+
+            # Navigation
+            if st.button("🔙 Home Page"):
+                st.query_params["page"] = "main"
+                st.rerun()
 
         def daily_totals_page():
             if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
@@ -662,11 +680,11 @@ else:
                 
                 with col1:
                     st.subheader("👤 Interviewer Totals")
-                    st.dataframe(interv_filtered_with_total, use_container_width=True)
+                    st.dataframe(interv_filtered_with_total, use_container_width=True, hide_index=True)
 
                 with col2:
                     st.subheader("🛣️ Route Totals")
-                    st.dataframe(route_filtered_with_total, use_container_width=True)
+                    st.dataframe(route_filtered_with_total, use_container_width=True, hide_index=True)
 
                 # Navigation
                 if st.button("🔙 Home Page"):
@@ -937,7 +955,7 @@ else:
         
             if st.session_state['user']["role"].lower()=='admin':
                 if st.button("Sync"):
-                    with st.spinner("Our hamsters are sprinting on the wheel 🐹⚡ … syncing will wrap up in 2–3 mins!"):
+                    with st.spinner("Data engines are spinning up ⚙️📡 … syncing will be wrapped in 2–3 mins!"):
                         result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
                         if "cache_key" not in st.session_state:
                             st.session_state["cache_key"] = 0
@@ -962,7 +980,8 @@ else:
                         route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
                         surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
                         route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
-                    st.success(f"Data synced successfully 🎉🐹 … hamsters can finally take a snack break 🥜!")
+                        low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
+                    st.success(f"Data synced successfully 🎉 … pipelines are tidy, tables are aligned, and we’re good to go ✅📂")
             current_date = datetime.datetime.now()
             formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
             st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
@@ -998,6 +1017,11 @@ else:
             else:
                 st.header(f'Time OF Day Details')
 
+            if 'actransit' in selected_project:
+                if st.button("LOW RESPONSE QUESTIONS"):
+                    st.query_params["page"] = "low_response_questions_tab"
+                    st.rerun()
+
         # Button Section
         with header_col3:
             # WEEKDAY-OVERALL button
@@ -1007,10 +1031,9 @@ else:
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
 
             # WEEKEND-OVERALL button
-            if "actransit" not in selected_project:
-                if st.button("WEEKEND-OVERALL"):
-                    st.query_params["page"] = "weekend"
-                    st.rerun()
+            if st.button("WEEKEND-OVERALL"):
+                st.query_params["page"] = "weekend"
+                st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
             
             # Add these two new buttons for kcata simple project
@@ -1103,6 +1126,9 @@ else:
             elif current_page == "dailytotals":
                 if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
                     daily_totals_page()
+            elif current_page == "low_response_questions_tab":
+                if 'actransit' in selected_project:  # Add this new route
+                    low_response_questions_page()
             elif current_page == "surveyreport":
                 if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
                     # 📌 Fields you want to show
