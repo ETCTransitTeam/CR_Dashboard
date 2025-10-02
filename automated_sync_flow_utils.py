@@ -5861,3 +5861,100 @@ def create_low_response_report(elvis_df):
     
     return report_df
 
+def create_survey_stats_master_table(df):
+    """
+    Create a master table with all the raw data needed for statistical analysis
+    This table will be uploaded to Snowflake for use in Streamlit
+    """
+    # Create a copy to work with
+    master_df = df.copy()
+    
+    # Clean and standardize key columns
+    master_df['HAVE_5_MIN_FOR_SURVECode'] = master_df['HAVE_5_MIN_FOR_SURVECode'].astype(str).str.strip()
+    master_df['REFUS_AGE_OBSERVEDCode'] = master_df['REFUS_AGE_OBSERVEDCode'].astype(str).str.strip()
+    master_df['YOUR_GENDERCode'] = master_df['YOUR_GENDERCode'].astype(str).str.strip()
+    master_df['SELECT_LANGUAGECode'] = master_df['SELECT_LANGUAGECode'].astype(str).str.strip()
+    master_df['INTERV_INIT'] = master_df['INTERV_INIT'].astype(str).str.strip()
+    
+    # Clean route names
+    master_df['ROUTE_MAIN'] = master_df['ROUTE_SURVEYEDCode'].astype(str).str.extract(r'(^.*)_\d\d$')
+    master_df['ROUTE_MAIN'] = master_df['ROUTE_MAIN'].fillna(master_df['ROUTE_SURVEYEDCode'])
+    
+    # Convert date
+    master_df['DATE_SUBMITTED'] = pd.to_datetime(master_df['DATE_SUBMITTED'], errors='coerce')
+    
+    # Map coded values to human-readable labels
+    master_df['HAVE_5_MIN_LABEL'] = master_df['HAVE_5_MIN_FOR_SURVECode'].map({
+        '1': 'Yes I can participate in the survey (have 5 min+)',
+        '4': 'No (refused)',
+        '5': 'Do not speak the interviewers language'
+    })
+    
+    master_df['AGE_GROUP_LABEL'] = master_df['REFUS_AGE_OBSERVEDCode'].map({
+        '1': '16 to 17',
+        '2': '18 to 24',
+        '3': '25 to 49',
+        '4': '50 to 64',
+        '5': '65 to 74'
+    })
+    
+    master_df['GENDER_LABEL'] = master_df['YOUR_GENDERCode'].map({
+        '1': 'Male',
+        '2': 'Female'
+    })
+    
+    master_df['LANGUAGE_LABEL'] = master_df['SELECT_LANGUAGECode'].map({
+        '1': 'English',
+        '2': 'Spanish'
+    })
+    
+    # Process race columns - create a normalized race response table
+    race_columns = ['RACE_1', 'RACE_2', 'RACE_3', 'RACE_4', 'RACE_5', 'RACE_6', 'RACE_7', 'RACE_8', 'RACE_Other']
+    race_labels = {
+        'RACE_1': 'Hispanic or Latino',
+        'RACE_2': 'Asian or Asian American',
+        'RACE_3': 'White or Caucasian',
+        'RACE_4': 'Black or African American',
+        'RACE_5': 'Native Hawaiian or Pacific Islander',
+        'RACE_6': 'American Indian / Alaska Native / Indigenous',
+        'RACE_7': 'Middle Eastern or North African',
+        'RACE_8': 'Prefer not to say',
+        'RACE_Other': 'Other'
+    }
+    
+    # Create race responses in long format
+    race_responses = []
+    for respondent_id, row in master_df.iterrows():
+        for race_col in race_columns:
+            if race_col in master_df.columns:
+                value = str(row[race_col]).strip().lower()
+                if value not in ['nan', 'n/a', 'na', '']:
+                    if race_col != 'RACE_Other' and value == 'yes':
+                        race_responses.append({
+                            'RESPONDENT_ID': respondent_id,
+                            'RACE_CATEGORY': race_labels[race_col],
+                            'RACE_RESPONSE': 'Selected'
+                        })
+                    elif race_col == 'RACE_Other' and value != 'no':
+                        race_responses.append({
+                            'RESPONDENT_ID': respondent_id,
+                            'RACE_CATEGORY': 'Other',
+                            'RACE_RESPONSE': value
+                        })
+    
+    race_df = pd.DataFrame(race_responses)
+    
+    # Select only the columns needed for analysis
+    analysis_columns = [
+        'HAVE_5_MIN_FOR_SURVECode', 'HAVE_5_MIN_LABEL',
+        'REFUS_AGE_OBSERVEDCode', 'AGE_GROUP_LABEL',
+        'YOUR_GENDERCode', 'GENDER_LABEL',
+        'SELECT_LANGUAGECode', 'LANGUAGE_LABEL',
+        'INTERV_INIT', 'ROUTE_MAIN', 'DATE_SUBMITTED'
+    ]
+    
+    # Filter to only include columns that exist in the dataframe
+    available_columns = [col for col in analysis_columns if col in master_df.columns]
+    analysis_df = master_df[available_columns].reset_index().rename(columns={'index': 'RESPONDENT_ID'})
+    
+    return analysis_df, race_df

@@ -174,64 +174,95 @@ def create_new_user(email, username, password, role):
         conn.close()
 
 def create_new_user_page():
-    """Displays a form for admins to create new users."""
-    st.title("Create New User")
+    """Admin panel page to create new users."""
+    st.title("👤 Add a New User")
 
-    # Initialize minimal session state for navigation and messages
-    if "current_page" not in st.session_state:
-        st.session_state["current_page"] = "create_user"
-    if "error_message" not in st.session_state:
-        st.session_state["error_message"] = ""
-    if "success_message" not in st.session_state:
-        st.session_state["success_message"] = ""
+    # Initialize session state
+    for key, default in {
+        "current_page": "create_user",
+        "error_message": "",
+        "success_message": ""
+    }.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
 
-    # Display error message if it exists
+    # Display messages
     if st.session_state["error_message"]:
         st.error(st.session_state["error_message"])
 
-    # Display success message if it exists
     if st.session_state["success_message"]:
         st.success(st.session_state["success_message"])
-        # Refresh the page after 2 seconds to clear the form
-        time.sleep(2)  # Delay to show the message
-        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
-        st.stop()  # Stop execution to prevent further rendering until refresh
+        time.sleep(2)
+        st.markdown(
+            '<meta http-equiv="refresh" content="0;url=/?page=create_user">',
+            unsafe_allow_html=True
+        )
+        st.stop()
 
+    # User creation form
+    st.markdown("### Fill in the details below to add a new user")
     with st.form(key="create_new_user_form"):
-        # Form inputs without session state persistence
-        username = st.text_input("Username")
-        email = st.text_input("Email")
-        role = st.selectbox("Select Role", ["USER", "ADMIN"], index=0)  # Default to USER
-        password = st.text_input("Password", type="password")
-        confirm_password = st.text_input("Confirm Password", type="password")
-        
-        submit_button = st.form_submit_button(label="Add User")
+        username = st.text_input("👤 Username", placeholder="Enter username")
+        email = st.text_input("📧 Email", placeholder="Enter user email")
+        role = st.selectbox("🔑 Role", ["USER", "ADMIN"], index=0)
+        password = st.text_input("🔒 Password", type="password", placeholder="Enter password")
+        confirm_password = st.text_input("🔒 Confirm Password", type="password", placeholder="Re-enter password")
+
+        # Centered & bigger submit button with custom CSS
+        submit_button = st.form_submit_button("➕ Add User")
+        st.markdown(
+            """
+            <style>
+            div.stForm button {
+                display: block;
+                margin: 20px auto;
+                font-size: 18px !important;
+                padding: 10px 30px !important;
+                border-radius: 10px !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
 
         if submit_button:
             st.session_state["error_message"] = ""
             st.session_state["success_message"] = ""
 
             if not all([username, email, password, confirm_password]):
-                st.session_state["error_message"] = "Please fill in all fields."
+                st.session_state["error_message"] = "⚠️ Please complete all fields."
             elif password != confirm_password:
-                st.session_state["error_message"] = "Passwords do not match."
+                st.session_state["error_message"] = "❌ Passwords do not match."
             else:
                 try:
                     if create_new_user(email, username, password, role):
-                        st.session_state["success_message"] = "User created successfully! Activation email sent."
-                        time.sleep(5)  # Delay to show the message
-
-                        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
-
-                        # The success message will trigger the refresh above
+                        st.session_state["success_message"] = (
+                            f"✅ User **{username}** created successfully! "
+                            "An activation email has been sent."
+                        )
+                        time.sleep(2)
+                        st.markdown(
+                            '<meta http-equiv="refresh" content="0;url=/?page=create_user">',
+                            unsafe_allow_html=True
+                        )
                     else:
-                        st.session_state["error_message"] = "Failed to create user."
+                        st.session_state["error_message"] = "⚠️ Could not create the user. Please try again."
                 except Exception as e:
-                    st.session_state["error_message"] = f"Error: {str(e)}"
+                    st.session_state["error_message"] = f"🚨 Error: {str(e)}"
 
-    # Navigation button
-    if st.button("Go to Login Page"):
-        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
+    # Centered & bigger "Login here" link
+    st.markdown(
+        """
+        <hr>
+        <div style="text-align:center; margin-top: 20px; font-size: 16px;">
+            Already have an account?  
+            <a href="/?page=login" style="color:#1E90FF; text-decoration:none; font-weight:bold; font-size:18px;">
+                🔑 Login here
+            </a>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
         
 
 def register_new_user(email, username, password,role):

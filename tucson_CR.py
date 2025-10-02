@@ -11,6 +11,7 @@ from authentication.auth import schema_value,register_page,login,logout,is_authe
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
+import plotly.express as px
 
 
 load_dotenv()
@@ -134,7 +135,9 @@ else:
                 'route_comparison': 'route_comparison_df',
                 'reverse_routes': 'reverse_routes_df',
                 'reverse_routes_difference': 'reverse_routes_difference_df',
-                'low_response_questions': 'low_response_questions_df'
+                'low_response_questions': 'low_response_questions_df',
+                'refusal_analysis_report': 'refusal_analysis_df',
+                'refusal_race_report': 'refusal_race_df',
             }
 
             # Initialize an empty dictionary to hold DataFrames
@@ -203,6 +206,9 @@ else:
         reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
         reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
         low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
+
+        refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
+        refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
 
         st.sidebar.markdown("**User Profile**")
         st.sidebar.caption(f"**Role:** {st.session_state['user']['role']}")
@@ -944,6 +950,436 @@ else:
                 st.query_params["page"] = "main"
                 st.rerun()
 
+        def show_refusal_analysis(refusal_analysis_df, refusal_race_df):
+            """
+            Display comprehensive refusal analysis statistics using the master tables
+            """
+            st.title("📊 Refusal Analysis Dashboard")
+            refusal_analysis_df['INTERV_INIT'] = refusal_analysis_df['INTERV_INIT'].astype(str)
+            refusal_analysis_df = refusal_analysis_df[refusal_analysis_df['INTERV_INIT'] != "999"]
+            refusal_analysis_df = refusal_analysis_df.iloc[1:].copy()
+            
+            if refusal_analysis_df.empty:
+                st.warning("No refusal data available. Please sync data first.")
+                if st.button("Sync Data"):
+                    st.query_params["page"] = "main"
+                    st.rerun()
+                return
+            
+            # Filter for refusals only (HAVE_5_MIN_FOR_SURVECode != '1')
+            refusal_df = refusal_analysis_df[refusal_analysis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) != '1'].copy()
+            
+            if refusal_df.empty:
+                st.info("No refusal records found in the dataset (all responses were participations).")
+                return
+            
+            # FIX: Convert DATE_SUBMITTED to datetime safely
+            if 'DATE_SUBMITTED' in refusal_df.columns:
+                refusal_df['DATE_SUBMITTED'] = pd.to_datetime(refusal_df['DATE_SUBMITTED'], errors='coerce')
+            
+            # Create tabs for different refusal statistics
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📋 Refusal Overview", "👥 Interviewer Refusals", "🛣️ Route Refusals", "🧑‍🤝‍🧑 Demographics"
+            ])
+            
+            with tab1:
+                st.subheader("Refusal Overview")
+                
+                # Overall refusal statistics
+                total_refusals = len(refusal_df)
+                total_approaches = len(refusal_analysis_df)
+                refusal_rate = (total_refusals / total_approaches * 100) if total_approaches > 0 else 0
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Refusals", f"{total_refusals:,}")
+                with col2:
+                    st.metric("Total Approaches", f"{total_approaches:,}")
+                with col3:
+                    st.metric("Overall Refusal Rate", f"{refusal_rate:.1f}%")
+                
+                # Refusal reasons breakdown
+                st.subheader("Refusal Reasons Breakdown")
+                
+                if 'HAVE_5_MIN_LABEL' in refusal_df.columns:
+                    refusal_reasons = refusal_df['HAVE_5_MIN_LABEL'].value_counts().reset_index()
+                    refusal_reasons.columns = ['Reason', 'Count']
+                    refusal_reasons['Percentage'] = (refusal_reasons['Count'] / refusal_reasons['Count'].sum() * 100).round(2)
+                    
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        st.dataframe(refusal_reasons, use_container_width=True, hide_index=True)
+                    
+                    with col2:
+                        if not refusal_reasons.empty:
+                            fig_reasons = px.pie(refusal_reasons, values='Count', names='Reason',
+                                            title="Refusal Reasons Distribution")
+                            st.plotly_chart(fig_reasons, use_container_width=True)
+                else:
+                    st.warning("Refusal reason data not available.")
+                
+                # Daily refusal trend - FIXED datetime conversion
+                st.subheader("Daily Refusal Trend")
+                
+                if 'DATE_SUBMITTED' in refusal_df.columns and not refusal_df['DATE_SUBMITTED'].isna().all():
+                    # Remove rows with invalid dates
+                    valid_dates_df = refusal_df.dropna(subset=['DATE_SUBMITTED'])
+                    
+                    if not valid_dates_df.empty:
+                        daily_refusals = valid_dates_df.groupby(valid_dates_df['DATE_SUBMITTED'].dt.date).size().reset_index()
+                        daily_refusals.columns = ['Date', 'Refusals']
+                        
+                        if not daily_refusals.empty:
+                            fig_trend = px.line(daily_refusals, x='Date', y='Refusals',
+                                            title="Daily Refusal Count Trend")
+                            st.plotly_chart(fig_trend, use_container_width=True)
+                        else:
+                            st.info("No valid date data available for trend analysis.")
+                    else:
+                        st.info("No valid dates found in the data.")
+                else:
+                    st.info("Date data not available for trend analysis.")
+            
+            with tab2:
+                st.subheader("Interviewer Refusal Analysis")
+                
+                # FIX: Check if required columns exist
+                if 'INTERV_INIT' not in refusal_analysis_df.columns:
+                    st.warning("Interviewer data not available.")
+                else:
+                    # Get ALL interviewers from the full dataset (including those with 0 refusals)
+                    all_interviewers = refusal_analysis_df['INTERV_INIT'].unique()
+                    
+                    # Interviewer-level refusal statistics - include ALL interviewers
+                    interviewer_refusals = refusal_df.groupby('INTERV_INIT').size().reset_index(name='Total Refusals')
+                    
+                    # Calculate success rates for comparison - for ALL interviewers
+                    interviewer_success = refusal_analysis_df.groupby('INTERV_INIT').agg({
+                        'HAVE_5_MIN_LABEL': lambda x: (x == 'Yes I can participate in the survey (have 5 min+)').sum() if 'HAVE_5_MIN_LABEL' in refusal_analysis_df.columns else 0,
+                        'HAVE_5_MIN_FOR_SURVECode': 'count'
+                    }).reset_index()
+                    
+                    interviewer_success.columns = ['INTERV_INIT', 'Successful Surveys', 'Total Approaches']
+                    interviewer_success['Success Rate %'] = (interviewer_success['Successful Surveys'] / interviewer_success['Total Approaches'] * 100).round(2)
+                    
+                    # FIX: Use outer merge to include ALL interviewers, even those with 0 refusals
+                    interviewer_stats = pd.merge(interviewer_success, interviewer_refusals, on='INTERV_INIT', how='left')
+                    
+                    # Fill NaN values for interviewers with 0 refusals
+                    interviewer_stats['Total Refusals'] = interviewer_stats['Total Refusals'].fillna(0)
+                    interviewer_stats['Refusal Rate %'] = (interviewer_stats['Total Refusals'] / interviewer_stats['Total Approaches'] * 100).round(2)
+                    
+                    # Rename for display
+                    interviewer_stats_display = interviewer_stats.rename(columns={'INTERV_INIT': 'Interviewer'})
+                    
+                    # FIX: Show ALL interviewers, not just top 10
+                    st.write(f"**All Interviewers Refusal Statistics ({len(interviewer_stats_display)} total)**")
+                    
+                    # Add search and filter functionality for large tables
+                    search_interviewer = st.text_input("Search Interviewers:", "")
+                    
+                    if search_interviewer:
+                        filtered_interviewers = interviewer_stats_display[
+                            interviewer_stats_display['Interviewer'].str.contains(search_interviewer, case=False, na=False)
+                        ]
+                    else:
+                        filtered_interviewers = interviewer_stats_display
+                    
+                    # Display all interviewers with pagination or scroll
+                    st.dataframe(
+                        filtered_interviewers[['Interviewer', 'Total Approaches', 'Successful Surveys', 'Success Rate %', 'Total Refusals', 'Refusal Rate %']],
+                        use_container_width=True,
+                        hide_index=True,
+                        height=400
+                    )
+                    
+                    # Chart: Interviewers with highest refusal rates (still show top for visualization)
+                    if not interviewer_stats_display.empty:
+                        st.subheader("Top Interviewers by Refusal Rate")
+                        # Filter out interviewers with 0 approaches to avoid division errors
+                        valid_interviewers = interviewer_stats_display[interviewer_stats_display['Total Approaches'] > 0]
+                        if not valid_interviewers.empty:
+                            top_refusal_interviewers = valid_interviewers.nlargest(min(10, len(valid_interviewers)), 'Refusal Rate %')
+                            
+                            if not top_refusal_interviewers.empty:
+                                fig_interv = px.bar(top_refusal_interviewers, 
+                                                x='Interviewer', y='Refusal Rate %',
+                                                title=f"Top {len(top_refusal_interviewers)} Interviewers by Refusal Rate",
+                                                hover_data=['Total Refusals', 'Total Approaches'])
+                                fig_interv.update_layout(xaxis_tickangle=-45)
+                                st.plotly_chart(fig_interv, use_container_width=True)
+
+            with tab3:
+                st.subheader("Route Refusal Analysis")
+                
+                # FIX: Check if required columns exist
+                if 'ROUTE_MAIN' not in refusal_df.columns:
+                    st.warning("Route data not available.")
+                else:
+                    # Get ALL routes from the full dataset (including those with 0 refusals)
+                    all_routes = refusal_analysis_df['ROUTE_MAIN'].unique()
+                    
+                    # Route-level refusal statistics
+                    route_refusals = refusal_df.groupby('ROUTE_MAIN').size().reset_index(name='Total Refusals')
+                    
+                    # Calculate success rates for comparison - for ALL routes
+                    route_success = refusal_analysis_df.groupby('ROUTE_MAIN').agg({
+                        'HAVE_5_MIN_LABEL': lambda x: (x == 'Yes I can participate in the survey (have 5 min+)').sum() if 'HAVE_5_MIN_LABEL' in refusal_analysis_df.columns else 0,
+                        'HAVE_5_MIN_FOR_SURVECode': 'count'
+                    }).reset_index()
+                    
+                    route_success.columns = ['ROUTE_MAIN', 'Successful Surveys', 'Total Approaches']
+                    route_success['Success Rate %'] = (route_success['Successful Surveys'] / route_success['Total Approaches'] * 100).round(2)
+                    
+                    # FIX: Use outer merge to include ALL routes, even those with 0 refusals
+                    route_stats = pd.merge(route_success, route_refusals, on='ROUTE_MAIN', how='left')
+                    
+                    # Fill NaN values for routes with 0 refusals
+                    route_stats['Total Refusals'] = route_stats['Total Refusals'].fillna(0)
+                    route_stats['Refusal Rate %'] = (route_stats['Total Refusals'] / route_stats['Total Approaches'] * 100).round(2)
+                    
+                    # Rename for display
+                    route_stats_display = route_stats.rename(columns={'ROUTE_MAIN': 'Route'})
+                    
+                    # FIX: Show ALL routes, not just top 10
+                    st.write(f"**All Routes Refusal Statistics ({len(route_stats_display)} total)**")
+                    
+                    # Add search and filter functionality for large tables
+                    search_route = st.text_input("Search Routes:", "")
+                    
+                    if search_route:
+                        filtered_routes = route_stats_display[
+                            route_stats_display['Route'].astype(str).str.contains(search_route, case=False, na=False)
+                        ]
+                    else:
+                        filtered_routes = route_stats_display
+                    
+                    # Display all routes with pagination or scroll
+                    st.dataframe(
+                        filtered_routes[['Route', 'Total Approaches', 'Successful Surveys', 'Success Rate %', 'Total Refusals', 'Refusal Rate %']],
+                        use_container_width=True,
+                        hide_index=True,
+                        height=400
+                    )
+                    
+                    # Chart: Routes with highest refusal rates (still show top for visualization)
+                    if not route_stats_display.empty:
+                        st.subheader("Top Routes by Refusal Rate")
+                        # Filter out routes with 0 approaches to avoid division errors
+                        valid_routes = route_stats_display[route_stats_display['Total Approaches'] > 0]
+                        if not valid_routes.empty:
+                            top_refusal_routes = valid_routes.nlargest(min(10, len(valid_routes)), 'Refusal Rate %')
+                            
+                            if not top_refusal_routes.empty:
+                                fig_routes = px.bar(top_refusal_routes, 
+                                                x='Route', y='Refusal Rate %',
+                                                title=f"Top {len(top_refusal_routes)} Routes by Refusal Rate",
+                                                hover_data=['Total Refusals', 'Total Approaches'])
+                                fig_routes.update_layout(xaxis_tickangle=-45)
+                                st.plotly_chart(fig_routes, use_container_width=True) 
+
+            with tab4:
+                st.subheader("Demographic Analysis of Refusals")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Age distribution of refusals - UPDATED to show total vs refusals
+                    st.write("**Age Distribution Analysis**")
+                    if 'AGE_GROUP_LABEL' in refusal_analysis_df.columns:
+                        # Calculate total counts from full dataset
+                        age_totals = refusal_analysis_df['AGE_GROUP_LABEL'].value_counts().reset_index()
+                        age_totals.columns = ['Age Group', 'Total Count']
+                        
+                        # Calculate refusal counts
+                        age_refusals = refusal_df['AGE_GROUP_LABEL'].value_counts().reset_index()
+                        age_refusals.columns = ['Age Group', 'Refusal Count']
+                        
+                        # Merge total and refusal counts
+                        age_analysis = pd.merge(age_totals, age_refusals, on='Age Group', how='left')
+                        age_analysis['Refusal Count'] = age_analysis['Refusal Count'].fillna(0)
+                        age_analysis['Refusal Rate %'] = (age_analysis['Refusal Count'] / age_analysis['Total Count'] * 100).round(2)
+                        age_analysis['Participation Count'] = age_analysis['Total Count'] - age_analysis['Refusal Count']
+                        age_analysis['Participation Rate %'] = (age_analysis['Participation Count'] / age_analysis['Total Count'] * 100).round(2)
+                        
+                        # Display the comprehensive analysis
+                        st.dataframe(
+                            age_analysis[['Age Group', 'Total Count', 'Participation Count', 'Participation Rate %', 'Refusal Count', 'Refusal Rate %']],
+                            use_container_width=True,
+                            hide_index=True,
+                            height=300
+                        )
+                        
+                        # Chart: Refusal rate by age group
+                        if not age_analysis.empty:
+                            fig_age = px.bar(age_analysis, x='Age Group', y='Refusal Rate %',
+                                        title="Refusal Rate by Age Group",
+                                        hover_data=['Total Count', 'Refusal Count'])
+                            st.plotly_chart(fig_age, use_container_width=True)
+                    else:
+                        st.info("Age data not available.")
+                
+                with col2:
+                    # Gender distribution of refusals - UPDATED to show total vs refusals
+                    st.write("**Gender Distribution Analysis**")
+                    
+                    if 'YOUR_GENDERCode' in refusal_analysis_df.columns:
+                        # Calculate total counts from full dataset
+                        gender_totals = refusal_analysis_df['YOUR_GENDERCode'].value_counts().reset_index()
+                        gender_totals.columns = ['Gender Code', 'Total Count']
+                        
+                        # Calculate refusal counts
+                        gender_refusals_counts = refusal_df['YOUR_GENDERCode'].value_counts().reset_index()
+                        gender_refusals_counts.columns = ['Gender Code', 'Refusal Count']
+                        
+                        # Map codes to labels
+                        gender_mapping = {
+                            '1': 'Male',
+                            '2': 'Female', 
+                            '3': 'Other'
+                        }
+                        
+                        # Merge total and refusal counts
+                        gender_analysis = pd.merge(gender_totals, gender_refusals_counts, on='Gender Code', how='left')
+                        gender_analysis['Refusal Count'] = gender_analysis['Refusal Count'].fillna(0)
+                        gender_analysis['Gender'] = gender_analysis['Gender Code'].map(gender_mapping)
+                        gender_analysis['Gender'] = gender_analysis['Gender'].fillna('Not Specified')
+                        gender_analysis['Refusal Rate %'] = (gender_analysis['Refusal Count'] / gender_analysis['Total Count'] * 100).round(2)
+                        gender_analysis['Participation Count'] = gender_analysis['Total Count'] - gender_analysis['Refusal Count']
+                        gender_analysis['Participation Rate %'] = (gender_analysis['Participation Count'] / gender_analysis['Total Count'] * 100).round(2)
+                        
+                        # Display the comprehensive analysis
+                        st.dataframe(
+                            gender_analysis[['Gender', 'Total Count', 'Participation Count', 'Participation Rate %', 'Refusal Count', 'Refusal Rate %']],
+                            use_container_width=True,
+                            hide_index=True,
+                            height=300
+                        )
+                        
+                        # Chart: Refusal rate by gender
+                        if not gender_analysis.empty:
+                            fig_gender = px.bar(gender_analysis, x='Gender', y='Refusal Rate %',
+                                            title="Refusal Rate by Gender",
+                                            hover_data=['Total Count', 'Refusal Count'])
+                            st.plotly_chart(fig_gender, use_container_width=True)
+                    
+                    else:
+                        st.info("Gender data not available.")
+                
+                # Language distribution of refusals - UPDATED to show total vs refusals
+                st.write("**Language Distribution Analysis**")
+                if 'LANGUAGE_LABEL' in refusal_analysis_df.columns:
+                    # Calculate total counts from full dataset
+                    language_totals = refusal_analysis_df['LANGUAGE_LABEL'].value_counts().reset_index()
+                    language_totals.columns = ['Language', 'Total Count']
+                    
+                    # Calculate refusal counts
+                    language_refusals_counts = refusal_df['LANGUAGE_LABEL'].value_counts().reset_index()
+                    language_refusals_counts.columns = ['Language', 'Refusal Count']
+                    
+                    # Merge total and refusal counts
+                    language_analysis = pd.merge(language_totals, language_refusals_counts, on='Language', how='left')
+                    language_analysis['Refusal Count'] = language_analysis['Refusal Count'].fillna(0)
+                    language_analysis['Refusal Rate %'] = (language_analysis['Refusal Count'] / language_analysis['Total Count'] * 100).round(2)
+                    language_analysis['Participation Count'] = language_analysis['Total Count'] - language_analysis['Refusal Count']
+                    language_analysis['Participation Rate %'] = (language_analysis['Participation Count'] / language_analysis['Total Count'] * 100).round(2)
+                    
+                    # Display top languages (show all if less than 10, otherwise top 10)
+                    display_languages = language_analysis.nlargest(10, 'Total Count') if len(language_analysis) > 10 else language_analysis
+                    
+                    st.dataframe(
+                        display_languages[['Language', 'Total Count', 'Participation Count', 'Participation Rate %', 'Refusal Count', 'Refusal Rate %']],
+                        use_container_width=True,
+                        hide_index=True,
+                        height=300
+                    )
+                    
+                    # Chart: Refusal rate by language (top 10)
+                    if not display_languages.empty:
+                        fig_language = px.bar(display_languages, x='Language', y='Refusal Rate %',
+                                        title="Refusal Rate by Language (Top 10)",
+                                        hover_data=['Total Count', 'Refusal Count'])
+                        fig_language.update_layout(xaxis_tickangle=-45)
+                        st.plotly_chart(fig_language, use_container_width=True)
+                else:
+                    st.info("Language data not available.")
+                
+                # Race distribution of refusals - UPDATED to show total vs refusals
+                st.write("**Race/Ethnicity Distribution Analysis**")
+                if not refusal_race_df.empty and 'RACE_CATEGORY' in refusal_race_df.columns:
+                    # For race data, we need to handle it differently since it's in a separate table
+                    # Count total race records (assuming refusal_race_df contains all race data)
+                    race_totals = refusal_race_df['RACE_CATEGORY'].value_counts().reset_index()
+                    race_totals.columns = ['Race/Ethnicity', 'Total Count']
+                    
+                    # For refusal counts, we need to merge with refusal data
+                    if 'RESPONDENT_ID' in refusal_race_df.columns and 'RESPONDENT_ID' in refusal_df.columns:
+                        refusal_race_merged = refusal_race_df[refusal_race_df['RESPONDENT_ID'].isin(refusal_df['RESPONDENT_ID'])]
+                        race_refusals_counts = refusal_race_merged['RACE_CATEGORY'].value_counts().reset_index()
+                        race_refusals_counts.columns = ['Race/Ethnicity', 'Refusal Count']
+                        
+                        # Merge total and refusal counts
+                        race_analysis = pd.merge(race_totals, race_refusals_counts, on='Race/Ethnicity', how='left')
+                        race_analysis['Refusal Count'] = race_analysis['Refusal Count'].fillna(0)
+                        race_analysis['Refusal Rate %'] = (race_analysis['Refusal Count'] / race_analysis['Total Count'] * 100).round(2)
+                        race_analysis['Participation Count'] = race_analysis['Total Count'] - race_analysis['Refusal Count']
+                        race_analysis['Participation Rate %'] = (race_analysis['Participation Count'] / race_analysis['Total Count'] * 100).round(2)
+                        
+                        # Display top races (show all if less than 10, otherwise top 10)
+                        display_races = race_analysis.nlargest(10, 'Total Count') if len(race_analysis) > 10 else race_analysis
+                        
+                        st.dataframe(
+                            display_races[['Race/Ethnicity', 'Total Count', 'Participation Count', 'Participation Rate %', 'Refusal Count', 'Refusal Rate %']],
+                            use_container_width=True,
+                            hide_index=True,
+                            height=300
+                        )
+                        
+                        # Chart: Refusal rate by race (top 10)
+                        if not display_races.empty:
+                            fig_race = px.bar(display_races, x='Race/Ethnicity', y='Refusal Rate %',
+                                        title="Refusal Rate by Race/Ethnicity (Top 10)",
+                                        hover_data=['Total Count', 'Refusal Count'])
+                            fig_race.update_layout(xaxis_tickangle=-45)
+                            st.plotly_chart(fig_race, use_container_width=True)
+                    else:
+                        st.info("Cannot link race data with refusal data - RESPONDENT_ID missing.")
+                else:
+                    st.info("Race/ethnicity data not available.")
+            
+            # Summary insights
+            st.subheader("📈 Key Insights")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Refusal Statistics:**")
+                st.write(f"• Total refusals: {total_refusals:,}")
+                st.write(f"• Overall refusal rate: {refusal_rate:.1f}%")
+                
+                if 'interviewer_stats_display' in locals() and not interviewer_stats_display.empty:
+                    max_refusal_interviewer = interviewer_stats_display.nlargest(1, 'Refusal Rate %')
+                    if not max_refusal_interviewer.empty:
+                        st.write(f"• Highest refusal rate interviewer: {max_refusal_interviewer.iloc[0]['Interviewer']} ({max_refusal_interviewer.iloc[0]['Refusal Rate %']}%)")
+                
+                if 'route_stats_display' in locals() and not route_stats_display.empty:
+                    max_refusal_route = route_stats_display.nlargest(1, 'Refusal Rate %')
+                    if not max_refusal_route.empty:
+                        st.write(f"• Highest refusal rate route: {max_refusal_route.iloc[0]['Route']} ({max_refusal_route.iloc[0]['Refusal Rate %']}%)")
+            
+            with col2:
+                st.write("**Recommendations:**")
+                st.write("• Focus training on interviewers with high refusal rates")
+                st.write("• Investigate routes with consistently high refusal rates")
+                st.write("• Consider language assistance for non-English speakers")
+                st.write("• Review approach techniques in high-refusal demographic groups")
+            
+            # Navigation
+            if st.button("🔙 Home Page"):
+                st.query_params["page"] = "main"
+                st.rerun()
+
 
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
@@ -996,7 +1432,6 @@ else:
             # # # Display the most recent "Completed" date
             st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
 
-
         # Page Content Section
         with header_col2:
             if current_page != 'timedetails':
@@ -1035,6 +1470,11 @@ else:
                 st.query_params["page"] = "weekend"
                 st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
+            if 'actransit' in selected_project:
+                if st.button("REFUSAL ANALYSIS"):
+                    st.query_params["page"] = "refusal"
+                    st.rerun()
+
             
             # Add these two new buttons for kcata simple project
             if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
@@ -1065,6 +1505,7 @@ else:
                     st.query_params["page"] = "weekend_station"
                     st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend_station">', unsafe_allow_html=True)
+     
             
         if 'rail' in selected_schema.lower():
         
@@ -1129,6 +1570,9 @@ else:
             elif current_page == "low_response_questions_tab":
                 if 'actransit' in selected_project:  # Add this new route
                     low_response_questions_page()
+            elif current_page == "refusal":  # ADD THIS NEW PAGE FOR REFUSAL ANALYSIS
+                if 'actransit' in selected_project:
+                    show_refusal_analysis(refusal_analysis_df, refusal_race_df)
             elif current_page == "surveyreport":
                 if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
                     # 📌 Fields you want to show
