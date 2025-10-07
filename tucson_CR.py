@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import snowflake.connector
 from automated_refresh_flow_new import fetch_and_process_data
-from utils import render_aggrid,create_csv,download_csv,update_query_params
+from utils import render_aggrid,create_csv,download_csv,update_query_params, fetch_data
 from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
@@ -94,6 +94,42 @@ else:
                 role=os.getenv('SNOWFLAKE_ROLE'),
                     )
             return conn
+
+        def export_elvis_data():
+            """
+            Connect to the database and download Elvis table as CSV directly
+            """
+            try:
+                from automated_refresh_flow_new import PROJECTS, fetch_data
+                
+                project_config = PROJECTS[st.session_state["selected_project"]]
+                elvis_config = project_config['databases']["elvis"]
+                table_name = elvis_config['table']
+                database_name = elvis_config["database"]
+                
+                with st.spinner("🔄 Downloading Elvis data..."):
+                    csv_buffer = fetch_data(database_name, table_name)
+                    
+                    if csv_buffer:
+                        # Create filename
+                        project_name = st.session_state["selected_project"].lower().replace(" ", "_")
+                        file_name = f"{project_name}_elvis_db.csv"
+                        
+                        # Use the existing CSV buffer directly - no conversion needed
+                        st.download_button(
+                            label="✅ Download Complete - Click to Save",
+                            data=csv_buffer.getvalue(),
+                            file_name=file_name,
+                            mime="text/csv",
+                            key="elvis_download"
+                        )
+                        
+                    else:
+                        st.error("❌ Failed to fetch data from Elvis table")
+                        
+            except Exception as e:
+                st.error(f"❌ Error exporting Elvis data: {str(e)}")
+
 
 
         pinned_column='ROUTE_SURVEYEDCode'
@@ -1431,6 +1467,10 @@ else:
 
             # # # Display the most recent "Completed" date
             st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            # ADD THE ELVIS EXPORT BUTTON RIGHT HERE - BELOW SYNC BUTTON
+            if st.button("📊 Export Elvis Data"):
+                export_elvis_data()
 
         # Page Content Section
         with header_col2:

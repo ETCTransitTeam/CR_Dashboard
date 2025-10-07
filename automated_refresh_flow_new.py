@@ -4,13 +4,11 @@ from datetime import date,datetime
 from geopy.distance import geodesic
 import warnings
 import copy
-from database import DatabaseConnector
 import os
 from dotenv import load_dotenv
 import math
 import random
 import streamlit as st
-import io
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
 import boto3
@@ -22,6 +20,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
+from utils import fetch_data
 
 warnings.filterwarnings('ignore')
 
@@ -190,57 +189,6 @@ def fetch_and_process_data(project,schema):
     today_date=''.join(str(today_date).split('-'))
 
     project_config = PROJECTS[project]
-
-    # Function to fetch data from the database
-    def fetch_data(database_name, table_name):
-        HOST = os.getenv("SQL_HOST")
-        USER = os.getenv("SQL_USER")
-        PASSWORD = os.getenv("SQL_PASSWORD")
-        
-        db_connector = DatabaseConnector(HOST, database_name, USER, PASSWORD)
-
-        try:
-            db_connector.connect()
-            print("Connection successful.....")
-
-            if db_connector.connection is None:
-                st.error("Database connection failed. Check credentials and server availability.")
-                st.query_params["logged_in"] = "true"
-                st.query_params["page"] = "main"
-                st.rerun()  # Refresh the page after login
-                return None
-            
-            connection = db_connector.connection  # Get MySQL connection object
-            print(f"{table_name=} and {database_name=}")
-            
-            select_query = f"SELECT * FROM {table_name}"
-            df = pd.read_sql(select_query, connection)  # Load data into DataFrame
-            db_connector.disconnect()  # Close database connection
-
-            # Store DataFrame in memory
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, index=False)
-            csv_buffer.seek(0)
-
-            return csv_buffer  
-
-        # except mysql.connector.Error as sql_err:
-        #     st.error(f"Database error: {sql_err}")
-            
-        except Exception as e:
-            st.error(f"Error fetching data: {e}")
-        
-        finally:
-            try:
-                db_connector.disconnect()
-            except Exception:
-                pass  # Ensure it doesn't crash on failed disconnect
-
-        # Redirect back to the main page without disturbing the whole process
-        st.query_params["logged_in"] = "true"
-        st.query_params["page"] = "main"
-        st.rerun()  # Refresh the page after login
-        return None
     
     elvis_config=project_config['databases']["elvis"]
     table_name=elvis_config['table']
