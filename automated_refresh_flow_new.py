@@ -410,6 +410,7 @@ def fetch_and_process_data(project,schema):
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
 
         detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        stops_df = detail_df_stops.copy()
         detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
 
         wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-Overall')
@@ -418,7 +419,7 @@ def fetch_and_process_data(project,schema):
         wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-Overall')
         wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
 
-        print("Files read for KCATA")
+        print("Files read for ACTRANSIT from S3")
 
     elif project=='TUCSON RAIL':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
@@ -569,7 +570,6 @@ def fetch_and_process_data(project,schema):
         wkday_overall_df[[0,1,2,3,4,5]]=wkday_overall_df[[0,1,2,3,4,5]].fillna(0)
         wkend_overall_df[[0,1,2,3,4,5]]=wkend_overall_df[[0,1,2,3,4,5]].fillna(0)
 
-    print('Files From S3 loaded succssfully')
     # detail_df_stops = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'STOPS')
     # detail_df_xfers = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'XFERS')
 
@@ -1514,7 +1514,7 @@ def fetch_and_process_data(project,schema):
         # Process the route comparison data
         new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_df_merged, ke_df)
         route_level_df = create_route_level_comparison(new_df)
-        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_df_merged, route_level_df, project)
+        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_df_merged, route_level_df, project, stops_df)
         print("Route comparison data processed successfully.")
 
         survey_report_df = process_surveyor_data_kcata(ke_df, df)

@@ -5271,9 +5271,9 @@ def create_route_level_comparison(new_df):
     
     return route_level_df
 
-def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, project_name):
+def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, project_name, stops_df=None):
     """
-    Process reverse direction logic for the routes
+    Process reverse direction logic for the routes with custom fallback logic per Jason's requirements
     """
     # Get column names
     trip_oppo_dir_column = check_all_characters_present(df, ['tripinoppodir'])
@@ -5282,8 +5282,16 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     trip_code_column = check_all_characters_present(df, ['prevtransferscode', 'nexttransferscode'])
     trip_code_column.sort()
     
+    # Time period columns
+    time_on_column = check_all_characters_present(df, ['timeoncode'])
+    oppo_dir_time_column = check_all_characters_present(df, ['oppodirtriptimecode'])
+    
     prev_trip_route_code_column = check_all_characters_present(df, ['tripfirstroutecode', 'tripsecondroutecode', 'tripthirdroutecode', 'tripfourthroutecode'])
     next_trip_route_code_column = check_all_characters_present(df, ['tripnextroutecode', 'tripafterroutecode', 'trip3rdroutecode', 'triplast4thrtecode'])
+    
+    # Also get route name columns for previous/next trips
+    prev_trip_route_name_column = check_all_characters_present(df, ['tripfirstroute', 'tripsecondroute', 'tripthirdroute', 'tripfourthroute'])
+    next_trip_route_name_column = check_all_characters_present(df, ['tripnextroute', 'tripafterroute', 'trip3rdroute', 'triplast4throute'])
     
     values_to_replace = ['-oth-']
     df[[*prev_trip_route_code_column, *next_trip_route_code_column]] = df[
@@ -5296,6 +5304,7 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     midday_colum = ['3']
     pm_column = ['4']
     evening_column = ['5']
+    
     # Create mapping from route code to its details from cr_df
     cr_route_info = {}
     for _, row in wkday_overall_df.iterrows():
@@ -5368,9 +5377,225 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         else:
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/kc-streetcar25/lime"
 
-    # Create reverse dataframe
-    reverse_df = df[df[trip_oppo_dir_column[0]].str.lower() == 'yes'][['id', *route_survey_column, *route_survey_name_column, *trip_code_column, *prev_trip_route_code_column, *next_trip_route_code_column]]
+    # NEW FUNCTION: Determine direction from transfer stops
+    def determine_direction_from_transfers(assigned_route_code, record_id, route_type):
+        """
+        Determine direction code (00/01) for assigned routes by analyzing stop sequences
+        from previous/next transfer information.
+        """
+        if stops_df is None:
+            return None
+            
+        # Get the appropriate transfer columns based on route type
+        def get_transfer_columns(route_type):
+            """Get the corresponding transfer on/off columns based on route type"""
+            
+            # Remove Rev- prefix if present for column mapping
+            clean_type = route_type.replace('Rev-', '')
+            
+            if clean_type.startswith('p'):  # Previous trips
+                position_map = {
+                    'p1': check_all_characters_present(df, ['PrevTran1OnBus_CLNTID', 'PrevTran1OffBus_CLNTID']),
+                    'p2': check_all_characters_present(df, ['PrevTran2OnBus_CLNTID', 'PrevTran2OffBus_CLNTID']),
+                    'p3': check_all_characters_present(df, ['PrevTran3OnBus_CLNTID', 'PrevTran3OffBus_CLNTID']),
+                    'p4': check_all_characters_present(df, ['PrevTran4OnBus_CLNTID', 'PrevTran4OffBus_CLNTID'])
+                }
+            elif clean_type.startswith('n'):  # Next trips
+                position_map = {
+                    'n1': check_all_characters_present(df, ['NextTran1OnBus_CLNTID', 'NextTran1OffBus_CLNTID']),
+                    'n2': check_all_characters_present(df, ['NextTran2OnBus_CLNTID', 'NextTran2OffBus_CLNTID']),
+                    'n3': check_all_characters_present(df, ['NextTran3OnBus_CLNTID', 'NextTran3OffBus_CLNTID']),
+                    'n4': check_all_characters_present(df, ['NextTran4OnBus_CLNTID', 'NextTran4OffBus_CLNTID'])
+                }
+            else:
+                return None, None
+                
+            # Get the matching columns for this type
+            matching_columns = position_map.get(clean_type, [])
+            
+            # Return on and off columns (first two from the list)
+            if len(matching_columns) >= 2:
+                return matching_columns[0], matching_columns[1]
+            else:
+                return None, None
+        
+        # Get the transfer columns for this route type
+        on_column, off_column = get_transfer_columns(route_type)
+            
+        if not on_column or not off_column:
+            return None
+        # Check if these columns exist in the dataframe
+        if on_column not in df.columns or off_column not in df.columns:
+            return None
+        
+        # Get the on/off stop values for this specific record
+        record_data = df[df['id'] == record_id]
+        
+        if record_data.empty:
+            return None
+        
+        on_stop = record_data[on_column].iloc[0] if pd.notna(record_data[on_column].iloc[0]) else None
+        off_stop = record_data[off_column].iloc[0] if pd.notna(record_data[off_column].iloc[0]) else None
+        
+        if not on_stop or not off_stop:
+            return None
+        
+        # Function to normalize stop ID (remove direction part)
+        def normalize_stop_id(stop_id):
+            """Remove direction code (_00, _01) from stop ID to match with ETC_STOP_ID"""
+            if not stop_id or pd.isna(stop_id):
+                return None
+            
+            stop_id = str(stop_id).strip()
+            parts = stop_id.split('_')
+            
+            # If the stop ID has at least 5 parts, the 4th part is usually the direction (00 or 01)
+            if len(parts) >= 5 and parts[3] in ["00", "01"]:
+                parts.pop(3)  # Remove the direction code
+            
+            return "_".join(parts)
+        
+        # Function to extract base route from stop ID for filtering
+        def get_base_route_from_stop(stop_id):
+            """Extract base route from stop ID (e.g., ACT_2_51B from ACT_2_51B_6090)"""
+            if not stop_id or pd.isna(stop_id):
+                return None
+            
+            parts = str(stop_id).split('_')
+            if len(parts) >= 3:
+                return '_'.join(parts[:-1])  # Remove the stop number part
+            return None
+        
+        # Normalize the stop IDs
+        norm_on_stop = normalize_stop_id(on_stop)
+        norm_off_stop = normalize_stop_id(off_stop)
+        
+        # Get base route for filtering stops
+        base_route = get_base_route_from_stop(norm_on_stop) or get_base_route_from_stop(norm_off_stop)
+        
+        if not base_route:
+            return None
+        
+        # Filter stops for this route
+        route_stops = stops_df[stops_df['ETC_STOP_ID'].str.startswith(base_route, na=False)].copy()
+        
+        if route_stops.empty:
+            return None
+        
+        # Function to find stop sequence and direction
+        def find_stop_info(stop_id, route_stops_df):
+            """Find sequence number and direction for a stop ID"""
+            if not stop_id:
+                return None, None
+            
+            # Look for exact match first
+            exact_match = route_stops_df[route_stops_df['ETC_STOP_ID'] == stop_id]
+            if not exact_match.empty:
+                seq = exact_match['seq_fixed'].iloc[0]
+                direction = stop_id.split('_')[3] if len(stop_id.split('_')) >= 4 else None
+                return seq, direction
+            
+            # If no exact match, try to find by stop number
+            stop_number = stop_id.split('_')[-1] if '_' in stop_id else stop_id
+            matching_stops = route_stops_df[route_stops_df['ETC_STOP_ID'].str.endswith(f'_{stop_number}', na=False)]
+            
+            if not matching_stops.empty:
+                # Take the first match
+                seq = matching_stops['seq_fixed'].iloc[0]
+                full_stop_id = matching_stops['ETC_STOP_ID'].iloc[0]
+                direction = full_stop_id.split('_')[3] if len(full_stop_id.split('_')) >= 4 else None
+                return seq, direction
+            
+            return None, None
+        
+        # Find sequence numbers and directions for on and off stops
+        on_seq, on_direction = find_stop_info(norm_on_stop, route_stops)
+        off_seq, off_direction = find_stop_info(norm_off_stop, route_stops)
+        
+        if on_seq is None or off_seq is None:
+            return None
+        
+        # Determine direction based on sequence comparison
+        if on_direction and off_direction and on_direction == off_direction:
+            # Both stops have same direction, use that
+            return on_direction
+        elif on_seq < off_seq:
+            # Traveling in increasing sequence order - typically direction 00
+            return '00'
+        else:
+            # Traveling in decreasing sequence order - typically direction 01  
+            return '01'
 
+    # NEW FUNCTION: Fix final direction codes using transfer analysis
+    def fix_final_direction_codes():
+        """
+        Fix FINAL_DIRECTION_CODE for n1-n4, p1-p4 and Rev- routes by analyzing stop sequences
+        for both reverse_df and all_type_df
+        """
+        print(f"DEBUG: Starting to fix FINAL_DIRECTION_CODE for {len(reverse_df)} reverse_df records and {len(all_type_df)} all_type_df records")
+        
+        def fix_single_dataframe(df_to_fix, df_name):
+            """Helper function to fix direction codes for a single dataframe"""
+            fixed_count = 0
+            for index, row in df_to_fix.iterrows():
+                record_id = row['id']
+                current_type = row['Type']
+                current_route = row[route_survey_column[0]]  # This is the assigned route
+                
+                # Skip if Type is empty or already 'Reverse', or if route is empty
+                if not current_type or current_type == 'Reverse' or not current_route:
+                    continue
+                    
+                # Check if this is a transfer route type (p1-p4, n1-n4, or Rev- versions)
+                is_transfer_type = any(current_type.startswith(prefix) for prefix in ['p', 'n', 'Rev-p', 'Rev-n'])
+                
+                if is_transfer_type:
+                    print(f"DEBUG: Analyzing {df_name} - transfer type {current_type} for record {record_id} with route {current_route}")
+                    
+                    # Determine direction from transfer stops
+                    direction_code = determine_direction_from_transfers(current_route, record_id, current_type)
+                    
+                    if direction_code:
+                        # Create the final direction code by appending direction to route
+                        final_direction_code = f"{current_route}_{direction_code}"
+                        
+                        # Update the FINAL_DIRECTION_CODE
+                        df_to_fix.loc[index, 'FINAL_DIRECTION_CODE'] = final_direction_code
+                        fixed_count += 1
+                        print(f"DEBUG: SUCCESS - Set FINAL_DIRECTION_CODE to {final_direction_code} for {df_name} record {record_id}")
+                        
+                        # Also update the specific type column if it exists
+                        clean_type = current_type.replace('Rev-', '')
+                        type_specific_col = f'FINAL_DIRECTION_CODE_{clean_type}'
+                        
+                        if type_specific_col in df_to_fix.columns:
+                            df_to_fix.loc[index, type_specific_col] = final_direction_code
+                            print(f"DEBUG: Also updated {type_specific_col} to {final_direction_code} in {df_name}")
+                    else:
+                        print(f"DEBUG: Could not determine direction for route {current_route} in {df_name}")
+            
+            return fixed_count
+        
+        # Fix both dataframes
+        reverse_fixed = fix_single_dataframe(reverse_df, "reverse_df")
+        all_type_fixed = fix_single_dataframe(all_type_df, "all_type_df")
+        
+        print(f"DEBUG: Fixed {reverse_fixed} records in reverse_df and {all_type_fixed} records in all_type_df")
+
+    # Create reverse dataframe - include route name columns for previous/next trips
+    reverse_df = df[df[trip_oppo_dir_column[0]].str.lower() == 'yes'][[
+        'id', *route_survey_column, *route_survey_name_column, *trip_code_column, 
+        *prev_trip_route_code_column, *next_trip_route_code_column,
+        *prev_trip_route_name_column, *next_trip_route_name_column,
+        *time_on_column, *oppo_dir_time_column
+    ]]
+
+    # Store original values before processing
+    reverse_df['ORIGINAL_ROUTE_SURVEYEDCode'] = reverse_df[route_survey_column[0]]
+    reverse_df['ORIGINAL_ROUTE_SURVEYED'] = reverse_df[route_survey_name_column[0]]
+    reverse_df['ORIGINAL_TIME_ON'] = reverse_df[time_on_column[0]] if time_on_column else ''
+    reverse_df['ORIGINAL_OPPO_DIR_TIME'] = reverse_df[oppo_dir_time_column[0]] if oppo_dir_time_column else ''
+    
     # Add the new columns using the cr_df mapping
     reverse_df['TIME_PERIOD'] = reverse_df[route_survey_column[0]].apply(lambda x: get_route_info(x, 'TIME_PERIOD'))
     reverse_df['DAY_TYPE'] = reverse_df[route_survey_column[0]].apply(lambda x: get_route_info(x, 'DAY_TYPE'))
@@ -5379,7 +5604,9 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
 
     reverse_df[route_survey_column[0]] = reverse_df[route_survey_column[0]].apply(lambda x: '_'.join(x.split("_")[:-1]))
     reverse_df.reset_index(inplace=True, drop=True)
-    reverse_df[[*prev_trip_route_code_column, *next_trip_route_code_column]].fillna('', inplace=True)
+    reverse_df[[*prev_trip_route_code_column, *next_trip_route_code_column, 
+                *prev_trip_route_name_column, *next_trip_route_name_column,
+                *time_on_column, *oppo_dir_time_column]].fillna('', inplace=True)
     
     def get_int_from_series(series, default=0):
         vals = pd.to_numeric(pd.Series(series).dropna(), errors='coerce').dropna().values
@@ -5387,31 +5614,149 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             return int(default)
         return int(vals[0])
     
-    def get_valid_routes(row, route_code_column):
-        result_array = reverse_df[reverse_df['id'] == row['id']][route_code_column].values
-        values_in_list = result_array[0, :]
-        return [value for value in values_in_list if not (pd.isna(value) or value == '')]
-    
-    def process_route(route, counter_list, counter_prefix, target_index):
-        counter_list[0] += 1
-        rev_prefix = f'Rev-{counter_prefix}'
-        random_choice = random.choice([counter_prefix, rev_prefix])
+    def get_valid_routes_and_names(row, route_code_columns, route_name_columns):
+        """Get both route codes and names for valid routes"""
+        code_array = reverse_df[reverse_df['id'] == row['id']][route_code_columns].values
+        name_array = reverse_df[reverse_df['id'] == row['id']][route_name_columns].values
         
-        value = get_int_from_series(
-            route_level_df.loc[route_level_df[route_survey_column[0]] == route, 'Total_DIFFERENCE']
-        )
+        codes_in_list = code_array[0, :]
+        names_in_list = name_array[0, :]
         
-        if value > 0:
-            reverse_df.loc[target_index, 'Type'] = f'{random_choice}{counter_list[0]}'
-            route_level_df.loc[
-                route_level_df[route_survey_column[0]] == route, 'Total_DIFFERENCE'
-            ] = value - 1
-            return True
-        return False
+        valid_routes = []
+        for i, (code, name) in enumerate(zip(codes_in_list, names_in_list)):
+            if not (pd.isna(code) or code == ''):
+                valid_routes.append({
+                    'index': i,
+                    'code': code,
+                    'name': name if not (pd.isna(name) or name == '') else f'Route_{code}'
+                })
+        return valid_routes
     
-    # Implement logic for handling Type values
+    def get_time_period_from_time_code(time_code):
+        """Convert time codes like AM1, PM3, MID6 to time periods"""
+        if not time_code or pd.isna(time_code):
+            return ''
+        
+        time_code_str = str(time_code).upper()
+        
+        # AM time periods
+        if time_code_str.startswith('AM'):
+            return '1' if time_code_str in ['AM1'] else '2'
+        # MID time periods  
+        elif time_code_str.startswith('MID'):
+            return '3'
+        # PM time periods
+        elif time_code_str.startswith('PM'):
+            return '4'
+        # OFF time periods
+        elif time_code_str.startswith('OFF'):
+            return '5'
+        # EVE time periods
+        elif time_code_str.startswith('EVE'):
+            return '5'
+        else:
+            return ''
+    
+    def update_route_surveyed_info(target_index, route_code, route_name, assigned_type, original_row):
+        """Update the ROUTE_SURVEYEDCode and ROUTE_SURVEYED columns for the reverse record with custom fallback logic"""
+
+        reverse_df.loc[target_index, route_survey_column[0]] = route_code
+        reverse_df.loc[target_index, route_survey_name_column[0]] = route_name
+        
+        # DAY TYPE: Mirror the original record date (inherit from original)
+        day_type = original_row['DAY_TYPE'] if original_row['DAY_TYPE'] else 'Weekday'
+        reverse_df.loc[target_index, 'DAY_TYPE'] = day_type
+        
+        # TIME PERIOD: Custom logic per Jason's requirements
+        time_period = ''
+        
+        # Check if it's a reverse record (contains "Rev-" or is "Reverse")
+        is_reverse_record = 'Rev-' in str(assigned_type) or assigned_type == 'Reverse'
+        
+        if is_reverse_record and oppo_dir_time_column:
+            # For reverse records, derive from Opposite_Time_On question
+            oppo_time_code = original_row[oppo_dir_time_column[0]] if oppo_dir_time_column else ''
+            time_period = get_time_period_from_time_code(oppo_time_code)
+        else:
+            # For non-reverse transfer cases (p1-p4, n1-n4), keep existing Time_On
+            original_time_code = original_row[time_on_column[0]] if time_on_column else ''
+            time_period = get_time_period_from_time_code(original_time_code)
+        
+        # If we still don't have a time period, try to get from CR data
+        if not time_period:
+            time_period = get_route_info(route_code, 'TIME_PERIOD')
+        
+        reverse_df.loc[target_index, 'TIME_PERIOD'] = time_period
+        
+        # FINAL_DIRECTION_CODE: Use CR direction logic
+        final_direction_code = get_final_direction_code(route_code)
+        reverse_df.loc[target_index, 'FINAL_DIRECTION_CODE'] = final_direction_code
+        # print(f"DEBUG: update_route_surveyed_info - Set FINAL_DIRECTION_CODE for index {target_index}, route {route_code}: {final_direction_code}")
+
+    def process_multiple_routes(row, route_list, counter_prefix, target_index, max_routes=4):
+        """Process multiple routes and assign types like p1, p2, p3, p4 or n1, n2, n3, n4"""
+        assigned_types = []
+        assigned_routes = []
+        
+        for i, route_info in enumerate(route_list):
+            if i >= max_routes:  # Limit to maximum of 4 routes (p1-p4 or n1-n4)
+                break
+                
+            route_code = route_info['code']
+            route_name = route_info['name']
+            rev_prefix = f'Rev-{counter_prefix}'
+            random_choice = random.choice([counter_prefix, rev_prefix])
+            
+            value = get_int_from_series(
+                route_level_df.loc[route_level_df[route_survey_column[0]] == route_code, 'Total_DIFFERENCE']
+            )
+            
+            if value > 0:
+                type_name = f'{random_choice}{i+1}'  # p1, p2, p3, p4 or n1, n2, n3, n4
+                assigned_types.append(type_name)
+                assigned_routes.append({
+                    'type': type_name,
+                    'code': route_code,
+                    'name': route_name
+                })
+                reverse_df.loc[target_index, f'Type_{counter_prefix}{i+1}'] = type_name
+                route_level_df.loc[
+                    route_level_df[route_survey_column[0]] == route_code, 'Total_DIFFERENCE'
+                ] = value - 1
+                
+                # FIX: Populate FINAL_DIRECTION_CODE for ALL assigned routes, not just the first one
+                final_direction_code = get_final_direction_code(route_code)
+                reverse_df.loc[target_index, f'FINAL_DIRECTION_CODE_{counter_prefix}{i+1}'] = final_direction_code
+                # print(f"DEBUG: process_multiple_routes - Set FINAL_DIRECTION_CODE_{counter_prefix}{i+1} for index {target_index}, route {route_code}: {final_direction_code}")
+                
+                # If this is the first assigned route, update the main route surveyed info
+                if len(assigned_types) == 1:
+                    update_route_surveyed_info(target_index, route_code, route_name, type_name, row)
+        
+        # Set the main Type column to the first assigned type, or 'Reverse' if none assigned
+        if assigned_types:
+            reverse_df.loc[target_index, 'Type'] = assigned_types[0]
+            # FIX: Ensure the main FINAL_DIRECTION_CODE is populated for the primary route
+            primary_route_code = assigned_routes[0]['code']
+            final_direction_code = get_final_direction_code(primary_route_code)
+            reverse_df.loc[target_index, 'FINAL_DIRECTION_CODE'] = final_direction_code
+            # print(f"DEBUG: process_multiple_routes - Set main FINAL_DIRECTION_CODE for index {target_index}, primary route {primary_route_code}: {final_direction_code}")
+        else:
+            reverse_df.loc[target_index, 'Type'] = 'Reverse'
+            # If no routes assigned, keep original route info but apply reverse logic
+            original_route = row['ORIGINAL_ROUTE_SURVEYEDCode']
+            original_name = row['ORIGINAL_ROUTE_SURVEYED']
+            update_route_surveyed_info(target_index, original_route, original_name, 'Reverse', row)
+            
+        return len(assigned_types) > 0
+
+    # First pass - implement logic for handling Type values
     for index, row in reverse_df.iterrows():
+        # print(f"DEBUG: Processing index {index}, id {row['id']}")
         random_value = random.choice([0, 1])
+        original_route_code = row['ORIGINAL_ROUTE_SURVEYEDCode']
+        original_route_name = row['ORIGINAL_ROUTE_SURVEYED']
+        
         value = get_int_from_series(
             route_level_df.loc[
                 route_level_df[route_survey_column[0]] == row[route_survey_column[0]],
@@ -5426,53 +5771,109 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             df.loc[df['id'] == row['id'], trip_code_column[0]],
             default=0
         )
-        counter = [0]
+        
+        # print(f"DEBUG: index {index} - value: {value}, prev_trans_value: {prev_trans_value}, next_trans_value: {next_trans_value}, random_value: {random_value}")
         
         if random_value:
             if value > 0:
                 reverse_df.loc[index, 'Type'] = 'Reverse'
                 route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                # Update route info for reverse records
+                update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                # print(f"DEBUG: index {index} - Assigned Type: Reverse")
             elif prev_trans_value:
-                for route in get_valid_routes(row, prev_trip_route_code_column):
-                    result_value = process_route(route, counter, 'p', index)
-                    if result_value:
-                        break
-                    else:
-                        reverse_df.loc[index, 'Type'] = f'{random.choice(["p1","Rev-p1"])}'
-                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
-                        break
+                prev_routes = get_valid_routes_and_names(row, prev_trip_route_code_column, prev_trip_route_name_column)
+                # print(f"DEBUG: index {index} - prev_routes found: {len(prev_routes)}")
+                if prev_routes:
+                    success = process_multiple_routes(row, prev_routes, 'p', index, max_routes=4)
+                    if not success:
+                        chosen_type = random.choice(["p1","Rev-p1"])
+                        reverse_df.loc[index, 'Type'] = chosen_type
+                        # FIX: Ensure FINAL_DIRECTION_CODE is populated for these cases
+                        if prev_routes and len(prev_routes) > 0:
+                            primary_route_code = prev_routes[0]['code']
+                            # CRITICAL FIX: Update ALL route info, not just direction code
+                            update_route_surveyed_info(index, primary_route_code, prev_routes[0]['name'], chosen_type, row)
+                        else:
+                            # Fallback: use original route info
+                            update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
+                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
+                else:
+                    reverse_df.loc[index, 'Type'] = 'Reverse'
+                    update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                    # print(f"DEBUG: index {index} - No prev_routes, assigned Type: Reverse")
             elif next_trans_value:
-                for route in get_valid_routes(row, next_trip_route_code_column):
-                    result_value = process_route(route, counter, 'n', index)
-                    if result_value:
-                        break
-                    else:
-                        reverse_df.loc[index, 'Type'] = f'{random.choice(["n1","Rev-n1"])}'
-                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
-                        break
+                next_routes = get_valid_routes_and_names(row, next_trip_route_code_column, next_trip_route_name_column)
+                # print(f"DEBUG: index {index} - next_routes found: {len(next_routes)}")
+                if next_routes:
+                    success = process_multiple_routes(row, next_routes, 'n', index, max_routes=4)
+                    if not success:
+                        chosen_type = random.choice(["n1","Rev-n1"])
+                        reverse_df.loc[index, 'Type'] = chosen_type
+                        # FIX: Ensure FINAL_DIRECTION_CODE is populated for these cases
+                        if next_routes and len(next_routes) > 0:
+                            primary_route_code = next_routes[0]['code']
+                            # CRITICAL FIX: Update ALL route info, not just direction code
+                            update_route_surveyed_info(index, primary_route_code, next_routes[0]['name'], chosen_type, row)
+                        else:
+                            # Fallback: use original route info
+                            update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
+                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
+                else:
+                    reverse_df.loc[index, 'Type'] = 'Reverse'
+                    update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                    # print(f"DEBUG: index {index} - No next_routes, assigned Type: Reverse")
             else:
                 reverse_df.loc[index, 'Type'] = 'Reverse'
+                update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                # print(f"DEBUG: index {index} - No conditions met, assigned Type: Reverse")
         else:
             if prev_trans_value:
-                for route in get_valid_routes(row, prev_trip_route_code_column):
-                    result_value = process_route(route, counter, 'p', index)
-                    if result_value:
-                        break
-                    else:
-                        reverse_df.loc[index, 'Type'] = f'{random.choice(["p1","Rev-p1"])}'
-                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
-                        break
+                prev_routes = get_valid_routes_and_names(row, prev_trip_route_code_column, prev_trip_route_name_column)
+                # print(f"DEBUG: index {index} - prev_routes found: {len(prev_routes)}")
+                if prev_routes:
+                    success = process_multiple_routes(row, prev_routes, 'p', index, max_routes=4)
+                    if not success:
+                        chosen_type = random.choice(["p1","Rev-p1"])
+                        reverse_df.loc[index, 'Type'] = chosen_type
+                        # FIX: Ensure FINAL_DIRECTION_CODE is populated for these cases
+                        if prev_routes and len(prev_routes) > 0:
+                            primary_route_code = prev_routes[0]['code']
+                            # CRITICAL FIX: Update ALL route info, not just direction code
+                            update_route_surveyed_info(index, primary_route_code, prev_routes[0]['name'], chosen_type, row)
+                        else:
+                            # Fallback: use original route info
+                            update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
+                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
+                else:
+                    reverse_df.loc[index, 'Type'] = 'Reverse'
+                    update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                    # print(f"DEBUG: index {index} - No prev_routes, assigned Type: Reverse")
             elif next_trans_value:
-                for route in get_valid_routes(row, next_trip_route_code_column):
-                    result_value = process_route(route, counter, 'n', index)
-                    if result_value:
-                        break
-                    else:
-                        reverse_df.loc[index, 'Type'] = f'{random.choice(["n1","Rev-n1"])}'
-                        route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
-                        break
+                next_routes = get_valid_routes_and_names(row, next_trip_route_code_column, next_trip_route_name_column)
+                # print(f"DEBUG: index {index} - next_routes found: {len(next_routes)}")
+                if next_routes:
+                    success = process_multiple_routes(row, next_routes, 'n', index, max_routes=4)
+                    if not success:
+                        chosen_type = random.choice(["n1","Rev-n1"])
+                        reverse_df.loc[index, 'Type'] = chosen_type
+                        # FIX: Ensure FINAL_DIRECTION_CODE is populated for these cases
+                        if next_routes and len(next_routes) > 0:
+                            primary_route_code = next_routes[0]['code']
+                            # CRITICAL FIX: Update ALL route info, not just direction code
+                            update_route_surveyed_info(index, primary_route_code, next_routes[0]['name'], chosen_type, row)
+                        else:
+                            # Fallback: use original route info
+                            update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
+                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
+                else:
+                    reverse_df.loc[index, 'Type'] = 'Reverse'
+                    update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                    # print(f"DEBUG: index {index} - No next_routes, assigned Type: Reverse")
             else:
                 reverse_df.loc[index, 'Type'] = 'Reverse'
+                update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                # print(f"DEBUG: index {index} - No conditions met, assigned Type: Reverse")
     
     all_type_df = copy.deepcopy(reverse_df)
     
@@ -5480,7 +5881,11 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     new_route_level_df = copy.deepcopy(route_level_df)
     
     for index, row in reverse_df.iterrows():
+        # print(f"DEBUG: Second pass - Processing index {index}, id {row['id']}, current Type: {row['Type']}")
         random_value = random.choice([0, 1])
+        original_route_code = row['ORIGINAL_ROUTE_SURVEYEDCode']
+        original_route_name = row['ORIGINAL_ROUTE_SURVEYED']
+        
         value = get_int_from_series(
             new_route_level_df.loc[
                 new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]],
@@ -5496,40 +5901,97 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             default=0
         )
         
-        counter = [0]
+        # print(f"DEBUG: Second pass - index {index} - value: {value}, prev_trans_value: {prev_trans_value}, next_trans_value: {next_trans_value}, random_value: {random_value}")
         
         if value:
             if not random_value:
                 reverse_df.loc[index, 'Type'] = 'Reverse'
                 new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                # print(f"DEBUG: Second pass - index {index} - Assigned Type: Reverse")
             else:
                 if prev_trans_value:
-                    for route in get_valid_routes(row, prev_trip_route_code_column):
-                        result_value = process_route(route, counter, 'p', index)
-                        if result_value:
-                            break
-                        else:
-                            reverse_df.loc[index, 'Type'] = f'{random.choice(["p1","Rev-p1"])}'
+                    prev_routes = get_valid_routes_and_names(row, prev_trip_route_code_column, prev_trip_route_name_column)
+                    # print(f"DEBUG: Second pass - index {index} - prev_routes found: {len(prev_routes)}")
+                    if prev_routes:
+                        success = process_multiple_routes(row, prev_routes, 'p', index, max_routes=4)
+                        if not success:
+                            chosen_type = random.choice(["p1","Rev-p1"])
+                            reverse_df.loc[index, 'Type'] = chosen_type
                             new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
-                            break
+                            # FIX: Ensure FINAL_DIRECTION_CODE is populated for these cases
+                            if prev_routes and len(prev_routes) > 0:
+                                primary_route_code = prev_routes[0]['code']
+                                # CRITICAL FIX: Update ALL route info, not just direction code
+                                update_route_surveyed_info(index, primary_route_code, prev_routes[0]['name'], chosen_type, row)
+                            # print(f"DEBUG: Second pass - index {index} - Fallback assigned Type: {chosen_type}")
+                    else:
+                        reverse_df.loc[index, 'Type'] = 'Reverse'
+                        new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                        update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
+                        # print(f"DEBUG: Second pass - index {index} - No prev_routes, assigned Type: Reverse")
                 elif next_trans_value:
-                    for route in get_valid_routes(row, next_trip_route_code_column):
-                        result_value = process_route(route, counter, 'n', index)
-                        if result_value:
-                            break
-                        else:
-                            reverse_df.loc[index, 'Type'] = f'{random.choice(["n1","Rev-n1"])}'
+                    next_routes = get_valid_routes_and_names(row, next_trip_route_code_column, next_trip_route_name_column)
+                    # print(f"DEBUG: Second pass - index {index} - next_routes found: {len(next_routes)}")
+                    if next_routes:
+                        success = process_multiple_routes(row, next_routes, 'n', index, max_routes=4)
+                        if not success:
+                            chosen_type = random.choice(["n1","Rev-n1"])
+                            reverse_df.loc[index, 'Type'] = chosen_type
                             new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
-                            break
+                            # FIX: Ensure FINAL_DIRECTION_CODE is populated for these cases
+                            if next_routes and len(next_routes) > 0:
+                                primary_route_code = next_routes[0]['code']
+                                # CRITICAL FIX: Update ALL route info, not just direction code
+                                # update_route_surveyed_info(index, primary_route_code, next_routes[0]['name'], chosen_type, row)
+                            # print(f"DEBUG: Second pass - index {index} - Fallback assigned Type: {chosen_type}")
+                    else:
+                        reverse_df.loc[index, 'Type'] = 'Reverse'
+                        new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                        update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
                 else:
                     reverse_df.loc[index, 'Type'] = 'Reverse'
                     new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
+                    update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
         else:
-            reverse_df.loc[index, 'Type'] = ''
+            # FIX: Don't clear the Type if it's already set! Only clear if it's truly empty
+            current_type = reverse_df.loc[index, 'Type']
+            if not current_type or current_type == '':
+                reverse_df.loc[index, 'Type'] = ''
+                # print(f"DEBUG: Second pass - index {index} - No value and no current type, cleared Type")
+            else:
+                # print(f"DEBUG: Second pass - index {index} - No value but keeping existing Type: {current_type}")
+                pass
+                # Keep the existing Type and FINAL_DIRECTION_CODE from first pass
+    
+    # NEW: Apply the direction code fixing logic
+    if stops_df is not None:
+        fix_final_direction_codes()
     
     reverse_df['COMPLETED By'] = ''
     all_type_df['COMPLETED By'] = ''
     all_type_df['Type'].fillna('Reverse', inplace=True)
+    
+    # Drop the temporary original route columns
+    original_columns_to_drop = [
+        'ORIGINAL_ROUTE_SURVEYEDCode', 'ORIGINAL_ROUTE_SURVEYED',
+        'ORIGINAL_TIME_ON', 'ORIGINAL_OPPO_DIR_TIME'
+    ]
+    reverse_df.drop([col for col in original_columns_to_drop if col in reverse_df.columns], axis=1, inplace=True)
+    all_type_df.drop([col for col in original_columns_to_drop if col in all_type_df.columns], axis=1, inplace=True)
+    
+    # Final debug check
+    print("\nDEBUG: Final check - Types and FINAL_DIRECTION_CODE values:")
+    empty_direction_count = 0
+    for index, row in reverse_df.iterrows():
+        if row['Type'] and row['Type'] != '' and (not row['FINAL_DIRECTION_CODE'] or row['FINAL_DIRECTION_CODE'] == ''):
+            empty_direction_count += 1
+            # print(f"Index {index}: Type='{row['Type']}', FINAL_DIRECTION_CODE='{row['FINAL_DIRECTION_CODE']}' <- EMPTY!")
+        else:
+            pass
+            # print(f"Index {index}: Type='{row['Type']}', FINAL_DIRECTION_CODE='{row['FINAL_DIRECTION_CODE']}'")
+    
+    print(f"\nDEBUG: Found {empty_direction_count} records with non-empty Type but empty FINAL_DIRECTION_CODE")
     
     return route_level_df, all_type_df, reverse_df
 

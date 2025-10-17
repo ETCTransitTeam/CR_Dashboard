@@ -51,6 +51,11 @@ div.stButton > button, div.stDownloadButton > button{
 """
 st.markdown(button_style, unsafe_allow_html=True)
 
+# Initialize project switching states
+if "show_switch_success" not in st.session_state:
+    st.session_state.show_switch_success = False
+if "success_project_name" not in st.session_state:
+    st.session_state.success_project_name = None
 
 if not st.session_state["logged_in"]:
     if current_page == "signup":
@@ -246,21 +251,745 @@ else:
         refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
         refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
 
-        st.sidebar.markdown("**User Profile**")
-        st.sidebar.caption(f"**Role:** {st.session_state['user']['role']}")
-        st.sidebar.caption(f"**Username:** {st.session_state['user']['username']}")
-        st.sidebar.caption(f"**Email:** {st.session_state['user']['email']}")
+        # st.sidebar.markdown("**User Profile**")
+        # st.sidebar.caption(f"**Role:** {st.session_state['user']['role']}")
+        # st.sidebar.caption(f"**Username:** {st.session_state['user']['username']}")
+        # st.sidebar.caption(f"**Email:** {st.session_state['user']['email']}")
 
-        st.sidebar.header("Filters")
-        search_query=st.sidebar.text_input(label='Search', placeholder='Search')
+        # st.sidebar.header("Filters")
+        # search_query=st.sidebar.text_input(label='Search', placeholder='Search')
 
-        st.sidebar.markdown("<div style='flex-grow:1;'></div>", unsafe_allow_html=True)
+        # st.sidebar.markdown("<div style='flex-grow:1;'></div>", unsafe_allow_html=True)
         
-        if st.sidebar.button('Change Password', key='Change Password Button'):
-            send_change_password_email(st.session_state['user']['email'])
+        # if st.sidebar.button('Change Password', key='Change Password Button'):
+        #     send_change_password_email(st.session_state['user']['email'])
 
-        if st.sidebar.button("Logout",key='Logout Button'):
-            logout()
+        # if st.sidebar.button("Logout",key='Logout Button'):
+        #     logout()
+
+        ####################################################################################################
+
+        def get_page_key(selected_page):
+            mapping = {
+                "🏠︎   Home": "main",
+                "🗓︎   WEEKDAY-OVERALL": "weekday",
+                "☀︎   WEEKEND-OVERALL": "weekend",
+                "🕒  Time Of Day Details": "timedetails",
+                "⤓    LOW RESPONSE QUESTIONS": "low_response_questions_tab",
+                "↺   Clone Records": "reverse_routes",
+                "⌗  DAILY TOTALS": "dailytotals",
+                "∆   Surveyor/Route/Trend Reports": "surveyreport",
+                "◉  WEEKDAY StationWise Comparison": "weekday_station",
+                "⦾  WEEKEND StationWise Comparison": "weekend_station",
+                "🚫  Refusal Analysis": "refusal"
+            }
+            return mapping.get(selected_page, "main")
+        
+
+        user = st.session_state["user"]
+        username = user["username"]
+        email = user["email"]
+        role = user["role"]
+
+        
+
+        # Sidebar Styling
+        # --- THEME-SYNCED SIDEBAR STYLING ---
+                # --- THEME-ENHANCED SIDEBAR DESIGN ---
+        st.markdown("""
+        <style>
+
+        /* --- Sidebar container with gradient --- */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, color-mix(in srgb, var(--secondary-background-color) 95%, var(--background-color)) 0%, var(--background-color) 100%) !important;
+            color: var(--text-color);
+            box-shadow: 2px 0 10px rgba(0,0,0,0.08);
+            border-right: 1px solid rgba(128,128,128,0.1);
+            padding-top: 1rem !important;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        /* --- Animation --- */
+        @keyframes slideIn {
+            from { transform: translateX(-25px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        /* --- Profile Card - FIXED FOR COLLAPSED SIDEBAR --- */
+        .profile-card {
+            background: rgba(255,255,255,0.05);
+            margin: 16px;
+            border-radius: 14px;
+            padding: 14px;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            /* Ensure content fits in collapsed sidebar */
+            max-width: calc(100% - 32px);
+            box-sizing: border-box;
+            word-wrap: break-word;
+            overflow: hidden;
+        }
+
+        /* Specific styles for when sidebar is collapsed */
+        [data-testid="stSidebar"][aria-expanded="false"] .profile-card {
+            padding: 10px 8px !important;
+            margin: 12px 8px !important;
+            max-width: calc(100% - 16px);
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .profile-initial {
+            width: 40px !important;
+            height: 40px !important;
+            font-size: 1rem !important;
+            margin: 0 auto 6px !important;
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .profile-card div {
+            font-size: 0.8rem !important;
+            line-height: 1.2 !important;
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .profile-card div:not(:first-child) {
+            font-size: 0.7rem !important;
+        }
+
+        .profile-card:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 18px rgba(66,133,244,0.25);
+            border-color: var(--primary-color);
+        }
+
+        /* --- FIXED: Profile Initial for Light/Dark Mode --- */
+        .profile-initial {
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            background: #4285f4 !important; /* Explicit blue color */
+            color: white !important; /* Force white text */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 1.3rem;
+            margin: 0 auto 10px;
+            transition: all 0.3s ease;
+            border: 2px solid rgba(255,255,255,0.3);
+            box-shadow: 0 2px 8px rgba(66, 133, 244, 0.3);
+        }
+
+        /* Ensure visibility in all themes */
+        [data-theme="light"] .profile-initial,
+        [data-theme="dark"] .profile-initial,
+        body[data-theme="light"] .profile-initial,
+        body[data-theme="dark"] .profile-initial {
+            background: #4285f4 !important;
+            color: white !important;
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .profile-initial {
+            width: 40px !important;
+            height: 40px !important;
+            font-size: 1rem !important;
+            margin: 0 auto 6px !important;
+        }
+
+        /* --- Section label - Adjust for collapsed sidebar --- */
+        .section-label {
+            text-transform: uppercase;
+            font-size: 11px;
+            opacity: 0.6;
+            margin: 12px 16px 4px;
+            letter-spacing: 0.05em;
+            transition: all 0.3s ease;
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .section-label {
+            font-size: 9px !important;
+            margin: 10px 8px 2px !important;
+            text-align: center;
+        }
+
+        /* --- Search Box --- */
+        input[type="text"] {
+            background-color: color-mix(in srgb, var(--secondary-background-color) 95%, var(--background-color)) !important;
+            color: var(--text-color) !important;
+            border: 1px solid rgba(128,128,128,0.25) !important;
+            border-radius: 6px !important;
+        }
+
+        /* --- Dropdown --- */
+        div[data-baseweb="select"] {
+            background: color-mix(in srgb, var(--secondary-background-color) 92%, var(--background-color));
+            border-radius: 10px;
+        }
+
+        /* --- Buttons --- */
+        .stButton > button {
+            width: 100%;
+            color: var(--text-color);
+            border-radius: 10px;
+            border: 1px solid rgba(128,128,128,0.25) !important;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            background: color-mix(in srgb, var(--secondary-background-color) 96%, var(--background-color)) !important;
+        }
+
+        .stButton > button:hover {
+            background-color: var(--primary-color) !important;
+            color: #fff !important;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(66,133,244,0.3);
+        }
+
+        /* --- Active Button --- */
+        .active-button > button {
+            border-left: 4px solid var(--primary-color);
+            background-color: color-mix(in srgb, var(--primary-color) 10%, var(--background-color)) !important;
+            font-weight: 600;
+        }
+
+        /* --- Bottom Buttons - REMOVED BORDER --- */
+        .bottom-buttons {
+            position: fixed;
+            bottom: 20px;
+            left: 0;
+            width: 15.5rem;
+            padding: 12px 16px;
+            /* REMOVED: border-top: 1px solid rgba(128,128,128,0.15); */
+            background: color-mix(in srgb, var(--secondary-background-color) 97%, var(--background-color));
+            z-index: 999;
+            transition: all 0.3s ease;
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .bottom-buttons {
+            width: 4.5rem !important;
+            padding: 8px !important;
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .stButton > button {
+            padding: 0.4rem 0.3rem !important;
+            font-size: 0.7rem !important;
+            min-height: auto !important;
+        }
+
+        /* --- Scrollbar --- */
+        [data-testid="stSidebar"]::-webkit-scrollbar {
+            width: 6px;
+        }
+        [data-testid="stSidebar"]::-webkit-scrollbar-thumb {
+            background: var(--primary-color);
+            border-radius: 10px;
+        }
+
+        /* --- Logout and Change Password Buttons --- */
+        #ChangePasswordButton {
+            background-color: #2ecc71 !important;
+            color: white !important;
+        }
+        #ChangePasswordButton:hover {
+            background-color: #27ae60 !important;
+        }
+
+        #LogoutButton {
+            background-color: #e63946 !important;
+            color: white !important;
+        }
+        #LogoutButton:hover {
+            background-color: #c62828 !important;
+        }
+
+        /* --- Ensure text doesn't overflow in collapsed state --- */
+        [data-testid="stSidebar"][aria-expanded="false"] * {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Allow profile card text to wrap properly */
+        [data-testid="stSidebar"][aria-expanded="false"] .profile-card * {
+            white-space: normal !important;
+            word-break: break-word !important;
+        }
+
+        </style>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <style>
+        /* 🌐 GLOBAL BUTTON DESIGN — works for all buttons (sidebar + main page) */
+        .stButton > button {
+            width: 100%;
+            border: none !important;
+            padding: 0.6rem 1rem !important;
+            border-radius: 10px !important;
+            font-weight: 500 !important;
+            transition: all 0.25s ease !important;
+            cursor: pointer !important;
+            font-size: 0.95rem !important;
+        }
+
+        /* 🌞 LIGHT THEME STYLE */
+        @media (prefers-color-scheme: light) {
+            .stButton > button {
+                background: #f5f6f7 !important;          /* clean soft gray */
+                color: #222 !important;                  /* dark text */
+                border: 1px solid #dcdcdc !important;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            }
+            .stButton > button:hover {
+                background: linear-gradient(90deg, #4285f4, #6fa8ff) !important; /* blue gradient */
+                color: #fff !important;                  /* white text on hover */
+                border: none !important;
+                box-shadow: 0 6px 18px rgba(66,133,244,0.25);
+                transform: translateY(-2px);
+            }
+        }
+
+        /* 🌙 DARK THEME STYLE */
+        @media (prefers-color-scheme: dark) {
+            .stButton > button {
+                background: #2b2f3a !important;           /* deep gray */
+                color: #f4f4f4 !important;                /* bright text */
+                border: 1px solid rgba(255,255,255,0.08);
+                box-shadow: 0 2px 5px rgba(0,0,0,0.25);
+            }
+            .stButton > button:hover {
+                background: linear-gradient(90deg, #4285f4, #6fa8ff) !important; /* blue gradient */
+                color: #fff !important;
+                box-shadow: 0 6px 18px rgba(66,133,244,0.35);
+                transform: translateY(-2px);
+            }
+        }
+
+        /* 💫 Active button effect (when pressed) */
+        .stButton > button:active {
+            transform: scale(0.98);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        /* 🔘 Rounded focus ring */
+        .stButton > button:focus {
+            outline: 2px solid rgba(66,133,244,0.5);
+            outline-offset: 2px;
+        }
+
+        /* 🔻Bottom fixed buttons section (sidebar only) */
+        [data-testid="stSidebar"] .bottom-buttons {
+            position: fixed !important;
+            bottom: 20px !important;
+            left: 12px !important;
+            right: 12px !important;
+            padding-top: 10px !important;
+        }
+
+        /* 🟢 Change Password button */
+        #ChangePasswordButton button {
+            background-color: #2ecc71 !important;
+            color: white !important;
+        }
+        #ChangePasswordButton button:hover {
+            background-color: #27ae60 !important;
+        }
+
+        /* 🔴 Logout button */
+        #LogoutButton button {
+            background-color: #e63946 !important;
+            color: white !important;
+        }
+        #LogoutButton button:hover {
+            background-color: #c62828 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+
+        st.markdown("""
+        <style>
+        /* Sidebar background & theme-aware text */
+        [data-testid="stSidebar"] {
+            background-color: var(--background-color);
+            color: var(--text-color);
+        }
+
+        /* Profile Card - theme aware */
+        .sidebar-profile {
+            background-color: rgba(255, 255, 255, 0.08); /* Light overlay */
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 1.2rem;
+            text-align: center;
+            margin: 1rem 0;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        body[data-theme="light"] .sidebar-profile {
+            background-color: rgba(240, 248, 255, 0.6);
+            border: 1px solid rgba(0, 123, 255, 0.15);
+        }
+        .sidebar-profile:hover {
+            box-shadow: 0 0 20px rgba(0, 123, 255, 0.2);
+        }
+
+        /* Text inside profile */
+        .sidebar-profile h3 {
+            color: var(--text-color);
+            font-weight: 600;
+            margin-bottom: 0.4rem;
+        }
+        .sidebar-profile small {
+            color: var(--secondary-text-color);
+            font-size: 0.8rem;
+        }
+
+        /* Search box */
+        [data-testid="stTextInput"] input {
+            border-radius: 10px;
+            border: 1px solid rgba(0, 123, 255, 0.4);
+        }
+
+        /* Buttons */
+        div[data-testid="stButton"] > button {
+            width: 100%;
+            border-radius: 12px;
+            background-color: #007BFF;
+            color: white;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        div[data-testid="stButton"] > button:hover {
+            background-color: #0056b3;
+        }
+
+        /* Section labels */
+        .sidebar-section-label {
+            color: var(--text-color);
+            font-size: 0.8rem;
+            opacity: 0.7;
+            text-transform: uppercase;
+            margin-top: 1rem;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <style>
+        /* Project switcher styles */
+        .project-switcher-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 12px;
+            margin: 8px 0;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .current-project-badge {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            display: inline-block;
+            margin: 4px 0;
+        }
+
+        [data-testid="stSidebar"][aria-expanded="false"] .project-switcher-card {
+            padding: 8px !important;
+            margin: 4px 0 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+                
+
+
+
+        # --- Sidebar Layout ---
+        with st.sidebar:
+            # --- Profile Section ---
+            st.markdown(f"""
+            <div class="profile-card">
+                <div class="profile-initial">{username[0].upper()}</div>
+                <div><strong>{username}</strong></div>
+                <div style="font-size:12px;color:#b3b3b3;">{email}</div>
+                <div style="font-size:12px;color:#9a9a9a;">Role: {role}</div>
+                <div style="font-size:11px;color:#666;margin-top:8px;padding:4px 8px;background:rgba(255,255,255,0.1);border-radius:6px;">
+                    📁 Project: <strong>{st.session_state.get("selected_project", "None")}</strong>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown("<div class='section-label'>🔍 Filters</div>", unsafe_allow_html=True)
+            search_query = st.text_input("Search", placeholder="Search here...", label_visibility="collapsed")
+
+            # === ENHANCED PROJECT SWITCHER WITH MODAL ===
+            if role.upper() == "ADMIN":
+                st.markdown("---")
+                st.markdown("<div class='section-label'>🚀 Admin Controls</div>", unsafe_allow_html=True)
+                
+                current_project = st.session_state.get("selected_project", "")
+                available_projects = list(schema_value.keys())
+                
+                # Display current project
+                # st.info(f"**Current:** {current_project}")
+                
+                # Project selection dropdown
+                selected_new_project = st.selectbox(
+                    "Switch to Project",
+                    available_projects,
+                    index=available_projects.index(current_project) if current_project in available_projects else 0,
+                    key="project_selector",
+                    help="Select a project to switch to",
+                    label_visibility="collapsed"
+                )
+                
+                #  Direct switch button (no confirmation)
+                if selected_new_project != current_project:
+                    if st.button("🔄 Switch Project", use_container_width=True, key="switch_project_direct"):
+                        # Perform the switch immediately
+                        st.session_state["selected_project"] = selected_new_project
+                        st.session_state["schema"] = schema_value[selected_new_project]
+                        
+                        # Clear cached data
+                        keys_to_clear = ['wkday_raw_df', 'wkend_raw_df', 'filtered_wkday_df', 'filtered_wkend_df']
+                        for key in keys_to_clear:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                        
+                        # Show success message
+                        st.session_state["show_switch_success"] = True
+                        st.session_state["success_project_name"] = selected_new_project
+                        st.rerun()
+
+
+            
+
+            st.markdown("<div class='section-label'>📁 Completion Report</div>", unsafe_allow_html=True)
+
+            # --- Menu Items ---
+            menu_items = [
+                "🏠︎   Home",
+                "🗓︎   WEEKDAY-OVERALL",
+                "☀︎   WEEKEND-OVERALL",
+                "🕒  Time Of Day Details"
+            ]
+
+            if 'actransit' in selected_project:
+                menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS"])
+
+            if 'kcata' in selected_project or ('actransit' in selected_project and 'rail' not in selected_schema.lower()):
+                menu_items.append("↺   Clone Records")
+
+            if any(p in selected_project for p in ['stl', 'kcata', 'actransit']):
+                menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
+
+            if 'rail' in selected_schema.lower():
+                menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
+
+            # --- Session State ---
+            if "selected_page" not in st.session_state:
+                st.session_state.selected_page = "🏠︎   Home"
+
+            # --- Dropdown for Navigation ---
+            selected_page = st.selectbox(
+                "",
+                menu_items,
+                index=menu_items.index(st.session_state.selected_page) if st.session_state.selected_page in menu_items else 0,
+                key="sidebar_menu",
+                label_visibility="collapsed"
+            )
+
+            # --- Detect Page Change ---
+            if selected_page != st.session_state.selected_page:
+                st.session_state.selected_page = selected_page
+                st.query_params["page"] = get_page_key(selected_page)
+                st.rerun()
+
+            # --- Bottom Buttons ---
+            st.markdown('<div class="bottom-buttons">', unsafe_allow_html=True)
+            if st.button('Change Password', key='ChangePasswordButton'):
+                send_change_password_email(st.session_state['user']['email'])
+            if st.button("Logout", key='LogoutButton'):
+                logout()
+            st.markdown('</div>', unsafe_allow_html=True) 
+
+
+        # === ADD PROFESSIONAL HEADER HERE - REPLACE YOUR CURRENT HEADER ===
+        def create_professional_header():
+            # === DATE SETUP ===
+            current_date = datetime.datetime.now()
+            formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
+
+            # Get most recent "Completed" date
+            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project:
+                completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
+            else:
+                completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
+            most_recent_completed_date = pd.to_datetime(completed_dates).max()
+
+            # Determine total records (based on current page)
+            if current_page == "weekend":
+                total_records = wkend_df["# of Surveys"].sum()
+            else:
+                total_records = wkday_df["# of Surveys"].sum()
+
+            # === STYLING ===
+            st.markdown("""
+            <style>
+            .professional-header {
+                background: linear-gradient(135deg, #356AE6 0%, #7AB8FF 100%);
+                border-radius: 18px;
+                padding: 2rem 2.5rem;
+                margin-bottom: 2.2rem;
+                color: #1a2a44;
+                position: relative;
+                box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+                border: 1px solid rgba(170, 200, 255, 0.6);
+                overflow: hidden;
+            }
+
+            .professional-header::before {
+                content: '';
+                position: absolute;
+                inset: 0;
+                background: radial-gradient(circle at top right, rgba(255,255,255,0.35), transparent 70%);
+                z-index: 0;
+            }
+
+            .header-content {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                position: relative;
+                z-index: 1;
+                gap: 1rem;
+            }
+
+            .header-left h1 {
+                font-size: 2.2rem;
+                font-weight: 700;
+                letter-spacing: -0.5px;
+                margin-bottom: 0.3rem;
+                color: #0c2c54;
+            }
+
+            .header-left p {
+                font-size: 1.05rem;
+                font-weight: 400;
+                opacity: 0.9;
+                margin: 0;
+                color: #163a5f;
+            }
+
+            .metric-group {
+                display: flex;
+                gap: 0.8rem;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
+
+            .metric-card {
+            background: rgba(255,255,255,0.6);
+            backdrop-filter: blur(12px);
+            border-radius: 10px;
+            border: 1px solid rgba(180, 200, 255, 0.5);
+            padding: 0.75rem 1rem;
+            text-align: center;
+            min-width: 160px;
+            transition: all 0.25s ease;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            background: rgba(255,255,255,0.7);
+        }
+
+        .metric-label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #123f72;
+            margin-bottom: 4px;
+        }
+
+        .metric-value {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #1e3a5f;
+            background: #ffffff;
+            padding: 4px 10px;
+            border-radius: 6px;
+            display: inline-block;
+            font-family: 'Roboto Mono', 'Menlo', monospace;
+            letter-spacing: -0.3px;
+        }
+
+        @media (max-width: 1100px) {
+            .header-content {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1.2rem;
+            }
+            .metric-group {
+                justify-content: flex-start;
+            }
+            .header-left h1 {
+                font-size: 1.9rem;
+            }
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+            # === HEADER CONTENT ===
+            st.markdown(f"""
+            <div class="professional-header">
+                <div class="header-content">
+                    <div class="header-left">
+                        <h1>📘 Completion Report</h1>
+                        <p>Comprehensive Route Performance Overview</p>
+                    </div>
+                    <div class="metric-group">
+                        <div class="metric-card">
+                            <p class="metric-label">Total Records</p>
+                            <p class="metric-value">{total_records:,}</p>
+                        </div>
+                        <div class="metric-card">
+                            <p class="metric-label">⏱ Last Refresh</p>
+                            <p class="metric-value">{formatted_date}</p>
+                        </div>
+                        <div class="metric-card">
+                            <p class="metric-label">Last Completed</p>
+                            <p class="metric-value">{most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Call the function right after your sidebar
+        create_professional_header()
+        # === END PROFESSIONAL HEADER ===
+
+        # === SUCCESS MESSAGE (Auto-disappearing) ===
+        if st.session_state.get("show_switch_success", False):
+            success_project = st.session_state.get("success_project_name", "")
+            
+            # Success message that auto-disappears
+            success_placeholder = st.empty()
+            with success_placeholder.container():
+                st.success(f"✅ Successfully switched to **{success_project}**! Loading new data...")
+            
+            # Auto-remove after 3 seconds
+            import time
+            time.sleep(3)
+            success_placeholder.empty()
+            
+            # Clear the success state
+            del st.session_state["show_switch_success"]
+            del st.session_state["success_project_name"]
+####################################################################################################
 
 
 
@@ -324,15 +1053,17 @@ else:
                 filtered_df1 = filter_dataframe(data1, search_query)
 
 
-                render_aggrid(filtered_df1,500,'ROUTE_SURVEYEDCode',1)
-                csv1, file_name1 = create_csv(filtered_df1, "route_direction_comparison.csv")
-                download_csv(csv1, file_name1, "Download Route Direction Comparison Data")
+                # render_aggrid(filtered_df1,500,'ROUTE_SURVEYEDCode',1)
+                st.dataframe(filtered_df1, use_container_width=True, hide_index=True)
+                # csv1, file_name1 = create_csv(filtered_df1, "route_direction_comparison.csv")
+                # download_csv(csv1, file_name1, "Download Route Direction Comparison Data")
 
                 filtered_df3 = filter_dataframe(data3, search_query)
                 st.subheader("Route Level Comparison")
-                render_aggrid(filtered_df3,400,'ROUTE_SURVEYEDCode',2)
-                csv3, file_name3 = create_csv(filtered_df3, "route_level_comparison.csv")
-                download_csv(csv3, file_name3, "Download Route Level Comparison Data")
+                # render_aggrid(filtered_df3,400,'ROUTE_SURVEYEDCode',2)
+                st.dataframe(filtered_df3, use_container_width=True, hide_index=True)
+                # csv3, file_name3 = create_csv(filtered_df3, "route_level_comparison.csv")
+                # download_csv(csv3, file_name3, "Download Route Level Comparison Data")
 
             # Display buttons and dataframes in the second column (col2)
             with col2:
@@ -363,9 +1094,10 @@ else:
 
                 filtered_df2 = filter_dataframe(data2, search_query)
 
-                render_aggrid(filtered_df2,500,'Display_Text',3)
-                csv2, file_name2 = create_csv(filtered_df2, "time_range_data.csv")
-                download_csv(csv2, file_name2, "Download Time Range Data")
+                # render_aggrid(filtered_df2,500,'Display_Text',3)
+                st.dataframe(filtered_df2, use_container_width=True, hide_index=True)
+                # csv2, file_name2 = create_csv(filtered_df2, "time_range_data.csv")
+                # download_csv(csv2, file_name2, "Download Time Range Data")
 
 
 
@@ -373,10 +1105,11 @@ else:
             
                 # Render AgGrid
                 st.subheader("Time Period OverAll Data")
-                render_aggrid(filtered_df4,400,'Time Period',4)
+                # render_aggrid(filtered_df4,400,'Time Period',4)
+                st.dataframe(filtered_df4, use_container_width=True, hide_index=True)
 
-                csv4, file_name4 = create_csv(filtered_df4, "time_period_overall_data.csv")
-                download_csv(csv4, file_name4, "Download Time Period Overall Data")
+                # csv4, file_name4 = create_csv(filtered_df4, "time_period_overall_data.csv")
+                # download_csv(csv4, file_name4, "Download Time Period Overall Data")
 
 
         def weekday_page():
@@ -508,7 +1241,8 @@ else:
                     '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
             filtered_df = filter_dataframe(wkday_stationwise_df[wkday_stationwise_columns], search_query)
 
-            render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
+            # render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 
             if st.button("Home Page"):
                 st.query_params()
@@ -531,7 +1265,8 @@ else:
 
             filtered_df = filter_dataframe(wkend_stationwise_df[wkend_stationwise_columns], search_query)
 
-            render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
+            # render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
+            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
             if st.button("Home Page"):
                 st.query_params()
                 st.rerun()
@@ -1418,11 +2153,11 @@ else:
 
 
         # Layout columns
-        header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
+        header_col1, header_col2 = st.columns([2, 2])
 
         # Header Section
         with header_col1:
-            st.header('Completion Report')
+            # st.header('Completion Report')
             # Button to trigger the entire script
         
             if st.session_state['user']["role"].lower()=='admin':
@@ -1454,96 +2189,102 @@ else:
                         route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
                         low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
                     st.success(f"Data synced successfully 🎉 … pipelines are tidy, tables are aligned, and we’re good to go ✅📂")
-            current_date = datetime.datetime.now()
-            formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
-            st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
+
+            # if current_page != 'timedetails':
+            #     if current_page == "weekend":
+            #         st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
+            #     else:  # Default to weekday data for main and weekday pages
+            #         st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
+            # current_date = datetime.datetime.now()
+            # formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
+            # st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
 
             # Get the most recent "Completed" date from both wkday_raw_df and wkend_raw_df
-            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project:
-                completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
-            else:
-                completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
-            most_recent_completed_date = pd.to_datetime(completed_dates).max()
+            # if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project:
+            #     completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
+            # else:
+            #     completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
+            # most_recent_completed_date = pd.to_datetime(completed_dates).max()
 
-            # # # Display the most recent "Completed" date
-            st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
+            # # # # Display the most recent "Completed" date
+            # st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
 
             # ADD THE ELVIS EXPORT BUTTON RIGHT HERE - BELOW SYNC BUTTON
-            if st.button("📊 Export Elvis Data"):
-                export_elvis_data()
 
         # Page Content Section
-        with header_col2:
-            if current_page != 'timedetails':
-                if current_page == "weekend":
-                    st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
-                    csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
-                    download_csv(csv_weekend_raw, week_end_raw_file_name, "Download WeekEnd Raw Data")
-                else:  # Default to weekday data for main and weekday pages
-                    st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
-                    csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
-                    download_csv(csv_weekday_raw, week_day_raw_file_name, "Download WeekDay Raw Data")
+        # with header_col2:
+            
 
                 # Button for Time OF Day Details
-                if st.button('Time OF Day Details'):
-                    st.query_params["page"] = "timedetails"
-                    st.rerun()
+                # if st.button('Time OF Day Details'):
+                #     st.query_params["page"] = "timedetails"
+                #     st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=timedetails">', unsafe_allow_html=True)
-            else:
-                st.header(f'Time OF Day Details')
+            # else:
+            #     st.header(f'Time OF Day Details')
 
-            if 'actransit' in selected_project:
-                if st.button("LOW RESPONSE QUESTIONS"):
-                    st.query_params["page"] = "low_response_questions_tab"
-                    st.rerun()
+            # if 'actransit' in selected_project:
+            #     if st.button("LOW RESPONSE QUESTIONS"):
+            #         st.query_params["page"] = "low_response_questions_tab"
+            #         st.rerun()
 
         # Button Section
-        with header_col3:
+        with header_col2:
+            if st.button("📊 Export Elvis Data"):
+                export_elvis_data()
+            # if current_page != 'timedetails':
+            #     if current_page == "weekend":
+            #         csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
+            #         download_csv(csv_weekend_raw, week_end_raw_file_name, "Download WeekEnd Raw Data")
+            #     else:  # Default to weekday data for main and weekday pages
+            #         st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
+            #         csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
+            #         download_csv(csv_weekday_raw, week_day_raw_file_name, "Download WeekDay Raw Data")
             # WEEKDAY-OVERALL button
-            if st.button("WEEKDAY-OVERALL"):
-                st.query_params["page"] = "weekday"
-                st.rerun()
+            # if st.button("WEEKDAY-OVERALL"):
+            #     st.query_params["page"] = "weekday"
+            #     st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
 
             # WEEKEND-OVERALL button
-            if st.button("WEEKEND-OVERALL"):
-                st.query_params["page"] = "weekend"
-                st.rerun()
+            # if st.button("WEEKEND-OVERALL"):
+            #     st.query_params["page"] = "weekend"
+            #     st.rerun()
                 # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
-            if 'actransit' in selected_project:
-                if st.button("REFUSAL ANALYSIS"):
-                    st.query_params["page"] = "refusal"
-                    st.rerun()
+            # if 'actransit' in selected_project:
+            #     if st.button("REFUSAL ANALYSIS"):
+            #         st.query_params["page"] = "refusal"
+            #         st.rerun()
 
             
-            # Add these two new buttons for kcata simple project
-            if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
-                # if st.button("Route Comparison"):
-                #     st.query_params["page"] = "route_comparison"
-                #     st.rerun()
+            # # Add these two new buttons for kcata simple project
+            # if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
+            #     # if st.button("Route Comparison"):
+            #     #     st.query_params["page"] = "route_comparison"
+            #     #     st.rerun()
                     
-                if st.button("Reverse Routes"):
-                    st.query_params["page"] = "reverse_routes"
-                    st.rerun()
+            #     if st.button("Reverse Routes"):
+            #         st.query_params["page"] = "reverse_routes"
+            #         st.rerun()
 
-            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
-                if st.button("DAILY TOTALS"):
-                    st.query_params["page"] = "dailytotals"
-                    st.rerun()
+            # if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
+            #     if st.button("DAILY TOTALS"):
+            #         st.query_params["page"] = "dailytotals"
+            #         st.rerun()
             
-                if st.button("Surveyor/Route/Trend Reports"):
-                    st.query_params["page"] = "surveyreport"
-                    st.rerun()
+            #     if st.button("Surveyor/Route/Trend Reports"):
+            #         st.query_params["page"] = "surveyreport"
+            #         st.rerun()
 
-            if 'rail' in selected_schema.lower():
-                if st.button("WEEKDAY StationWise Comparison"):
-                    st.query_params["page"] = "weekday_station"
-                    st.rerun()
-                    # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday_station">', unsafe_allow_html=True)
+            # if 'rail' in selected_schema.lower():
+            #     if st.button("WEEKDAY StationWise Comparison"):
+            #         st.query_params["page"] = "weekday_station"
+            #         st.rerun()
+            #         # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday_station">', unsafe_allow_html=True)
 
-                if st.button("WEEKEND StationWise Comparison"):
-                    st.query_params["page"] = "weekend_station"
-                    st.rerun()
+            #     if st.button("WEEKEND StationWise Comparison"):
+            #         st.query_params["page"] = "weekend_station"
+            #         st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend_station">', unsafe_allow_html=True)
      
             
