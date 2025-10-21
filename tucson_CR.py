@@ -40,16 +40,16 @@ query_params = st.query_params
 # current_page = query_params.get("page", [""])[0]  # Get 'page' value if it exists
 current_page = st.query_params.get("page", "login")  # Default to "login" if not set
 
-button_style = """
-<style>
-div.stButton > button, div.stDownloadButton > button{
-    width: 200px;  /* Makes buttons full width of their container */
-    padding: 0.5rem 1rem;  /* Consistent padding */
-    font-size: 16px;  /* Consistent font size */
-}
-</style>
-"""
-st.markdown(button_style, unsafe_allow_html=True)
+# button_style = """
+# <style>
+# div.stButton > button, div.stDownloadButton > button{
+#     width: 200px;  /* Makes buttons full width of their container */
+#     padding: 0.5rem 1rem;  /* Consistent padding */
+#     font-size: 16px;  /* Consistent font size */
+# }
+# </style>
+# """
+# st.markdown(button_style, unsafe_allow_html=True)
 
 # Initialize project switching states
 if "show_switch_success" not in st.session_state:
@@ -275,6 +275,7 @@ else:
                 "🗓︎   WEEKDAY-OVERALL": "weekday",
                 "☀︎   WEEKEND-OVERALL": "weekend",
                 "🕒  Time Of Day Details": "timedetails",
+                "🗺️  Location Maps": "location_maps",
                 "⤓    LOW RESPONSE QUESTIONS": "low_response_questions_tab",
                 "↺   Clone Records": "reverse_routes",
                 "⌗  DAILY TOTALS": "dailytotals",
@@ -307,6 +308,14 @@ else:
             border-right: 1px solid rgba(128,128,128,0.1);
             padding-top: 1rem !important;
             animation: slideIn 0.5s ease-out;
+                    
+        }
+                    
+        .stColumn {
+            flex:1 !important;
+        }
+        .stDownloadButton > button , .stButton > button{
+            width: 100% !important;
         }
 
         /* --- Animation --- */
@@ -318,7 +327,7 @@ else:
         /* --- Profile Card - FIXED FOR COLLAPSED SIDEBAR --- */
         .profile-card {
             background: rgba(255,255,255,0.05);
-            margin: 16px;
+            margin: -12px 16px 16px;
             border-radius: 14px;
             padding: 14px;
             text-align: center;
@@ -427,8 +436,9 @@ else:
 
         /* --- Buttons --- */
         .stButton > button {
-            width: 100%;
             color: var(--text-color);
+            flex: 1;
+            width: 100%;
             border-radius: 10px;
             border: 1px solid rgba(128,128,128,0.25) !important;
             font-weight: 500;
@@ -670,6 +680,27 @@ else:
             text-transform: uppercase;
             margin-top: 1rem;
         }
+        .stButton > button, .stDownloadButton > button {
+            background: #f5f6f7 !important;
+            color: #222 !important;
+            border: 1px solid #dcdcdc !important;
+            border-radius: 12px !important;
+            padding: 0.6rem 1.5rem !important;
+            font-weight: 500 !important;
+            font-size: 0.95rem !important;
+            transition: all 0.25s ease !important;
+            height: 2.6rem !important;
+            white-space: nowrap !important; /* keeps text in one line */
+            text-align: center !important;
+        }
+
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            background: linear-gradient(90deg, #4285f4, #6fa8ff) !important;
+            color: white !important;
+            border: none !important;
+            box-shadow: 0 6px 18px rgba(66,133,244,0.25);
+            transform: translateY(-2px);
+        }
         </style>
         """, unsafe_allow_html=True)
 
@@ -776,7 +807,8 @@ else:
             ]
 
             if 'actransit' in selected_project:
-                menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS"])
+                menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
+                "🗺️  Location Maps"])
 
             if 'kcata' in selected_project or ('actransit' in selected_project and 'rail' not in selected_schema.lower()):
                 menu_items.append("↺   Clone Records")
@@ -847,9 +879,10 @@ else:
                 box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
                 border: 1px solid rgba(170, 200, 255, 0.6);
                 overflow: hidden;
+                margin-top: -80px;
             }
-
-            .professional-header::before {
+           
+             .professional-header::before {
                 content: '';
                 position: absolute;
                 inset: 0;
@@ -890,15 +923,15 @@ else:
             }
 
             .metric-card {
-            background: rgba(255,255,255,0.6);
-            backdrop-filter: blur(12px);
-            border-radius: 10px;
-            border: 1px solid rgba(180, 200, 255, 0.5);
-            padding: 0.75rem 1rem;
-            text-align: center;
-            min-width: 160px;
-            transition: all 0.25s ease;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+                background: rgba(255,255,255,0.6);
+                backdrop-filter: blur(12px);
+                border-radius: 10px;
+                border: 1px solid rgba(180, 200, 255, 0.5);
+                padding: 0.75rem 1rem;
+                text-align: center;
+                min-width: 160px;
+                transition: all 0.25s ease;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.05);
         }
 
         .metric-card:hover {
@@ -2151,9 +2184,267 @@ else:
                 st.query_params["page"] = "main"
                 st.rerun()
 
+        def location_maps_page():
+            """
+            Display the location maps interface integrated with existing filter structure
+            """
+            st.title("🗺️ Location Maps")
+            
+            try:
+                # Load the Elvis data for mapping
+                from automated_refresh_flow_new import PROJECTS, fetch_data
+                from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
+                
+                project_config = PROJECTS[st.session_state["selected_project"]]
+                elvis_config = project_config['databases']["elvis"]
+                table_name = elvis_config['table']
+                database_name = elvis_config["database"]
+                
+                with st.spinner("🔄 Loading location data..."):
+                    # Fetch the Elvis data
+                    csv_buffer = fetch_data(database_name, table_name)
+                    
+                    if csv_buffer:
+                        # Convert CSV buffer to DataFrame
+                        csv_buffer.seek(0)  # Reset buffer position
+                        elvis_df = pd.read_csv(csv_buffer, low_memory=False)
+                        elvis_df = elvis_df.drop(index=0).reset_index(drop=True)
+                        
+                        # Apply column renaming
+                        try:
+                            elvis_df.columns = elvis_df.columns.str.strip()
+                            # Apply the header mapping
+                            elvis_df = elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+                            st.success("✅ Data loaded and columns renamed successfully!")
+                        except Exception as e:
+                            st.warning(f"Column renaming failed: {str(e)}. Using original column names.")
+                        
+                        # Prepare location data using the utility function
+                        from automated_sync_flow_utils import prepare_location_data
+                        location_df, unique_routes = prepare_location_data(elvis_df)
+                        
+                        if location_df.empty:
+                            st.warning("No location data available after filtering.")
+                            if st.button("🔙 Home Page", key="location_maps_empty_home"):
+                                st.query_params["page"] = "main"
+                                st.rerun()
+                            return
+                        
+                        # Apply search filter (consistent with other pages)
+                        filtered_locations = filter_dataframe(location_df, search_query)
+                        
+                        # Display statistics (consistent with other pages)
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("📍 Total Points", len(filtered_locations))
+                        with col2:
+                            st.metric("🛣️ Unique Routes", filtered_locations['route_code'].nunique())
+                        with col3:
+                            st.metric("📊 Location Types", filtered_locations['location_type'].nunique())
+                        with col4:
+                            st.metric("👥 Survey Records", filtered_locations['id'].nunique())
+                        
+                        # Initialize session state for filters
+                        if 'location_routes' not in st.session_state:
+                            st.session_state.location_routes = []
+                        if 'location_types' not in st.session_state:
+                            st.session_state.location_types = sorted(location_df['location_type'].unique().tolist())
+                        
+                        # Create filters section (similar to reverse_routes_page structure)
+                        st.subheader("📍 Map Filters")
+                        
+                        # Initialize filter variables
+                        route_options = sorted(unique_routes['ROUTE_SURVEYEDCode'].unique().tolist())
+                        location_type_options = sorted(location_df['location_type'].unique().tolist())
+                        
+                        # Create filter columns (similar to reverse_routes_page)
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            # Route filter - MULTI-SELECT
+                            selected_routes = st.multiselect(
+                                "Select Routes:", 
+                                options=route_options,
+                                default=st.session_state.location_routes,
+                                key="location_routes_multiselect"
+                            )
+                        
+                        with col2:
+                            # Location type filter - MULTI-SELECT
+                            selected_location_types = st.multiselect(
+                                "Select Location Types:", 
+                                options=location_type_options,
+                                default=st.session_state.location_types,
+                                key="location_types_multiselect"
+                            )
+                        
+                        with col3:
+                            # Quick actions - Use session state to manage filter state
+                            st.write("**Quick Actions**")
+                            col3a, col3b = st.columns(2)
+                            with col3a:
+                                if st.button("Select All Routes", key="location_select_all_routes"):
+                                    st.session_state.location_routes = route_options
+                                    st.rerun()
+                            with col3b:
+                                if st.button("Clear Routes", key="location_clear_routes"):
+                                    st.session_state.location_routes = []
+                                    st.rerun()
+                        
+                        # Additional quick actions for location types
+                        col4, col5 = st.columns(2)
+                        with col4:
+                            if st.button("Select All Types", key="location_select_all_types"):
+                                st.session_state.location_types = location_type_options
+                                st.rerun()
+                        with col5:
+                            if st.button("Clear Types", key="location_clear_types"):
+                                st.session_state.location_types = []
+                                st.rerun()
+                        
+                        # Quick filter buttons for common scenarios
+                        st.write("**Quick Filters**")
+                        quick_col1, quick_col2, quick_col3 = st.columns(3)
+                        with quick_col1:
+                            if st.button("Just Alighting", key="just_alighting_btn"):
+                                st.session_state.location_types = ['Alighting']
+                                st.session_state.location_routes = []  # Show for all routes
+                                st.rerun()
+                        with quick_col2:
+                            if st.button("Just Origin", key="just_origin_btn"):
+                                st.session_state.location_types = ['Origin']
+                                st.session_state.location_routes = []  # Show for all routes
+                                st.rerun()
+                        with quick_col3:
+                            if st.button("Show All", key="show_all_btn"):
+                                st.session_state.location_routes = []
+                                st.session_state.location_types = location_type_options
+                                st.rerun()
+                        
+                        # Update session state with current selections (for persistence)
+                        st.session_state.location_routes = selected_routes
+                        st.session_state.location_types = selected_location_types
+                        
+                        # Apply route and location type filters
+                        temp_filtered = filtered_locations.copy()
+                        
+                        if selected_routes:
+                            temp_filtered = temp_filtered[temp_filtered['route_code'].isin(selected_routes)]
+                        
+                        if selected_location_types:
+                            temp_filtered = temp_filtered[temp_filtered['location_type'].isin(selected_location_types)]
+                        
+                        # Show filter summary
+                        filter_info = []
+                        if selected_routes:
+                            if len(selected_routes) <= 3:
+                                filter_info.append(f"Routes: {', '.join(selected_routes)}")
+                            else:
+                                filter_info.append(f"Routes: {len(selected_routes)} selected")
+                        if selected_location_types:
+                            if len(selected_location_types) <= 3:
+                                filter_info.append(f"Types: {', '.join(selected_location_types)}")
+                            else:
+                                filter_info.append(f"Types: {len(selected_location_types)} selected")
+                        
+                        if filter_info:
+                            st.info(f"**Active Filters:** {', '.join(filter_info)}")
+                        else:
+                            st.info("**Showing all routes and location types**")
+                        
+                        # Display the data table (consistent with other pages)
+                        st.subheader("📍 Location Data")
+                        display_columns = ['route_code', 'route_name', 'location_type', 'latitude', 'longitude', 'address', 'city']
+                        st.dataframe(temp_filtered[display_columns], use_container_width=True, hide_index=True)
+                        
+                        # Create the map
+                        st.subheader("🗺️ Interactive Map")
+                        
+                        if not temp_filtered.empty:
+                            # Convert coordinates to numeric
+                            temp_filtered['latitude'] = pd.to_numeric(temp_filtered['latitude'], errors='coerce')
+                            temp_filtered['longitude'] = pd.to_numeric(temp_filtered['longitude'], errors='coerce')
+                            
+                            # Remove invalid coordinates
+                            map_data = temp_filtered.dropna(subset=['latitude', 'longitude'])
+                            
+                            if not map_data.empty:
+                                # Color mapping
+                                color_map = {
+                                    'Home': '#1f77b4',      # blue
+                                    'Origin': '#2ca02c',    # green
+                                    'Boarding': '#ff7f0e',  # orange
+                                    'Alighting': '#d62728', # red
+                                    'Destination': '#9467bd' # purple
+                                }
+                                
+                                # Add color column
+                                map_data['color_hex'] = map_data['location_type'].map(color_map)
+                                
+                                # Display the map
+                                try:
+                                    st.map(
+                                        map_data,
+                                        latitude='latitude',
+                                        longitude='longitude',
+                                        color='color_hex',
+                                        size=100,
+                                        use_container_width=True
+                                    )
+                                except Exception as e:
+                                    st.warning(f"Map rendering issue: {str(e)}")
+                                    # Fallback
+                                    st.map(
+                                        map_data,
+                                        latitude='latitude',
+                                        longitude='longitude',
+                                        size=100,
+                                        use_container_width=True
+                                    )
+                                
+                                # Legend
+                                st.sidebar.subheader("🎨 Map Legend")
+                                for loc_type, color in color_map.items():
+                                    if loc_type in map_data['location_type'].unique():
+                                        st.sidebar.markdown(f"<span style='color:{color}'>■</span> {loc_type}", unsafe_allow_html=True)
+                                
+                                # Show map statistics
+                                st.sidebar.subheader("📊 Map Stats")
+                                st.sidebar.metric("Points on Map", len(map_data))
+                                st.sidebar.metric("Routes on Map", map_data['route_code'].nunique())
+                                
+                            else:
+                                st.warning("No valid coordinates to display on map.")
+                        else:
+                            st.warning("No data available for the selected filters.")
+                        
+                        # Download option (consistent with other pages)
+                        st.subheader("📥 Data Export")
+                        if st.button("Download Location Data as CSV", key="location_download_btn"):
+                            csv_data, file_name = create_csv(temp_filtered, "location_data.csv")
+                            download_csv(csv_data, file_name, "Download Location Data")
+                        
+                    else:
+                        st.error("❌ Failed to fetch location data from Elvis table")
+                        
+            except Exception as e:
+                st.error(f"❌ Error loading location data: {str(e)}")
+                st.info("Please ensure the Elvis table is available and accessible.")
+                
+                # Show debug information
+                with st.expander("🔧 Technical Details"):
+                    st.write("Error details:", str(e))
+                    import traceback
+                    st.code(traceback.format_exc())
+
+            # Navigation (consistent with other pages)
+            if st.button("🔙 Home Page", key="location_maps_home_btn"):
+                st.query_params["page"] = "main"
+                st.rerun()
+
 
         # Layout columns
-        header_col1, header_col2 = st.columns([2, 2])
+        header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
 
         # Header Section
         with header_col1:
@@ -2286,7 +2577,33 @@ else:
             #         st.query_params["page"] = "weekend_station"
             #         st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend_station">', unsafe_allow_html=True)
-     
+            with header_col3:
+                if current_page == "weekend":
+                    csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
+                    st.download_button(
+                        "⬇ Download Weekend Raw Data",
+                        data=csv_weekend_raw,
+                        file_name=week_end_raw_file_name,
+                        mime="text/csv",
+                        key="download_weekend"
+                    )
+                else:
+                    csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
+                    st.download_button(
+                        "⬇ Download Weekday Raw Data",
+                        data=csv_weekday_raw,
+                        file_name=week_day_raw_file_name,
+                        mime="text/csv",
+                        key="download_weekday"
+                    )
+
+            st.markdown('</div>', unsafe_allow_html=True)
+        # === End of Unified Button Row ===
+
+
+
+
+
             
         if 'rail' in selected_schema.lower():
         
@@ -2301,6 +2618,8 @@ else:
                 weekday_station_page()
             elif current_page=='weekend_station':
                 weekend_station_page()
+            elif current_page == "location_maps":  # Add this line
+                location_maps_page()
             else:
                 # wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                 #                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
@@ -2393,24 +2712,24 @@ else:
                     def render_metrics(row, title):
                         st.markdown(f"### {title}")
 
-                        # Filter
-                        filtered_items = [
-                            (k, v) for k, v in row.items() if k not in excluded_columns
-                        ]
+                        # ---- Force black text no matter what ----
+                        text_color = "#000000"
+
+                        filtered_items = [(k, v) for k, v in row.items() if k not in excluded_columns]
 
                         for i in range(0, len(filtered_items), 4):
                             cols = st.columns(min(4, len(filtered_items) - i))
                             for col, (field, value) in zip(cols, filtered_items[i:i+4]):
                                 with col:
-                                    st.markdown(f"""
-                                        <div style="
-                                            padding: 4px 0;
-                                            margin-bottom: 6px;
-                                        ">
-                                            <div style="font-size:0.6rem; color:white; font-weight:600;">{field}</div>
-                                            <div style="font-size:0.8rem; color:white;">{value}</div>
+                                    st.markdown(
+                                        f"""
+                                        <div style="padding:2px 0; margin-bottom:4px;">
+                                            <span style="font-size:0.65rem; font-weight:600; color:{text_color} !important;">{field}</span><br>
+                                            <span style="font-size:0.8rem; color:{text_color} !important;">{value}</span>
                                         </div>
-                                    """, unsafe_allow_html=True)
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
 
 
 
@@ -2457,6 +2776,8 @@ else:
             elif current_page == "reverse_routes":
                 if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
                     reverse_routes_page()
+            elif current_page == "location_maps":  # Add this line
+                location_maps_page()
 
             else:
                 if 'tucson' in selected_project:

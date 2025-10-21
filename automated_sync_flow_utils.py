@@ -6420,3 +6420,294 @@ def create_survey_stats_master_table(df):
     analysis_df = master_df[available_columns].reset_index().rename(columns={'index': 'RESPONDENT_ID'})
     
     return analysis_df, race_df
+
+## For showing Location Maps
+def prepare_location_data(df):
+    """
+    Prepare location data for mapping in Streamlit
+    """
+    # Convert date and filter data
+    df['DATE_SUBMITTED'] = pd.to_datetime(df['DATE_SUBMITTED'], errors='coerce').dt.date
+    df['HAVE_5_MIN_FOR_SURVECode'] = df['HAVE_5_MIN_FOR_SURVECode'].astype(str)
+    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+
+    # Apply filters
+    filtered_df = df[
+        (df['HAVE_5_MIN_FOR_SURVECode'] == '1') &
+        (df['INTERV_INIT'] != "999")
+    ].copy()
+    
+    # Get unique routes
+    unique_routes = filtered_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED']].drop_duplicates()
+    
+    # Create location dataframes for different point types
+    location_data = []
+    
+    for _, row in filtered_df.iterrows():
+        route_code = row['ROUTE_SURVEYEDCode']
+        route_name = row['ROUTE_SURVEYED']
+        
+        # Home locations
+        if pd.notna(row['HOME_ADDRESS_LAT']) and pd.notna(row['HOME_ADDRESS_LONG']):
+            location_data.append({
+                'route_code': route_code,
+                'route_name': route_name,
+                'location_type': 'Home',
+                'latitude': row['HOME_ADDRESS_LAT'],
+                'longitude': row['HOME_ADDRESS_LONG'],
+                'address': row.get('HOME_ADDRESS_ADDR', ''),
+                'city': row.get('HOME_ADDRESS_CITY', ''),
+                'id': row['id']
+            })
+        
+        # Origin locations
+        if pd.notna(row['ORIGIN_ADDRESS_LAT']) and pd.notna(row['ORIGIN_ADDRESS_LONG']):
+            location_data.append({
+                'route_code': route_code,
+                'route_name': route_name,
+                'location_type': 'Origin',
+                'latitude': row['ORIGIN_ADDRESS_LAT'],
+                'longitude': row['ORIGIN_ADDRESS_LONG'],
+                'address': row.get('ORIGIN_ADDRESS_ADDR', ''),
+                'city': row.get('ORIGIN_ADDRESS_CITY', ''),
+                'id': row['id']
+            })
+        
+        # Boarding locations
+        if pd.notna(row['STOP_ON_LAT']) and pd.notna(row['STOP_ON_LONG']):
+            location_data.append({
+                'route_code': route_code,
+                'route_name': route_name,
+                'location_type': 'Boarding',
+                'latitude': row['STOP_ON_LAT'],
+                'longitude': row['STOP_ON_LONG'],
+                'address': row.get('STOP_ON_ADDR', ''),
+                'city': row.get('STOP_ON_CITY', ''),
+                'id': row['id']
+            })
+        
+        # Alighting locations
+        if pd.notna(row['STOP_OFF_LAT']) and pd.notna(row['STOP_OFF_LONG']):
+            location_data.append({
+                'route_code': route_code,
+                'route_name': route_name,
+                'location_type': 'Alighting',
+                'latitude': row['STOP_OFF_LAT'],
+                'longitude': row['STOP_OFF_LONG'],
+                'address': row.get('STOP_OFF_ADDR', ''),
+                'city': row.get('STOP_OFF_CITY', ''),
+                'id': row['id']
+            })
+        
+        # Destination locations
+        if pd.notna(row['DESTIN_ADDRESS_LAT']) and pd.notna(row['DESTIN_ADDRESS_LONG']):
+            location_data.append({
+                'route_code': route_code,
+                'route_name': route_name,
+                'location_type': 'Destination',
+                'latitude': row['DESTIN_ADDRESS_LAT'],
+                'longitude': row['DESTIN_ADDRESS_LONG'],
+                'address': row.get('DESTIN_ADDRESS_ADDR', ''),
+                'city': row.get('DESTIN_ADDRESS_CITY', ''),
+                'id': row['id']
+            })
+    
+    location_df = pd.DataFrame(location_data)
+    return location_df, unique_routes
+
+def create_location_maps_interface(df):
+    """
+    Create a Streamlit interface for mapping locations
+    """
+    st.title("🗺️ Transit Survey Location Mapping")
+    
+    # Prepare the data
+    location_df, unique_routes = prepare_location_data(df)
+    
+    if location_df.empty:
+        st.warning("No location data available after filtering.")
+        return
+    
+    # Initialize session state for filters
+    if 'selected_route' not in st.session_state:
+        st.session_state.selected_route = 'All Routes'
+    if 'selected_location_types' not in st.session_state:
+        st.session_state.selected_location_types = ['Home', 'Origin', 'Boarding', 'Alighting', 'Destination']
+    
+    # Sidebar filters
+    st.sidebar.header("📍 Map Filters")
+    
+    # Route filter
+    route_options = ['All Routes'] + sorted(unique_routes['ROUTE_SURVEYEDCode'].unique().tolist())
+    selected_route = st.sidebar.selectbox(
+        "Select Route", 
+        route_options,
+        key="route_select",
+        index=route_options.index(st.session_state.selected_route) if st.session_state.selected_route in route_options else 0
+    )
+    
+    # Location type filter - CHECKBOX for better UX
+    st.sidebar.subheader("📍 Location Types")
+    
+    # Individual checkboxes for each location type
+    show_home = st.sidebar.checkbox("🏠 Home", value='Home' in st.session_state.selected_location_types, key="home_check")
+    show_origin = st.sidebar.checkbox("📍 Origin", value='Origin' in st.session_state.selected_location_types, key="origin_check")
+    show_boarding = st.sidebar.checkbox("🚌 Boarding", value='Boarding' in st.session_state.selected_location_types, key="boarding_check")
+    show_alighting = st.sidebar.checkbox("🚏 Alighting", value='Alighting' in st.session_state.selected_location_types, key="alighting_check")
+    show_destination = st.sidebar.checkbox("🎯 Destination", value='Destination' in st.session_state.selected_location_types, key="destination_check")
+    
+    # Quick filter buttons
+    st.sidebar.subheader("🚀 Quick Actions")
+    col1, col2 = st.sidebar.columns(2)
+    
+    with col1:
+        if st.button("Select All", key="select_all_btn"):
+            st.session_state.selected_location_types = ['Home', 'Origin', 'Boarding', 'Alighting', 'Destination']
+            st.rerun()
+    
+    with col2:
+        if st.button("Just Alighting", key="just_alighting_btn"):
+            st.session_state.selected_location_types = ['Alighting']
+            st.rerun()
+    
+    # Update selected location types based on checkboxes
+    selected_location_types = []
+    if show_home:
+        selected_location_types.append('Home')
+    if show_origin:
+        selected_location_types.append('Origin')
+    if show_boarding:
+        selected_location_types.append('Boarding')
+    if show_alighting:
+        selected_location_types.append('Alighting')
+    if show_destination:
+        selected_location_types.append('Destination')
+    
+    # Update session state
+    st.session_state.selected_route = selected_route
+    st.session_state.selected_location_types = selected_location_types
+    
+    # Show route name if a specific route is selected
+    if selected_route != 'All Routes':
+        route_name = unique_routes[unique_routes['ROUTE_SURVEYEDCode'] == selected_route]['ROUTE_SURVEYED'].iloc[0]
+        st.sidebar.info(f"**Selected Route:** {selected_route} - {route_name}")
+    
+    # Apply filters
+    filtered_locations = location_df.copy()
+    
+    if selected_route != 'All Routes':
+        filtered_locations = filtered_locations[filtered_locations['route_code'] == selected_route]
+    
+    if selected_location_types:
+        filtered_locations = filtered_locations[filtered_locations['location_type'].isin(selected_location_types)]
+    
+    # Display statistics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("📍 Total Points", len(filtered_locations))
+    with col2:
+        st.metric("🛣️ Unique Routes", filtered_locations['route_code'].nunique())
+    with col3:
+        st.metric("📊 Location Types", filtered_locations['location_type'].nunique())
+    with col4:
+        st.metric("👥 Survey Records", filtered_locations['id'].nunique())
+    
+    # Show current filter summary
+    filter_summary = []
+    if selected_route != 'All Routes':
+        filter_summary.append(f"Route: {selected_route}")
+    if selected_location_types:
+        filter_summary.append(f"Types: {', '.join(selected_location_types)}")
+    
+    if filter_summary:
+        st.info(f"**Active Filters:** {', '.join(filter_summary)}")
+    
+    # Display the data table
+    st.subheader("📍 Location Data Table")
+    display_columns = ['route_code', 'route_name', 'location_type', 'latitude', 'longitude', 'address', 'city']
+    st.dataframe(filtered_locations[display_columns], use_container_width=True)
+    
+    # Create the map
+    st.subheader("🗺️ Interactive Location Map")
+    
+    if not filtered_locations.empty:
+        # Convert latitude/longitude to numeric (in case they're strings)
+        filtered_locations['latitude'] = pd.to_numeric(filtered_locations['latitude'], errors='coerce')
+        filtered_locations['longitude'] = pd.to_numeric(filtered_locations['longitude'], errors='coerce')
+        
+        # Remove any rows with invalid coordinates
+        filtered_locations = filtered_locations.dropna(subset=['latitude', 'longitude'])
+        
+        if not filtered_locations.empty:
+            # Color mapping for different location types
+            color_map = {
+                'Home': '#1f77b4',      # blue
+                'Origin': '#2ca02c',    # green
+                'Boarding': '#ff7f0e',  # orange
+                'Alighting': '#d62728', # red
+                'Destination': '#9467bd' # purple
+            }
+            
+            # Create a color column with hex colors
+            filtered_locations['color_hex'] = filtered_locations['location_type'].map(color_map)
+            
+            # SINGLE MAP with all selected points
+            try:
+                st.map(
+                    filtered_locations,
+                    latitude='latitude',
+                    longitude='longitude',
+                    color='color_hex',
+                    size=100,
+                    use_container_width=True
+                )
+                
+                # Legend
+                st.sidebar.subheader("🎨 Map Legend")
+                for loc_type, color in color_map.items():
+                    if loc_type in filtered_locations['location_type'].unique():
+                        st.sidebar.markdown(f"<span style='color:{color}; font-size:20px'>■</span> **{loc_type}**", unsafe_allow_html=True)
+                        
+            except Exception as e:
+                st.warning(f"Colored map rendering issue: {str(e)}")
+                # Fallback: basic map without colors
+                st.map(
+                    filtered_locations,
+                    latitude='latitude',
+                    longitude='longitude',
+                    size=100,
+                    use_container_width=True
+                )
+            
+            # Additional insights
+            st.sidebar.subheader("📈 Insights")
+            if not filtered_locations.empty:
+                location_counts = filtered_locations['location_type'].value_counts()
+                if not location_counts.empty:
+                    st.sidebar.write("**Point Distribution:**")
+                    for loc_type, count in location_counts.items():
+                        st.sidebar.write(f"{loc_type}: {count}")
+                
+                if selected_route == 'All Routes':
+                    route_counts = filtered_locations['route_code'].value_counts()
+                    if not route_counts.empty:
+                        st.sidebar.write("**Top Routes:**")
+                        for route, count in route_counts.head(3).items():
+                            route_name = filtered_locations[filtered_locations['route_code'] == route]['route_name'].iloc[0]
+                            st.sidebar.write(f"{route}: {count}")
+        else:
+            st.warning("No valid coordinates to display on map.")
+    else:
+        st.warning("No data available for the selected filters.")
+    
+    # Download option
+    st.sidebar.subheader("📥 Data Export")
+    if st.sidebar.button("Download Filtered Data as CSV", key="download_btn"):
+        csv = filtered_locations.to_csv(index=False)
+        st.sidebar.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"location_data_{selected_route if selected_route != 'All Routes' else 'all_routes'}.csv",
+            mime="text/csv",
+            key="download_csv_btn"
+        )
