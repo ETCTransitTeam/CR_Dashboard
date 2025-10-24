@@ -1432,20 +1432,22 @@ def fetch_and_process_data(project,schema):
     elif project == 'KCATA' or project == 'ACTRANSIT':
         # First rename all columns consistently
         rename_dict = {
-            'CR_AM_Peak': '(1) Goal',
-            'CR_Midday': '(2) Goal',
-            'CR_PM_Peak': '(3) Goal',
-            'CR_Evening': '(4) Goal',
-            'DB_AM_Peak': '(1) Collect',
-            'DB_Midday': '(2) Collect',
-            'DB_PM_Peak': '(3) Collect',
-            'DB_Evening': '(4) Collect',
-            'AM_DIFFERENCE': '(1) Remain',
-            'Midday_DIFFERENCE': '(2) Remain',
-            'PM_PEAK_DIFFERENCE': '(3) Remain',
-            'Evening_DIFFERENCE': '(4) Remain'
+            'CR_Early_AM': '(1) Goal',
+            'CR_AM_Peak': '(2) Goal',
+            'CR_Midday': '(3) Goal',
+            'CR_PM_Peak': '(4) Goal',
+            'CR_Evening': '(5) Goal',
+            'DB_Early_AM_Peak': '(1) Collect',
+            'DB_AM_Peak': '(2) Collect',
+            'DB_Midday': '(3) Collect',
+            'DB_PM_Peak': '(4) Collect',
+            'DB_Evening': '(5) Collect',
+            'Early_AM_DIFFERENCE': '(1) Remain',
+            'AM_DIFFERENCE': '(2) Remain',
+            'Midday_DIFFERENCE': '(3) Remain',
+            'PM_PEAK_DIFFERENCE': '(4) Remain',
+            'Evening_DIFFERENCE': '(5) Remain'
         }
-
         # Check if weekend data exists using try/except for robustness
         has_weekend_data = False
         try:
@@ -1458,7 +1460,6 @@ def fetch_and_process_data(project,schema):
         except NameError:
             has_weekend_data = False
             print(f"No weekend comparison data available for {project}")
-
         try:
             if 'wkend_route_direction_df' in locals() and wkend_route_direction_df is not None:
                 wkend_route_direction_df.rename(columns=rename_dict, inplace=True)
@@ -1471,7 +1472,6 @@ def fetch_and_process_data(project,schema):
             'CR_Overall_Goal': 'Route Level Goal',
             'DB_Total': '# of Surveys',
             'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
-
         wkday_route_direction_df.rename(columns=rename_dict, inplace=True)
 
         # Create a unified route lookup from detail_df_stops

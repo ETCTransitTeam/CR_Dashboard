@@ -755,43 +755,43 @@ else:
             search_query = st.text_input("Search", placeholder="Search here...", label_visibility="collapsed")
 
             # === ENHANCED PROJECT SWITCHER WITH MODAL ===
-            if role.upper() == "ADMIN":
-                st.markdown("---")
-                st.markdown("<div class='section-label'>🚀 Admin Controls</div>", unsafe_allow_html=True)
-                
-                current_project = st.session_state.get("selected_project", "")
-                available_projects = list(schema_value.keys())
-                
-                # Display current project
-                # st.info(f"**Current:** {current_project}")
-                
-                # Project selection dropdown
-                selected_new_project = st.selectbox(
-                    "Switch to Project",
-                    available_projects,
-                    index=available_projects.index(current_project) if current_project in available_projects else 0,
-                    key="project_selector",
-                    help="Select a project to switch to",
-                    label_visibility="collapsed"
-                )
-                
-                #  Direct switch button (no confirmation)
-                if selected_new_project != current_project:
-                    if st.button("🔄 Switch Project", use_container_width=True, key="switch_project_direct"):
-                        # Perform the switch immediately
-                        st.session_state["selected_project"] = selected_new_project
-                        st.session_state["schema"] = schema_value[selected_new_project]
-                        
-                        # Clear cached data
-                        keys_to_clear = ['wkday_raw_df', 'wkend_raw_df', 'filtered_wkday_df', 'filtered_wkend_df']
-                        for key in keys_to_clear:
-                            if key in st.session_state:
-                                del st.session_state[key]
-                        
-                        # Show success message
-                        st.session_state["show_switch_success"] = True
-                        st.session_state["success_project_name"] = selected_new_project
-                        st.rerun()
+            # if role.upper() == "ADMIN":
+            st.markdown("---")
+            st.markdown("<div class='section-label'>🚀 Admin Controls</div>", unsafe_allow_html=True)
+            
+            current_project = st.session_state.get("selected_project", "")
+            available_projects = list(schema_value.keys())
+            
+            # Display current project
+            # st.info(f"**Current:** {current_project}")
+            
+            # Project selection dropdown
+            selected_new_project = st.selectbox(
+                "Switch to Project",
+                available_projects,
+                index=available_projects.index(current_project) if current_project in available_projects else 0,
+                key="project_selector",
+                help="Select a project to switch to",
+                label_visibility="collapsed"
+            )
+            
+            #  Direct switch button (no confirmation)
+            if selected_new_project != current_project:
+                if st.button("🔄 Switch Project", use_container_width=True, key="switch_project_direct"):
+                    # Perform the switch immediately
+                    st.session_state["selected_project"] = selected_new_project
+                    st.session_state["schema"] = schema_value[selected_new_project]
+                    
+                    # Clear cached data
+                    keys_to_clear = ['wkday_raw_df', 'wkend_raw_df', 'filtered_wkday_df', 'filtered_wkend_df']
+                    for key in keys_to_clear:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    
+                    # Show success message
+                    st.session_state["show_switch_success"] = True
+                    st.session_state["success_project_name"] = selected_new_project
+                    st.rerun()
 
 
             
@@ -1103,21 +1103,21 @@ else:
 
                 st.subheader("Time Range Data")
                 # Convert relevant columns in both dataframes to numeric values, handling errors
-                data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']].apply(pd.to_numeric, errors='coerce')
-                data2[['1', '2', '3', '4']] = data2[['1', '2', '3', '4']].apply(pd.to_numeric, errors='coerce')
+                data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].apply(pd.to_numeric, errors='coerce')
+                data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].apply(pd.to_numeric, errors='coerce')
 
                 # Fill any NaN values with 0 (or handle them differently if needed)
-                data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']].fillna(0)
-                data2[['1', '2', '3', '4']] = data2[['1', '2', '3', '4']].fillna(0)
+                data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].fillna(0)
+                data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].fillna(0)
 
                 # Calculate the sums for expected and collected totals
-                expected_totals = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']].sum()
-                collected_totals = data2[['1', '2', '3', '4']].sum()
+                expected_totals = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
+                collected_totals = data2[['1', '2', '3', '4', '5']].sum()
 
                 # Calculate the difference, ensuring no negative values
                 difference = np.maximum(expected_totals.values - collected_totals.values, 0)
                 result_df = pd.DataFrame({
-                    'Time Period':  [ '1', '2', '3', '4',],
+                    'Time Period':  [ '1', '2', '3', '4', '5'],
                     'Collected Totals': collected_totals.values.astype(int),
                     'Expected Totals': expected_totals.values.astype(int),
                     'Remaining': difference.astype(int),
@@ -1165,8 +1165,9 @@ else:
             elif 'kcata' in selected_project or 'actransit' in selected_project:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                        '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                                        '(5) Collect', '(5) Remain',
+                                        '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+                wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
             else:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
@@ -1229,9 +1230,9 @@ else:
                 wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
             elif 'kcata' in selected_project or 'actransit' in selected_project:
                 wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                        '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                        '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+                wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
                 wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
             else:
                 if day_column_present:
@@ -2451,35 +2452,35 @@ else:
             # st.header('Completion Report')
             # Button to trigger the entire script
         
-            if st.session_state['user']["role"].lower()=='admin':
-                if st.button("Sync"):
-                    with st.spinner("Data engines are spinning up ⚙️📡 … syncing will be wrapped in 2–3 mins!"):
-                        result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
-                        if "cache_key" not in st.session_state:
-                            st.session_state["cache_key"] = 0
-                        st.session_state["cache_key"] += 1                
-                        # Fetch and process data again
-                        dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
-                        print("Data fetched successfully")  # Debug statement
-                        
-                        # Example: Access DataFrames
-                        wkday_df = dataframes.get('wkday_df', pd.DataFrame())
-                        wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
-                        wkend_df = dataframes.get('wkend_df', pd.DataFrame())
-                        wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
-                        wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
-                        wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
-                        wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
-                        wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
-                        detail_df = dataframes.get('detail_df', pd.DataFrame())
-                        wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
-                        wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
-                        surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
-                        route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
-                        surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
-                        route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
-                        low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
-                    st.success(f"Data synced successfully 🎉 … pipelines are tidy, tables are aligned, and we’re good to go ✅📂")
+            # if st.session_state['user']["role"].lower()=='admin':
+            if st.button("Sync"):
+                with st.spinner("Data engines are spinning up ⚙️📡 … syncing will be wrapped in 2–3 mins!"):
+                    result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
+                    if "cache_key" not in st.session_state:
+                        st.session_state["cache_key"] = 0
+                    st.session_state["cache_key"] += 1                
+                    # Fetch and process data again
+                    dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
+                    print("Data fetched successfully")  # Debug statement
+                    
+                    # Example: Access DataFrames
+                    wkday_df = dataframes.get('wkday_df', pd.DataFrame())
+                    wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
+                    wkend_df = dataframes.get('wkend_df', pd.DataFrame())
+                    wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
+                    wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
+                    wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
+                    wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
+                    wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
+                    detail_df = dataframes.get('detail_df', pd.DataFrame())
+                    wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
+                    wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
+                    surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
+                    route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
+                    surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
+                    route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
+                    low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
+                st.success(f"Data synced successfully 🎉 … pipelines are tidy, tables are aligned, and we’re good to go ✅📂")
 
             # if current_page != 'timedetails':
             #     if current_page == "weekend":
@@ -2793,9 +2794,9 @@ else:
 
                 elif 'kcata' in selected_project or 'actransit' in selected_project:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4', '5']
 
                 else:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
