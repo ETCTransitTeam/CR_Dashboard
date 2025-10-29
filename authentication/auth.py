@@ -89,14 +89,19 @@ def add_custom_css():
         justify-content: center;
         gap: 0;
     }
-
+    .stMainBlockContainer {
+        padding: 4rem 10rem !important;
+    }
     .left-panel {
         flex: 1.2;
-        padding-left: 6rem;
+        padding-left: 0rem;
         color: white;
         display: flex;
         flex-direction: column;
         justify-content: center;
+        position: fixed;
+        top: 50%;
+        transform: translateY(-50%);
     }
 
     .left-panel img {
@@ -122,7 +127,20 @@ def add_custom_css():
         justify-content: center;
         padding-right: 5rem;
     }
+                
+    /* Target the right panel container with custom key */
+    .st-key-right-panel-box {
+        background: white !important;
+        padding: 35px !important;
+        border-radius: 15px !important;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.2) !important;
+    }
 
+    /* Ensure the container fills the column */
+    .st-key-right-panel-box > div {
+        background: white !important;
+    }
+                
     /* Form card with title */
     .form-box {
         width: 100%;
@@ -147,10 +165,18 @@ def add_custom_css():
         color: #e0e0e0;
         margin-bottom: 25px;
     }
-
+     
+    .stTextInput > label p, .stSelectbox > label p {
+       font-weight: 600 !important;
+    } 
+                
+    .stTextInput input, {
+        border-radius:8px !important;
+    } 
+        
     /* Fix dropdown weird split */
     .stSelectbox > div > div {
-        border-radius: 12px !important;
+        border-radius: 8px !important;
         overflow: hidden !important;
     }
     # /*.stSelectbox > div > div > input {
@@ -172,7 +198,7 @@ def add_custom_css():
     /* Buttons */
     .stButton > button {
         width: 100%;
-        background: linear-gradient(135deg, #667eea, #764ba2);
+        background: #006894;
         color: white;
         padding: 12px;
         border-radius: 12px;
@@ -187,12 +213,10 @@ def add_custom_css():
 
     .footer {
         text-align: center;
-        color: #dcdcdc;
         margin-top: 25px;
         font-size: 13px;
     }
     .footer a {
-        color: #ffffff !important;
         font-weight: 600;
     }
     </style>
@@ -212,18 +236,14 @@ def render_auth_layout(content_function, title, subtitle=None):
         st.markdown(
             """
             <div class="left-panel">
-                <div class="form-box">
-                    <img src="https://etcinstitute.com/wp-content/uploads/2023/09/ETC-NewLogo-Horizontal-Web.png"
-                         alt="ETC Logo" style="width:200px; margin-bottom:20px;"/>
-                </div>
-                <h1>Welcome to Supervisor Dashboard</h1>
-                <p>
-                    <h4>TRANSIT SURVEY 2025</h4>
+                <img src="https://etcinstitute.com/wp-content/uploads/2023/09/ETC-NewLogo-Horizontal-Web.png"
+                        alt="ETC Logo" style="width:300px; margin-bottom:20px;"/> <br/>
+                <h1>Welcome to Supervisor <br/> Dashboard</h1>
+                    <h4 style="margin-bottom:10px">TRANSIT SURVEY 2025</h4>
                     <h5>Origin-Destination Collection Dashboard</h5>
-                    725 W. Frontier Lane, Olathe, KS<br>
-                    (913) 829-1215<br>
-                    info@etcinstitute.com
-                </p>
+                    <p>725 W. Frontier Lane, Olathe, KS</p>
+                    <p> (913) 829-1215</p>
+                    <p>info@etcinstitute.com</p>
             </div>
             """,
             unsafe_allow_html=True
@@ -231,32 +251,34 @@ def render_auth_layout(content_function, title, subtitle=None):
 
     # ---- RIGHT PANEL ----
     with col2:
-        st.markdown(
-            f"""
-            <h2 style="color: rgb(29, 39, 96);">{title}</h2>
-            {subtitle_html}
-            """,
-            unsafe_allow_html=True
-        )
+        with st.container(key="right-panel-box"):
+            st.markdown(
+                f"""
+                <h2 style="color: rgb(29, 39, 96); padding-top:0"; font-weight: 700>{title}</h2>
+                {subtitle_html}
+                """,
+                unsafe_allow_html=True
+            )
 
-        # The actual form content will be rendered here
-        content_function()
+            # The actual form content will be rendered here
+            content_function()
 
-        # Footer section
-        st.markdown(
-            """
-            <div class="footer">
-                <div class="social-links">
-                    <a href="https://www.facebook.com/etcinstitute/">Facebook</a> |
-                    <a href="https://twitter.com/EtcInstitute">Twitter</a> |
-                    <a href="https://www.linkedin.com/company/etc-institute/">LinkedIn</a> |
-                    <a href="https://www.instagram.com/etcinstitute/">Instagram</a>
+            # Footer section
+            st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 0;">', unsafe_allow_html=True)
+            st.markdown(
+                """
+                <div class="footer">
+                    <div class="social-links">
+                        <a href="https://www.facebook.com/etcinstitute/">Facebook</a> |
+                        <a href="https://twitter.com/EtcInstitute">Twitter</a> |
+                        <a href="https://www.linkedin.com/company/etc-institute/">LinkedIn</a> |
+                        <a href="https://www.instagram.com/etcinstitute/">Instagram</a>
+                    </div>
+                    <p>ETC Institute © 2025 All Rights Reserved.</p>
                 </div>
-                <p>ETC Institute © 2025 All Rights Reserved.</p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+                """,
+                unsafe_allow_html=True
+            )
 
 
 def send_activation_email(email, activation_token):
@@ -399,7 +421,7 @@ def create_new_user_page():
             # Third row - Confirm Password (full width)
             role = st.selectbox("Role", ["USER", "ADMIN"])
 
-            if st.form_submit_button("Create User", use_container_width=True):
+            if st.form_submit_button("Create User", type="primary", use_container_width=True):
                 if not all([username, email, password, confirm_password]):
                     st.error("Please complete all fields.")
                 elif password != confirm_password:
@@ -407,7 +429,7 @@ def create_new_user_page():
                 else:
                     try:
                         if create_new_user(email, username, password, role):
-                            st.success(f"✅ User **{username}** created successfully! Activation email sent.")
+                            st.success(f"User **{username}** created successfully! Activation email sent.")
                             time.sleep(2)
                             st.markdown('<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
                         else:
@@ -419,12 +441,6 @@ def create_new_user_page():
             <style>
             .auth-link {
                 text-align: center;
-                margin-top: 1rem;
-            }
-            .auth-link a {
-                color: rgb(29, 39, 96); !important; /* or any brand color */
-                text-decoration: none;
-                font-weight: 600;
             }
             .auth-link a:hover {
                 text-decoration: underline;
@@ -438,7 +454,7 @@ def create_new_user_page():
             </div>
             """, unsafe_allow_html=True)
 
-    render_auth_layout(create_user_content, "Create User", "Admin Panel - Add New User")
+    render_auth_layout(create_user_content, "Create User", "")
 
 def register_new_user(email, username, password, role):
     conn = user_connect_to_snowflake()
@@ -470,26 +486,18 @@ def register_page():
     def register_content():
         with st.form(key="register_form"):
             # First row - Username and Email
-            col1, col2 = st.columns(2)
-            with col1:
-                username = st.text_input("Username", placeholder="Choose a username")
-            with col2:
-                email = st.text_input("Email", placeholder="Enter your email address")
-            
-            # Second row - Password and Confirm Password
-            col3, col4 = st.columns(2)
-            with col3:
-                password1 = st.text_input("Password", type="password", placeholder="Create a password")
-            with col4:
-                password2 = st.text_input("Confirm Password", type="password", placeholder="Re-enter your password")
+            username = st.text_input("Username", placeholder="Choose a username")
+            email = st.text_input("Email", placeholder="Enter your email address")
+            password1 = st.text_input("Password", type="password", placeholder="Create a password")
+            password2 = st.text_input("Confirm Password", type="password", placeholder="Re-enter your password")
 
-            if st.form_submit_button("Create Account", use_container_width=True):
+            if st.form_submit_button("Create Account", type='primary' , use_container_width=True):
                 if not username or not email or not password1 or not password2:
                     st.error("Please fill in all fields.")
                 elif password1 != password2:
                     st.error("Passwords do not match.")
                 else:
-                    if register_new_user(email, username, password1, 'ADMIN'):
+                    if register_new_user(email, username, password1, 'CLIENT'):
                         st.success("Registration successful! Check your email for activation link.")
                         time.sleep(2)
                         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
@@ -498,12 +506,6 @@ def register_page():
             <style>
             .auth-link {
                 text-align: center;
-                margin-top: 1rem;
-            }
-            .auth-link a {
-                color: rgb(29, 39, 96); !important; /* or any brand color */
-                text-decoration: none;
-                font-weight: 600;
             }
             .auth-link a:hover {
                 text-decoration: underline;
@@ -600,18 +602,21 @@ def login():
     """Displays a login form and handles authentication."""
     def login_content():
         with st.form(key="login_form"):
-            # Email and Password in one line
-            col1, col2 = st.columns(2)
-            with col1:
-                email = st.text_input(" Email", placeholder="Enter your email address")
-            with col2:
-                password = st.text_input(" Password", type="password", placeholder="Enter your password")
-            
-            project = st.selectbox(" Select a Project", list(schema_value.keys()))
+            # Email and Password labels will be black if theme textColor is set to black
+            email = st.text_input("Email", placeholder="Enter your email address")
+            password = st.text_input("Password", type="password", placeholder="Enter your password")
 
-            if st.form_submit_button(" Login", use_container_width=True):
+            project = st.selectbox("Select a Project", list(schema_value.keys()))
+            # Forgot Password link, right-aligned and red
+            st.markdown(
+                '<div style="text-align: right; margin-bottom: 8px;">'
+                '<a href="/?page=forgot_password" style="color: red; text-decoration: underline;">Forgot Password?</a>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+            # Login button
+            if st.form_submit_button("Login", type="primary", use_container_width=True):
                 user = check_user_login(email, password)
-                
                 if user == "inactive":
                     st.error("Your account is not active. Please verify your email before logging in.")
                 elif user:
@@ -622,21 +627,38 @@ def login():
                     st.session_state["jwt_token"] = jwt_token
                     st.session_state["selected_project"] = project
                     st.session_state["schema"] = schema_value[project]
-
                     st.query_params["logged_in"] = "true"
                     st.query_params["page"] = "main"
                     st.rerun()
                 else:
                     st.error("Incorrect email or password")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button(" Forgot Password?", use_container_width=True):
-                st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=forgot_password">', unsafe_allow_html=True)
-        with col2:
-            if st.button(" Create Account", use_container_width=True):
-                st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
-    
+        # "Do not have an account? Create Account" link, right-aligned
+        st.markdown(
+            '''
+            <div style="
+                background: #ffffff;
+                padding: 5px;
+                border-radius: 10px;
+                text-align: center;
+                margin: 10px 0;
+                border: 3px solid transparent;
+                background-clip: padding-box;
+                position: relative;
+                background: linear-gradient(white, white), 
+                            linear-gradient(135deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4, #ffeaa7);
+                background-origin: padding-box, border-box;
+                background-clip: padding-box, border-box;
+            ">
+                <h5 style="color: #2d3436;padding-bottom:10px">Need Access?</h5>
+                <p style="color: #636e72; margin: 0; font-size: 14px;">
+                    No account yet? Reach out to admin to get started!
+                </p>
+            </div>
+            ''',
+            unsafe_allow_html=True
+        )
+
     render_auth_layout(login_content, "Login", "")
 
 def logout():
@@ -768,7 +790,7 @@ def forgot_password():
         
         email = st.text_input("Email Address", placeholder="Enter your registered email")
         
-        if st.button("📧 Send Reset Link", use_container_width=True):
+        if st.button("Send Reset Link", type='primary', use_container_width=True):
             if not email:
                 st.error("Email Field is Required")
                 return
@@ -854,24 +876,24 @@ def reset_password():
         </div>
         """, unsafe_allow_html=True)
         
-        new_password = st.text_input("🔒 New Password", type="password", placeholder="Enter new password")
-        confirm_password = st.text_input("🔒 Confirm New Password", type="password", placeholder="Re-enter new password")
+        new_password = st.text_input("New Password", type="password", placeholder="Enter new password")
+        confirm_password = st.text_input("Confirm New Password", type="password", placeholder="Re-enter new password")
         
-        if st.button("🔄 Reset Password", use_container_width=True):
+        if st.button("Reset Password", type='primary', use_container_width=True):
             if new_password != confirm_password:
                 st.error("Passwords do not match.")
             else:
                 email = decode_reset_token(reset_token)
                 if email:
                     update_user_password(email, new_password)
-                    st.success("✅ Password reset successful! Redirecting to login...")
+                    st.success("Password reset successful! Redirecting to login...")
                     st.markdown(f'<meta http-equiv="refresh" content="2;url=/?page=login">', unsafe_allow_html=True)
                 else:
                     st.error("Invalid reset token.")
         
         st.markdown("""
         <div class="auth-link">
-            <a href="/?page=login">🔙 Back to Login</a>
+            <a href="/?page=login">Back to Login</a>
         </div>
         """, unsafe_allow_html=True)
     

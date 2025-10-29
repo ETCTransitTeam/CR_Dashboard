@@ -295,202 +295,276 @@ else:
         
 
         # Sidebar Styling
-        # --- THEME-SYNCED SIDEBAR STYLING ---
-                # --- THEME-ENHANCED SIDEBAR DESIGN ---
         st.markdown("""
-        <style>
+<style>
+    /* === SIDEBAR CONTAINER === */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, 
+            color-mix(in srgb, var(--secondary-background-color) 95%, var(--background-color)) 0%, 
+            var(--background-color) 100%) !important;
+        color: var(--text-color);
+        box-shadow: 2px 0 15px rgba(0,0,0,0.12);
+        border-right: 1px solid rgba(128,128,128,0.15);
+        padding-top: 1rem !important;
+        animation: slideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        backdrop-filter: blur(10px);
+    }
 
-        /* --- Sidebar container with gradient --- */
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, color-mix(in srgb, var(--secondary-background-color) 95%, var(--background-color)) 0%, var(--background-color) 100%) !important;
-            color: var(--text-color);
-            box-shadow: 2px 0 10px rgba(0,0,0,0.08);
-            border-right: 1px solid rgba(128,128,128,0.1);
-            padding-top: 1rem !important;
-            animation: slideIn 0.5s ease-out;
-                    
-        }
-                    
-        .stColumn {
-            flex:1 !important;
-        }
-        .stDownloadButton > button , .stButton > button{
-            width: 100% !important;
-        }
+    /* === ANIMATIONS === */
+    @keyframes slideIn {
+        from { transform: translateX(-30px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
 
-        /* --- Animation --- */
-        @keyframes slideIn {
-            from { transform: translateX(-25px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
 
-        /* --- Profile Card - FIXED FOR COLLAPSED SIDEBAR --- */
-        .profile-card {
-            background: rgba(255,255,255,0.05);
-            margin: -12px 16px 16px;
-            border-radius: 14px;
-            padding: 14px;
-            text-align: center;
-            transition: all 0.3s ease;
-            border: 1px solid rgba(255,255,255,0.08);
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-            /* Ensure content fits in collapsed sidebar */
-            max-width: calc(100% - 32px);
-            box-sizing: border-box;
-            word-wrap: break-word;
-            overflow: hidden;
-        }
+    @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+    }
 
-        /* Specific styles for when sidebar is collapsed */
-        [data-testid="stSidebar"][aria-expanded="false"] .profile-card {
-            padding: 10px 8px !important;
-            margin: 12px 8px !important;
-            max-width: calc(100% - 16px);
-        }
+    /* === PROFILE CARD === */
+    .profile-card {
+        background: radial-gradient(circle at top right, rgb(255 255 255), #ffffff 70%) !important;
+        margin: -12px 16px 20px;
+        border-radius: 16px;
+        padding: 18px;
+        text-align: center;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 1px solid rgba(66, 133, 244, 0.15);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        max-width: calc(100% - 32px);
+        box-sizing: border-box;
+        animation: fadeIn 0.6s ease-out;
+        position: relative;
+        overflow: hidden;
+    }
 
-        [data-testid="stSidebar"][aria-expanded="false"] .profile-initial {
-            width: 40px !important;
-            height: 40px !important;
-            font-size: 1rem !important;
-            margin: 0 auto 6px !important;
-        }
+    .profile-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, 
+            transparent, 
+            rgba(255,255,255,0.1), 
+            transparent);
+        transition: left 0.5s;
+    }
 
-        [data-testid="stSidebar"][aria-expanded="false"] .profile-card div {
-            font-size: 0.8rem !important;
-            line-height: 1.2 !important;
-        }
+    .profile-card:hover::before {
+        left: 100%;
+    }
 
-        [data-testid="stSidebar"][aria-expanded="false"] .profile-card div:not(:first-child) {
-            font-size: 0.7rem !important;
-        }
+    .profile-card:hover {
+        transform: translateY(-4px) scale(1.02);
+        box-shadow: 0 8px 25px rgba(66,133,244,0.3);
+        border-color: var(--primary-color);
+    }
 
-        .profile-card:hover {
-            transform: scale(1.02);
-            box-shadow: 0 4px 18px rgba(66,133,244,0.25);
-            border-color: var(--primary-color);
-        }
+    /* === PROFILE INITIAL === */
+    .profile-initial {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: rgb(0 104 148) !important;
+        color: white !important;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 1.5rem;
+        margin: 0 auto 12px;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 3px solid rgba(255,255,255,0.4);
+        box-shadow: 0 4px 15px rgba(66, 133, 244, 0.4);
+        position: relative;
+    }
 
-        /* --- FIXED: Profile Initial for Light/Dark Mode --- */
-        .profile-initial {
-            width: 52px;
-            height: 52px;
-            border-radius: 50%;
-            background: #4285f4 !important; /* Explicit blue color */
-            color: white !important; /* Force white text */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            font-size: 1.3rem;
-            margin: 0 auto 10px;
-            transition: all 0.3s ease;
-            border: 2px solid rgba(255,255,255,0.3);
-            box-shadow: 0 2px 8px rgba(66, 133, 244, 0.3);
-        }
+    .profile-initial::after {
+        content: '';
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        border: 2px solid var(--primary-color);
+        opacity: 0;
+        animation: pulse 2s infinite;
+    }
 
-        /* Ensure visibility in all themes */
-        [data-theme="light"] .profile-initial,
-        [data-theme="dark"] .profile-initial,
-        body[data-theme="light"] .profile-initial,
-        body[data-theme="dark"] .profile-initial {
-            background: #4285f4 !important;
-            color: white !important;
-        }
+    .profile-card:hover .profile-initial {
+        transform: rotate(360deg) scale(1.1);
+        box-shadow: 0 6px 20px rgba(66, 133, 244, 0.6);
+    }
 
-        [data-testid="stSidebar"][aria-expanded="false"] .profile-initial {
-            width: 40px !important;
-            height: 40px !important;
-            font-size: 1rem !important;
-            margin: 0 auto 6px !important;
-        }
+    /* === PROJECT BADGE === */
+    .profile-card > div:last-child {
+        border: 1px solid rgba(66, 133, 244, 0.3);
+        backdrop-filter: blur(5px);
+        transition: all 0.3s ease;
+    }
 
-        /* --- Section label - Adjust for collapsed sidebar --- */
-        .section-label {
-            text-transform: uppercase;
-            font-size: 11px;
-            opacity: 0.6;
-            margin: 12px 16px 4px;
-            letter-spacing: 0.05em;
-            transition: all 0.3s ease;
-        }
+    .profile-card > div:last-child:hover {
+        transform: scale(1.05);
+        box-shadow: 0 2px 8px rgba(66, 133, 244, 0.3);
+    }
 
-        [data-testid="stSidebar"][aria-expanded="false"] .section-label {
-            font-size: 9px !important;
-            margin: 10px 8px 2px !important;
-            text-align: center;
-        }
+    /* === SECTION LABELS === */
+    .section-label {
+        text-transform: uppercase;
+        font-size: 15px;
+        font-weight: 600;
+        opacity: 0.7;
+        margin-top: 16px;
+        transition: all 0.3s ease;
+        position: relative;
+    }
 
-        /* --- Search Box --- */
-        input[type="text"] {
-            background-color: color-mix(in srgb, var(--secondary-background-color) 95%, var(--background-color)) !important;
-            color: var(--text-color) !important;
-            border: 1px solid rgba(128,128,128,0.25) !important;
-            border-radius: 6px !important;
-        }
+    .section-label::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 3px;
+        height: 12px;
+        background: var(--primary-color);
+        border-radius: 2px;
+    }
 
-        /* --- Dropdown --- */
-        div[data-baseweb="select"] {
-            background: color-mix(in srgb, var(--secondary-background-color) 92%, var(--background-color));
-            border-radius: 10px;
-        }
+    /* === INPUTS === */
+    input[type="text"] {
+        background-color: color-mix(in srgb, var(--secondary-background-color) 95%, var(--background-color)) !important;
+        color: var(--text-color) !important;
+        border: 1px solid rgba(128,128,128,0.25) !important;
+        border-radius: 8px !important;
+        transition: all 0.3s ease !important;
+    }
 
-        /* --- Buttons --- */
-        .stButton > button {
-            color: var(--text-color);
-            flex: 1;
-            width: 100%;
-            border-radius: 10px;
-            border: 1px solid rgba(128,128,128,0.25) !important;
-            font-weight: 500;
-            transition: all 0.2s ease;
-            background: color-mix(in srgb, var(--secondary-background-color) 96%, var(--background-color)) !important;
-        }
+    input[type="text"]:focus {
+        border-color: var(--primary-color) !important;
+        box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.1) !important;
+        transform: translateY(-1px);
+    }
 
-        .stButton > button:hover {
-            background-color: var(--primary-color) !important;
-            color: #fff !important;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(66,133,244,0.3);
-        }
+    /* === DROPDOWN === */
+    div[data-baseweb="select"] {
+        background: color-mix(in srgb, var(--secondary-background-color) 92%, var(--background-color));
+        border-radius: 10px;
+        transition: all 0.3s ease;
+        border: 1px solid rgba(128,128,128,0.2);
+    }
 
-        /* --- Active Button --- */
-        .active-button > button {
-            border-left: 4px solid var(--primary-color);
-            background-color: color-mix(in srgb, var(--primary-color) 10%, var(--background-color)) !important;
-            font-weight: 600;
-        }
+    div[data-baseweb="select"]:hover {
+        border-color: var(--primary-color);
+        box-shadow: 0 2px 8px rgba(66, 133, 244, 0.15);
+    }
 
-        /* --- Bottom Buttons - REMOVED BORDER --- */
-        .bottom-buttons {
-            position: fixed;
-            bottom: 20px;
-            left: 0;
-            width: 15.5rem;
-            padding: 12px 16px;
-            /* REMOVED: border-top: 1px solid rgba(128,128,128,0.15); */
-            background: color-mix(in srgb, var(--secondary-background-color) 97%, var(--background-color));
-            z-index: 999;
-            transition: all 0.3s ease;
-        }
+    /* === COLUMNS === */
+    .stColumn {
+        flex: 1 !important;
+    }
 
-        [data-testid="stSidebar"][aria-expanded="false"] .bottom-buttons {
-            width: 4.5rem !important;
-            padding: 8px !important;
-        }
+    /* === BUTTONS === */
+    .stButton > button, .stDownloadButton > button {
+        width: 100% !important;
+        color: var(--text-color);
+        border-radius: 10px;
+        border: 1px solid rgba(128,128,128,0.25) !important;
+        font-weight: 500;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        background: color-mix(in srgb, var(--secondary-background-color) 96%, var(--background-color)) !important;
+        position: relative;
+        overflow: hidden;
+    }
 
-        [data-testid="stSidebar"][aria-expanded="false"] .stButton > button {
-            padding: 0.4rem 0.3rem !important;
-            font-size: 0.7rem !important;
-            min-height: auto !important;
-        }
+    .stButton > button::before, .stDownloadButton > button::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 0;
+        height: 0;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.3);
+        transform: translate(-50%, -50%);
+        transition: width 0.6s, height 0.6s;
+    }
 
-        /* --- Scrollbar --- */
-        [data-testid="stSidebar"]::-webkit-scrollbar {
-            width: 6px;
-        }
-        [data-testid="stSidebar"]::-webkit-scrollbar-thumb {
-            background: var(--primary-color);
-            border-radius: 10px;
+    .stButton > button:hover::before, .stDownloadButton > button:hover::before {
+        width: 300px;
+        height: 300px;
+    }
+
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        background-color: var(--primary-color) !important;
+        color: #fff !important;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 15px rgba(66,133,244,0.4);
+        border-color: var(--primary-color) !important;
+    }
+
+    /* === ACTIVE BUTTON === */
+    .active-button > button {
+        border-left: 4px solid var(--primary-color);
+        background: linear-gradient(90deg, 
+            color-mix(in srgb, var(--primary-color) 15%, var(--background-color)) 0%,
+            color-mix(in srgb, var(--primary-color) 5%, var(--background-color)) 100%) !important;
+        font-weight: 600;
+        box-shadow: inset 0 0 10px rgba(66, 133, 244, 0.1);
+    }
+
+    /* === BOTTOM BUTTONS === */
+    .bottom-buttons {
+        position: fixed;
+        bottom: 20px;
+        left: 0;
+        width: 15.5rem;
+        padding: 16px;
+        background: linear-gradient(180deg,
+            transparent 0%,
+            color-mix(in srgb, var(--secondary-background-color) 97%, var(--background-color)) 20%);
+        z-index: 999;
+        transition: all 0.3s ease;
+    }
+
+    /* === SPECIAL BUTTONS === */
+    #ChangePasswordButton {
+        background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%) !important;
+        color: white !important;
+        border: none !important;
+    }
+
+    #ChangePasswordButton:hover {
+        background: linear-gradient(135deg, #27ae60 0%, #229954 100%) !important;
+        box-shadow: 0 6px 15px rgba(46, 204, 113, 0.4) !important;
+    }
+
+    #LogoutButton {
+        background: linear-gradient(135deg, #e63946 0%, #c62828 100%) !important;
+        color: white !important;
+        border: none !important;
+    }
+
+    #LogoutButton:hover {
+        background: linear-gradient(135deg, #c62828 0%, #b71c1c 100%) !important;
+        box-shadow: 0 6px 15px rgba(230, 57, 70, 0.4) !important;
+    }
+
+    /* === SCROLLBAR === */
+    [data-testid="stSidebar"]::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    [data-testid="stSidebar"]::-webkit-scrollbar-thumb {
+        background: var(--primary-color);
+        border-radius: 10px;
+        transition: background 0.3
         }
 
         /* --- Logout and Change Password Buttons --- */
@@ -625,14 +699,13 @@ else:
 
         /* Profile Card - theme aware */
         .sidebar-profile {
-            background-color: rgba(255, 255, 255, 0.08); /* Light overlay */
+            background: radial-gradient(circle at top right, rgb(0 98 132), #1988af 70%);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 20px;
             padding: 1.2rem;
             text-align: center;
             margin: 1rem 0;
             box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
-            transition: background-color 0.3s ease, box-shadow 0.3s ease;
         }
         body[data-theme="light"] .sidebar-profile {
             background-color: rgba(240, 248, 255, 0.6);
@@ -669,7 +742,7 @@ else:
             transition: all 0.2s ease;
         }
         div[data-testid="stButton"] > button:hover {
-            background-color: #0056b3;
+            background-color: #fff;
         }
 
         /* Section labels */
@@ -681,8 +754,8 @@ else:
             margin-top: 1rem;
         }
         .stButton > button, .stDownloadButton > button {
-            background: #f5f6f7 !important;
-            color: #222 !important;
+            background: #006894 !important;
+            color: #ffffff !important;
             border: 1px solid #dcdcdc !important;
             border-radius: 12px !important;
             padding: 0.6rem 1.5rem !important;
@@ -695,7 +768,7 @@ else:
         }
 
         .stButton > button:hover, .stDownloadButton > button:hover {
-            background: linear-gradient(90deg, #4285f4, #6fa8ff) !important;
+            background: #007aa1 !important;
             color: white !important;
             border: none !important;
             box-shadow: 0 6px 18px rgba(66,133,244,0.25);
@@ -743,81 +816,90 @@ else:
             <div class="profile-card">
                 <div class="profile-initial">{username[0].upper()}</div>
                 <div><strong>{username}</strong></div>
-                <div style="font-size:12px;color:#b3b3b3;">{email}</div>
-                <div style="font-size:12px;color:#9a9a9a;">Role: {role}</div>
-                <div style="font-size:11px;color:#666;margin-top:8px;padding:4px 8px;background:rgba(255,255,255,0.1);border-radius:6px;">
-                    📁 Project: <strong>{st.session_state.get("selected_project", "None")}</strong>
+                <div style="font-size:12px;color:black;">{email}</div>
+                <div style="font-size:12px;color:black;">Role: {role}</div>
+                <div style="font-size: 11px;color: rgb(255, 255, 255);margin-top: 8px;padding: 4px 8px;background: rgb(0 104 148);border-radius: 6px; !important;">
+                    Project: <strong>{st.session_state.get("selected_project", "None")}</strong>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-            st.markdown("<div class='section-label'>🔍 Filters</div>", unsafe_allow_html=True)
+            st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 0;">', unsafe_allow_html=True)
+            st.markdown("<div class='section-label'>Filters</div>", unsafe_allow_html=True)
             search_query = st.text_input("Search", placeholder="Search here...", label_visibility="collapsed")
 
             # === ENHANCED PROJECT SWITCHER WITH MODAL ===
-            # if role.upper() == "ADMIN":
-            st.markdown("---")
-            st.markdown("<div class='section-label'>🚀 Admin Controls</div>", unsafe_allow_html=True)
-            
-            current_project = st.session_state.get("selected_project", "")
-            available_projects = list(schema_value.keys())
-            
-            # Display current project
-            # st.info(f"**Current:** {current_project}")
-            
-            # Project selection dropdown
-            selected_new_project = st.selectbox(
-                "Switch to Project",
-                available_projects,
-                index=available_projects.index(current_project) if current_project in available_projects else 0,
-                key="project_selector",
-                help="Select a project to switch to",
-                label_visibility="collapsed"
-            )
-            
-            #  Direct switch button (no confirmation)
-            if selected_new_project != current_project:
-                if st.button("🔄 Switch Project", use_container_width=True, key="switch_project_direct"):
-                    # Perform the switch immediately
-                    st.session_state["selected_project"] = selected_new_project
-                    st.session_state["schema"] = schema_value[selected_new_project]
-                    
-                    # Clear cached data
-                    keys_to_clear = ['wkday_raw_df', 'wkend_raw_df', 'filtered_wkday_df', 'filtered_wkend_df']
-                    for key in keys_to_clear:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    
-                    # Show success message
-                    st.session_state["show_switch_success"] = True
-                    st.session_state["success_project_name"] = selected_new_project
-                    st.rerun()
+            if role.upper() != "CLIENT":
+                st.markdown("---")
+                st.markdown("<div class='section-label'>Admin Controls</div>", unsafe_allow_html=True)
+                
+                current_project = st.session_state.get("selected_project", "")
+                available_projects = list(schema_value.keys())
+                
+                # Display current project
+                # st.info(f"**Current:** {current_project}")
+                
+                # Project selection dropdown
+                selected_new_project = st.selectbox(
+                    "Switch to Project",
+                    available_projects,
+                    index=available_projects.index(current_project) if current_project in available_projects else 0,
+                    key="project_selector",
+                    help="Select a project to switch to",
+                    label_visibility="collapsed"
+                )
+                
+                #  Direct switch button (no confirmation)
+                if selected_new_project != current_project:
+                    if st.button("🔄 Switch Project", use_container_width=True, key="switch_project_direct"):
+                        # Perform the switch immediately
+                        st.session_state["selected_project"] = selected_new_project
+                        st.session_state["schema"] = schema_value[selected_new_project]
+                        
+                        # Clear cached data
+                        keys_to_clear = ['wkday_raw_df', 'wkend_raw_df', 'filtered_wkday_df', 'filtered_wkend_df']
+                        for key in keys_to_clear:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                        
+                        # Show success message
+                        st.session_state["show_switch_success"] = True
+                        st.session_state["success_project_name"] = selected_new_project
+                        st.rerun()
 
 
             
 
-            st.markdown("<div class='section-label'>📁 Completion Report</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-label'>Completion Report</div>", unsafe_allow_html=True)
 
             # --- Menu Items ---
-            menu_items = [
-                "🏠︎   Home",
-                "🗓︎   WEEKDAY-OVERALL",
-                "☀︎   WEEKEND-OVERALL",
-                "🕒  Time Of Day Details"
-            ]
+            if role.upper() == "CLIENT":
+                # Show only these 4 pages for CLIENT role
+                menu_items = [
+                    "🏠︎   Home",
+                    "🗓︎   WEEKDAY-OVERALL", 
+                    "☀︎   WEEKEND-OVERALL",
+                    "🕒  Time Of Day Details",
+                    "🗺️  Location Maps"
+                ]
+            else:
+                menu_items = [
+                    "🗓︎   WEEKDAY-OVERALL",
+                    "☀︎   WEEKEND-OVERALL",
+                    "🕒  Time Of Day Details"
+                ]
 
-            if 'actransit' in selected_project:
-                menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
-                "🗺️  Location Maps"])
+                if 'actransit' in selected_project:
+                    menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
+                    "🗺️  Location Maps"])
 
-            if 'kcata' in selected_project or ('actransit' in selected_project and 'rail' not in selected_schema.lower()):
-                menu_items.append("↺   Clone Records")
+                if 'kcata' in selected_project or ('actransit' in selected_project and 'rail' not in selected_schema.lower()):
+                    menu_items.append("↺   Clone Records")
 
-            if any(p in selected_project for p in ['stl', 'kcata', 'actransit']):
-                menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
+                if any(p in selected_project for p in ['stl', 'kcata', 'actransit']):
+                    menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
 
-            if 'rail' in selected_schema.lower():
-                menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
+                if 'rail' in selected_schema.lower():
+                    menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
 
             # --- Session State ---
             if "selected_page" not in st.session_state:
@@ -839,6 +921,7 @@ else:
                 st.rerun()
 
             # --- Bottom Buttons ---
+            st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 0;">', unsafe_allow_html=True)
             st.markdown('<div class="bottom-buttons">', unsafe_allow_html=True)
             if st.button('Change Password', key='ChangePasswordButton'):
                 send_change_password_email(st.session_state['user']['email'])
@@ -874,7 +957,7 @@ else:
                 border-radius: 18px;
                 padding: 2rem 2.5rem;
                 margin-bottom: 2.2rem;
-                color: #1a2a44;
+                color: #fff;
                 position: relative;
                 box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
                 border: 1px solid rgba(170, 200, 255, 0.6);
@@ -886,7 +969,7 @@ else:
                 content: '';
                 position: absolute;
                 inset: 0;
-                background: radial-gradient(circle at top right, rgba(255,255,255,0.35), transparent 70%);
+                background: rgb(0, 104, 148);;
                 z-index: 0;
             }
 
@@ -904,7 +987,7 @@ else:
                 font-weight: 700;
                 letter-spacing: -0.5px;
                 margin-bottom: 0.3rem;
-                color: #0c2c54;
+                color: #fff;
             }
 
             .header-left p {
@@ -912,7 +995,7 @@ else:
                 font-weight: 400;
                 opacity: 0.9;
                 margin: 0;
-                color: #163a5f;
+                color: #fff;
             }
 
             .metric-group {
@@ -980,7 +1063,7 @@ else:
             <div class="professional-header">
                 <div class="header-content">
                     <div class="header-left">
-                        <h1>📘 Completion Report</h1>
+                        <h1>Completion Report</h1>
                         <p>Comprehensive Route Performance Overview</p>
                     </div>
                     <div class="metric-group">
@@ -2439,7 +2522,7 @@ else:
                     st.code(traceback.format_exc())
 
             # Navigation (consistent with other pages)
-            if st.button("🔙 Home Page", key="location_maps_home_btn"):
+            if st.button("Home Page", key="location_maps_home_btn"):
                 st.query_params["page"] = "main"
                 st.rerun()
 
@@ -2451,36 +2534,36 @@ else:
         with header_col1:
             # st.header('Completion Report')
             # Button to trigger the entire script
-        
+            if role.upper() != "CLIENT":
             # if st.session_state['user']["role"].lower()=='admin':
-            if st.button("Sync"):
-                with st.spinner("Data engines are spinning up ⚙️📡 … syncing will be wrapped in 2–3 mins!"):
-                    result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
-                    if "cache_key" not in st.session_state:
-                        st.session_state["cache_key"] = 0
-                    st.session_state["cache_key"] += 1                
-                    # Fetch and process data again
-                    dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
-                    print("Data fetched successfully")  # Debug statement
-                    
-                    # Example: Access DataFrames
-                    wkday_df = dataframes.get('wkday_df', pd.DataFrame())
-                    wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
-                    wkend_df = dataframes.get('wkend_df', pd.DataFrame())
-                    wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
-                    wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
-                    wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
-                    wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
-                    wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
-                    detail_df = dataframes.get('detail_df', pd.DataFrame())
-                    wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
-                    wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
-                    surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
-                    route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
-                    surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
-                    route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
-                    low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
-                st.success(f"Data synced successfully 🎉 … pipelines are tidy, tables are aligned, and we’re good to go ✅📂")
+                if st.button("Sync"):
+                    with st.spinner("Data engines are spinning up ⚙️📡 … syncing will be wrapped in 2–3 mins!"):
+                        result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
+                        if "cache_key" not in st.session_state:
+                            st.session_state["cache_key"] = 0
+                        st.session_state["cache_key"] += 1                
+                        # Fetch and process data again
+                        dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
+                        print("Data fetched successfully")  # Debug statement
+                        
+                        # Example: Access DataFrames
+                        wkday_df = dataframes.get('wkday_df', pd.DataFrame())
+                        wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
+                        wkend_df = dataframes.get('wkend_df', pd.DataFrame())
+                        wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
+                        wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
+                        wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
+                        wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
+                        wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
+                        detail_df = dataframes.get('detail_df', pd.DataFrame())
+                        wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
+                        wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
+                        surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
+                        route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
+                        surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
+                        route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
+                        low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
+                    st.success(f"Data synced successfully 🎉 … pipelines are tidy, tables are aligned, and we’re good to go ✅📂")
 
             # if current_page != 'timedetails':
             #     if current_page == "weekend":
@@ -2522,8 +2605,9 @@ else:
 
         # Button Section
         with header_col2:
-            if st.button("📊 Export Elvis Data"):
-                export_elvis_data()
+            if role.upper() != "CLIENT":
+                if st.button("Export Elvis Data"):
+                    export_elvis_data()
             # if current_page != 'timedetails':
             #     if current_page == "weekend":
             #         csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
@@ -2579,24 +2663,25 @@ else:
             #         st.rerun()
                     # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend_station">', unsafe_allow_html=True)
             with header_col3:
-                if current_page == "weekend":
-                    csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
-                    st.download_button(
-                        "⬇ Download Weekend Raw Data",
-                        data=csv_weekend_raw,
-                        file_name=week_end_raw_file_name,
-                        mime="text/csv",
-                        key="download_weekend"
-                    )
-                else:
-                    csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
-                    st.download_button(
-                        "⬇ Download Weekday Raw Data",
-                        data=csv_weekday_raw,
-                        file_name=week_day_raw_file_name,
-                        mime="text/csv",
-                        key="download_weekday"
-                    )
+                if role.upper() != "CLIENT":
+                    if current_page == "weekend":
+                        csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
+                        st.download_button(
+                            "Download Weekend Raw Data",
+                            data=csv_weekend_raw,
+                            file_name=week_end_raw_file_name,
+                            mime="text/csv",
+                            key="download_weekend"
+                        )
+                    else:
+                        csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
+                        st.download_button(
+                            "Download Weekday Raw Data",
+                            data=csv_weekday_raw,
+                            file_name=week_day_raw_file_name,
+                            mime="text/csv",
+                            key="download_weekday"
+                        )
 
             st.markdown('</div>', unsafe_allow_html=True)
         # === End of Unified Button Row ===
