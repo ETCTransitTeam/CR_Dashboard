@@ -168,6 +168,24 @@ PROJECTS = {
             'kingelvis':'ACT_2025_KINGElvis.xlsx'
         }
     }
+    ,
+    "SALEM": {
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("SALEM_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("SALEM_ELVIS_TABLE_NAME")
+                    },
+                    "main": {
+                        "database": os.getenv("SALEM_BABY_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("SALEM_BABY_ELVIS_TABLE_NAME")
+                    }
+                },
+        "files": {
+            "details": "details_project_od_Salem.xlsx",
+            "cr": "SALEM_OR_CR_UPDATE.xlsx",
+            'kingelvis':'SALEM_OR_2025_KINGElvis.xlsx'
+        }
+    }
 }
 
 
@@ -190,26 +208,155 @@ def fetch_and_process_data(project,schema):
 
     project_config = PROJECTS[project]
     
-    elvis_config=project_config['databases']["elvis"]
-    table_name=elvis_config['table']
-    database_name=elvis_config["database"]
-    # Initialize session state for df
-    if "df" not in st.session_state:
-        st.session_state.df = None
+    # elvis_config=project_config['databases']["elvis"]
+    # table_name=elvis_config['table']
+    # database_name=elvis_config["database"]
+    # # Initialize session state for df
+    # if "df" not in st.session_state:
+    #     st.session_state.df = None
 
-    # Streamlit button to fetch data
-    csv_buffer = fetch_data(database_name,table_name)
+    # # Streamlit button to fetch data
+    # csv_buffer = fetch_data(database_name,table_name)
     
-    if csv_buffer:  # Ensure data was fetched successfully
-        st.session_state.df = pd.read_csv(csv_buffer)  # Load into DataFrame from memory
-    else:
-        st.error("Failed to load data.")
+    # if csv_buffer:  # Ensure data was fetched successfully
+    #     st.session_state.df = pd.read_csv(csv_buffer)  # Load into DataFrame from memory
+    # else:
+    #     st.error("Failed to load data.")
 
-    # Display DataFrame if available
-    if st.session_state.df is not None:
-        df = st.session_state.df
+    # # Display DataFrame if available
+    # if st.session_state.df is not None:
+    #     df = st.session_state.df
+    #     # Apply KCATA header mapping if this is the KCATA project
+    #     if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT" or project=="SALEM":
+    #         # First clean up column names by removing any extra whitespace
+    #         df.columns = df.columns.str.strip()
+    #         # Apply the header mapping
+    #         df = df.rename(columns=KCATA_HEADER_MAPPING)
+    #         elvis_df = df.drop(index=0).reset_index(drop=True)
+            
+    #         # After renaming, you might want to standardize the case (optional)
+    #         # df.columns = df.columns.str.upper()
+
+    #     # Apply filters only after confirming df is loaded
+    #     time_value_code_check=['have5minforsurvecode']
+    #     route_surveyed_code_check=['routesurveyedcode']
+    #     route_surveyed_code=check_all_characters_present(df,route_surveyed_code_check)
+    #     time_value_code_df=check_all_characters_present(df,time_value_code_check)
+    #     # Convert both columns to string type to ensure consistent comparison
+    #     df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
+    #     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    #     df=df[df[time_value_code_df[0]]=='1']
+    #     df=df[df['INTERV_INIT']!='999']
+    #     elvis_status_column_check=['elvisstatus']
+    #     elvis_status_column=check_all_characters_present(df,elvis_status_column_check)
+    #     df=df[df[elvis_status_column[0]].str.lower()!='delete']
+    #     df.drop_duplicates(subset='id',inplace=True)
+    #     time_column_check=['timeoncode']
+    #     time_period_column_check=['timeon']
+    #     df.rename(columns={route_surveyed_code[0]:'ROUTE_SURVEYEDCode'},inplace=True)
+
+    #     time_column_df=check_all_characters_present(df,time_column_check)
+    #     time_period_column_df=check_all_characters_present(df,time_period_column_check)
+
+        
+    #     # st.write(df.head())  # Display the filtered data
+    # else:
+    #     st.warning("No data available. Click 'Fetch Data' to load the dataset.")
+    
+    # df1=None
+    # if "main" in project_config["databases"]:
+    #     main_config = project_config["databases"]["main"]
+    #     main_table_name = main_config["table"]
+    #     main_database_name = main_config["database"]
+    #     main_csv_buffer = fetch_data(main_database_name, main_table_name)
+    #     df1 = pd.read_csv(main_csv_buffer) if main_csv_buffer else None
+
+    #     column_mapping = {}
+    #     for df1_col in df1.columns:
+    #         cleaned_df1_col = clean_string(df1_col)
+    #         for df_col in df.columns:
+    #             if cleaned_df1_col == clean_string(df_col):
+    #                 column_mapping[df1_col] = df_col
+    #                 break  # Move to next df1 column once we find a match
+
+    #     # Rename df1 columns to match df column names exactly
+    #     df1 = df1.rename(columns=column_mapping)
+    #     time_column_check=['timeoncode']
+    #     time_period_column_check=['timeon']
+    #     time_column_df1=check_all_characters_present(df1,time_column_check)
+    #     time_period_column_df1=check_all_characters_present(df1,time_period_column_check)
+
+    # if df is not None and df1 is not None:
+
+    #     df3 = df.copy()
+    #     # Code for Adding new records from baby elvis to elvis database file 
+    #     # added 
+    #     missing_ids = set(df1['id']) - set(df['id'])
+
+    #     # Filter df1 to get only records with missing IDs
+    #     df1_new = df1[df1['id'].isin(missing_ids)]
+
+    #     # Concatenate df3 (original df) with the filtered df1_new
+    #     df = pd.concat([df, df1_new], ignore_index=True)
+        
+    #     df.drop_duplicates(subset=['id'],inplace=True)
+    #     # Sort by ID (optional)
+    #     df = df.sort_values('id').reset_index(drop=True)
+    #     # Code for Adding new records from baby elvis to elvis database file ends here
+
+    #     # Code for Adding Time_ONCode values from baby elvis to elvis database file 
+    #     # Identify rows where time_column_df[0] is either NaN or empty string
+    #     mask = df[time_column_df[0]].isna() | (df[time_column_df[0]].str.strip() == '')
+
+    #     # Create a mapping dictionary from df1 using 'id' as key and time_column_df1[0] as value
+    #     time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
+
+    #     # Fill the missing/empty values in df using the mapping
+    #     df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
+    #     # Code for Adding Time_ONCode values from baby elvis to elvis database file ends here
+    #     baby_elvis_df_merged = df
+    #     print("Data merged successfully!")
+    # else:
+    #     print("One or both dataframes failed to load.")
+    # Fetch data from both databases only once
+    # Fetch data from both databases only once
+    elvis_config = project_config['databases']["elvis"]
+    table_name = elvis_config['table']
+    database_name = elvis_config["database"]
+
+    main_config = project_config['databases']["main"] if "main" in project_config["databases"] else None
+    main_table_name = main_config["table"] if main_config else None
+    main_database_name = main_config["database"] if main_config else None
+
+    # Initialize session states for both datasets
+    if "elvis_data" not in st.session_state:
+        st.session_state.elvis_data = None
+    if "main_data" not in st.session_state:
+        st.session_state.main_data = None
+
+    # Fetch data only if not already in session state
+    if st.session_state.elvis_data is None:
+        csv_buffer = fetch_data(database_name, table_name)
+        if csv_buffer:
+            st.session_state.elvis_data = pd.read_csv(csv_buffer)
+        else:
+            st.error("Failed to load elvis data.")
+
+    if main_config and st.session_state.main_data is None:
+        main_csv_buffer = fetch_data(main_database_name, main_table_name)
+        if main_csv_buffer:
+            st.session_state.main_data = pd.read_csv(main_csv_buffer)
+        else:
+            st.error("Failed to load main data.")
+
+    # Assign to your original variables - these are references to session state data
+    df = st.session_state.elvis_data
+    df1 = st.session_state.main_data if main_config else None
+
+    # Process elvis data (df) - EXACTLY AS IN YOUR ORIGINAL CODE
+    if df is not None:
         # Apply KCATA header mapping if this is the KCATA project
-        if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT":
+        if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT" or project=="SALEM":
             # First clean up column names by removing any extra whitespace
             df.columns = df.columns.str.strip()
             # Apply the header mapping
@@ -244,15 +391,9 @@ def fetch_and_process_data(project,schema):
         # st.write(df.head())  # Display the filtered data
     else:
         st.warning("No data available. Click 'Fetch Data' to load the dataset.")
-    
-    df1=None
-    if "main" in project_config["databases"]:
-        main_config = project_config["databases"]["main"]
-        main_table_name = main_config["table"]
-        main_database_name = main_config["database"]
-        main_csv_buffer = fetch_data(main_database_name, main_table_name)
-        df1 = pd.read_csv(main_csv_buffer) if main_csv_buffer else None
 
+    # Process main data (df1) - EXACTLY AS IN YOUR ORIGINAL CODE
+    if df1 is not None:
         column_mapping = {}
         for df1_col in df1.columns:
             cleaned_df1_col = clean_string(df1_col)
@@ -268,8 +409,8 @@ def fetch_and_process_data(project,schema):
         time_column_df1=check_all_characters_present(df1,time_column_check)
         time_period_column_df1=check_all_characters_present(df1,time_period_column_check)
 
+    # Merge logic - EXACTLY AS IN YOUR ORIGINAL CODE
     if df is not None and df1 is not None:
-
         df3 = df.copy()
         # Code for Adding new records from baby elvis to elvis database file 
         # added 
@@ -301,15 +442,7 @@ def fetch_and_process_data(project,schema):
     else:
         print("One or both dataframes failed to load.")
 
-    bucket_name = os.getenv('bucket_name')
-
-    s3_client = boto3.client(
-    's3',
-    aws_access_key_id = os.getenv('aws_access_key_id'),
-    aws_secret_access_key = os.getenv('aws_secret_access_key')
-    )
-
-    # Fetch baby_elvis data (new code)
+    # Fetch baby_elvis data - EXACTLY AS IN YOUR ORIGINAL CODE
     if "main" in PROJECTS[project]["databases"]:
         baby_elvis_config = PROJECTS[project]["databases"]["main"]
         baby_table_name = baby_elvis_config['table']
@@ -319,24 +452,32 @@ def fetch_and_process_data(project,schema):
         if "baby_elvis_df" not in st.session_state:
             st.session_state.baby_elvis_df = None
 
-        # Streamlit button to fetch baby_elvis data
-        baby_csv_buffer = fetch_data(baby_database_name, baby_table_name)
-        if baby_csv_buffer:  # Ensure data was fetched successfully
-            st.session_state.baby_elvis_df = pd.read_csv(baby_csv_buffer)  # Load into DataFrame
-            baby_elvis_df = st.session_state.baby_elvis_df  # Create local reference
+        # BUT NOW WE DON'T NEED TO FETCH - WE ALREADY HAVE THE DATA
+        # Just assign from our already fetched data
+        if st.session_state.baby_elvis_df is None and df1 is not None:
+            st.session_state.baby_elvis_df = df1.copy()  # Use the already fetched main data
+        
+        baby_elvis_df = st.session_state.baby_elvis_df  # Create local reference
 
-            # Apply KCATA header mapping to baby_elvis if this is the KCATA project
-            if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT":
-                baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
-                baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+        # Apply KCATA header mapping to baby_elvis if this is the KCATA project
+        if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT" or project=="SALEM":
+            baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
+            baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
 
-                # baby_elvis_df.columns = baby_elvis_df.columns.str.upper()
+        # Display success message
+        st.success(f"Collected {len(baby_elvis_df_merged)} records from baby_elvis and elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
 
-            # Display success message
-            st.success(f"Collected {len(baby_elvis_df)} records from baby_elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
-        else:
-            st.error("Failed to load baby_elvis data.")
+    bucket_name = os.getenv('bucket_name')
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=os.getenv('aws_access_key_id'),
+        aws_secret_access_key=os.getenv('aws_secret_access_key')
+    )
 
+    # Now ALL your original variables are available:
+    # df, df1, elvis_df, baby_elvis_df, baby_elvis_df_merged
+    # time_column_df, time_period_column_df, time_column_df1, time_period_column_df1
+    # And all other variables you had in your original code
 
     # Function to read an Excel file from S3 into a DataFrame
     def read_excel_from_s3(bucket_name, file_key, sheet_name):
@@ -420,6 +561,21 @@ def fetch_and_process_data(project,schema):
         wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
 
         print("Files read for ACTRANSIT from S3")
+
+    elif project=='SALEM':
+        ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
+
+        detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        stops_df = detail_df_stops.copy()
+        detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
+
+        wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-Overall')
+        wkend_route_df = read_excel_from_s3(bucket_name,project_config["files"]["cr"], 'WkEND-RouteTotal')
+
+        wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-Overall')
+        wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
+
+        print("Files read for SALEM from S3")
 
     elif project=='TUCSON RAIL':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
@@ -657,7 +813,7 @@ def fetch_and_process_data(project,schema):
             stop_lon6 = detail_row['stop_lon6']
             
             # Compute distance
-            distance = get_distance_between_coordinates(stop_on_lat, stop_on_long, stop_lat6, stop_lon6)
+            distance = get_distance_between_coordinates_using_haversine(stop_on_lat, stop_on_long, stop_lat6, stop_lon6)
             
             # Skip distance if it is 0
     #         if distance == 0:
@@ -725,7 +881,7 @@ def fetch_and_process_data(project,schema):
             stop_lon6 = detail_row['stop_lon6']
             
             # Compute distance
-            distance = get_distance_between_coordinates(stop_off_lat, stop_off_long, stop_lat6, stop_lon6)
+            distance = get_distance_between_coordinates_using_haversine(stop_off_lat, stop_off_long, stop_lat6, stop_lon6)
             # Skip distance if it is 0
     #         if distance == 0:
     #             continue
@@ -796,7 +952,7 @@ def fetch_and_process_data(project,schema):
                     stop_lon6 = detail_row['stop_lon6']
 
                     # Compute distance
-                    stop_on_distance = get_distance_between_coordinates(stop_on_lat, stop_on_long,stop_lat6, stop_lon6)
+                    stop_on_distance = get_distance_between_coordinates_using_haversine(stop_on_lat, stop_on_long,stop_lat6, stop_lon6)
 
                     # Skip distance if it is 0
         #             if stop_on_distance == 0:
@@ -822,7 +978,7 @@ def fetch_and_process_data(project,schema):
                     stop_lon6 = detail_row['stop_lon6']
 
                     # Compute distance
-                    stop_off_distance = get_distance_between_coordinates(stop_off_lat, stop_off_long,stop_lat6, stop_lon6)
+                    stop_off_distance = get_distance_between_coordinates_using_haversine(stop_off_lat, stop_off_long,stop_lat6, stop_lon6)
 
         #             Skip distance if it is 0
         #             if stop_off_distance == 0:
@@ -848,8 +1004,6 @@ def fetch_and_process_data(project,schema):
     # with open(f'{project_name}_SEQUENCE_DIFFERENCEIDS.txt','w') as f:
     #     for item in ids_list:
     #         f.write(f"{item}\n")
-
-
 
     df.drop(columns=['ROUTE_SURVEYEDCode_SPLITED','SEQ_DIFFERENCE'],inplace=True)
     df.drop_duplicates(subset=['id'],inplace=True)
@@ -892,10 +1046,6 @@ def fetch_and_process_data(project,schema):
 
     weekday_df=df[~(df['Day'].isin(['Saturday','Sunday']))]
 
-
-    # df.to_csv('Day Time SantaClarita.csv',index=False)
-
-    # exit()
     #to get the TIMEON column
     time_column_check=['timeoncode']
     time_period_column_check=['timeon']
@@ -907,9 +1057,6 @@ def fetch_and_process_data(project,schema):
     stopon_clntid_column=check_all_characters_present(df,stopon_clntid_column_check)
     stopoff_clntid_column_check=['stopoffclntid']
     stopoff_clntid_column=check_all_characters_present(df,stopoff_clntid_column_check)
-
-
-    # df[['id','Day',route_survey_column[0]]].to_csv('Checking Day Names.csv',index=False)
 
 
     wkend_overall_df.dropna(subset=['LS_NAME_CODE'],inplace=True)
@@ -928,11 +1075,10 @@ def fetch_and_process_data(project,schema):
         if project in ["TUCSON", "TUCSON RAIL"]:
             wkend_route_direction_df=create_tucson_weekend_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
         else:
-            if project not in ["ACTRANSIT"]:
+            if project not in ["ACTRANSIT", "SALEM"]:
                 print("Creating weekend route direction df")
                 wkend_route_direction_df=create_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
         wkday_route_direction_df=create_route_direction_level_df(wkday_overall_df,weekday_df,time_column,project)
-
     # ----- Station-wise Route DF -----
     if project=='UTA':
         wkend_stationwise_route_df=create_uta_station_wise_route_level_df(wkend_overall_df,weekend_df,time_column,'weekend')
@@ -950,7 +1096,7 @@ def fetch_and_process_data(project,schema):
         pass
 
 
-    if project=='KCATA' or project=='KCATA RAIL' or project=='ACTRANSIT':
+    if project=='KCATA' or project=='KCATA RAIL' or project=='ACTRANSIT' or project=='SALEM':
         weekday_df.dropna(subset=[time_column[0]],inplace=True)
         weekday_raw_df=weekday_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_df.dropna(subset=[time_column[0]],inplace=True)
@@ -1429,8 +1575,7 @@ def fetch_and_process_data(project,schema):
             route_surveyed_ID=detail_df_stops[detail_df_stops['ETC_ROUTE_ID']==row['ROUTE_SURVEYEDCode']]['ETC_ROUTE_ID'].iloc[0]
             wkend_route_direction_df.loc[row.name,'ROUTE_SURVEYED']=route_surveyed
 
-    elif project == 'KCATA' or project == 'ACTRANSIT':
-        # First rename all columns consistently
+    elif project == 'KCATA' or project == 'ACTRANSIT' or project == 'SALEM':
         rename_dict = {
             'CR_Early_AM': '(1) Goal',
             'CR_AM_Peak': '(2) Goal',
@@ -1512,13 +1657,13 @@ def fetch_and_process_data(project,schema):
 
         print("Processing route comparison data...")
         # Process the route comparison data
-        new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_df_merged, ke_df)
+        new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_df_merged, ke_df, project)
         route_level_df = create_route_level_comparison(new_df)
         comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_df_merged, route_level_df, project, stops_df)
         print("Route comparison data processed successfully.")
 
-        survey_report_df = process_surveyor_data_kcata(ke_df, df)
-        route_report_df = process_route_data_kcata(ke_df, df)
+        survey_report_df = process_surveyor_data_transit_ls6(ke_df, df)
+        route_report_df = process_route_data_transit_ls6(ke_df, df)
         low_response_questions_df = create_low_response_report(df)
         refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df)
 
@@ -1616,8 +1761,8 @@ def fetch_and_process_data(project,schema):
         )
 
         # Now process with the merged data
-        survey_report_by_date_df = process_surveyor_date_data_kcata(ke_df, df, survey_date_surveyor)
-        route_report_by_date_df = process_route_date_data_kcata(ke_df, df, survey_date_route)
+        survey_report_by_date_df = process_surveyor_date_data_transit_ls6(ke_df, df, survey_date_surveyor)
+        route_report_by_date_df = process_route_date_data_transit_ls6(ke_df, df, survey_date_route)
 
         # Final DataFrame cleanup
         wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
@@ -1848,6 +1993,7 @@ def fetch_and_process_data(project,schema):
             authenticator="SNOWFLAKE_JWT",
             schema=schema,
             role=os.getenv('SNOWFLAKE_ROLE'),
+            network_timeout=120
         )
         print("Connection successfull")
         return conn
@@ -2108,29 +2254,36 @@ def fetch_and_process_data(project,schema):
             'Surveyor Report with Date': 'surveyor_report_date_trends',
             'Route Report with Date': 'route_report_date_trends'
         }
-    elif project=='KCATA' or project=='ACTRANSIT':
+    elif project=='KCATA' or project=='ACTRANSIT' or project=='SALEM':
         # Check if weekend data exists
         has_weekend_data = False
         weekend_dataframes = {}
-        
+        # Define columns that might need to be dropped
+        columns_to_possibly_drop = ['CR_Total', 'Total_DIFFERENCE']
         try:
+            # Safe column dropping - only drop columns that actually exist
+            wkend_route_dir_cols_to_drop = [col for col in columns_to_possibly_drop if col in wkend_route_direction_df.columns]
+            wkend_comparison_cols_to_drop = [col for col in columns_to_possibly_drop if col in wkend_comparison_df.columns]
             if 'wkend_route_direction_df' in locals() and wkend_route_direction_df is not None:
                 weekend_dataframes.update({
-                    'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+                    'WkEND Route DIR Comparison': wkend_route_direction_df.drop(columns=wkend_route_dir_cols_to_drop),
                     'WkEND RAW DATA': weekend_raw_df,
                     'WkEND Time Data': wkend_time_value_df,
-                    'WkEND Route Comparison': wkend_comparison_df.drop(columns=['CR_Total', 'Total_DIFFERENCE'])
+                    'WkEND Route Comparison': wkend_comparison_df.drop(columns=wkend_comparison_cols_to_drop)
                 })
                 has_weekend_data = True
         except NameError:
             has_weekend_data = False
 
+        # Safe column dropping for weekday data - only drop columns that actually exist
+        wkday_route_dir_cols_to_drop = [col for col in columns_to_possibly_drop if col in wkday_route_direction_df.columns]
+        wkday_comparison_cols_to_drop = [col for col in columns_to_possibly_drop if col in wkday_comparison_df.columns]
         # DataFrames preparation - start with common dataframes
         dataframes = {
-            'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkDAY Route DIR Comparison': wkday_route_direction_df.drop(columns=wkday_route_dir_cols_to_drop),
             'WkDAY RAW DATA': weekday_raw_df,
             'WkDAY Time Data': wkday_time_value_df,
-            'WkDAY Route Comparison': wkday_comparison_df.drop(columns=['CR_Total','Total_DIFFERENCE']),
+            'WkDAY Route Comparison': wkday_comparison_df.drop(columns=wkday_comparison_cols_to_drop),
             'LAST SURVEY DATE': latest_date_df,
             'By_Interviewer': interviewer_pivot,
             'By_Route': route_pivot,

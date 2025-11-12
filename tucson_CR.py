@@ -97,6 +97,7 @@ else:
                 authenticator="SNOWFLAKE_JWT",
                 schema=selected_schema,
                 role=os.getenv('SNOWFLAKE_ROLE'),
+                network_timeout=120
                     )
             return conn
 
@@ -883,19 +884,20 @@ else:
                 ]
             else:
                 menu_items = [
+                    "🏠︎   Home",
                     "🗓︎   WEEKDAY-OVERALL",
                     "☀︎   WEEKEND-OVERALL",
                     "🕒  Time Of Day Details"
                 ]
 
-                if 'actransit' in selected_project:
+                if 'actransit' in selected_project or 'salem' in selected_project:
                     menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
                     "🗺️  Location Maps"])
 
-                if 'kcata' in selected_project or ('actransit' in selected_project and 'rail' not in selected_schema.lower()):
+                if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project and 'rail' not in selected_schema.lower()):
                     menu_items.append("↺   Clone Records")
 
-                if any(p in selected_project for p in ['stl', 'kcata', 'actransit']):
+                if any(p in selected_project for p in ['stl', 'kcata', 'actransit', 'salem']):
                     menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
 
                 if 'rail' in selected_schema.lower():
@@ -937,7 +939,7 @@ else:
             formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
 
             # Get most recent "Completed" date
-            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project:
+            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
                 completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
             else:
                 completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
@@ -1245,7 +1247,7 @@ else:
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-            elif 'kcata' in selected_project or 'actransit' in selected_project:
+            elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(5) Collect', '(5) Remain',
@@ -1311,9 +1313,16 @@ else:
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
                 wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
-            elif 'kcata' in selected_project or 'actransit' in selected_project:
+            elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
+                for col in ['(5) Collect', '(5) Remain', '(5) Goal']:
+                    if col not in wkend_dir_df.columns:
+                        wkend_dir_df[col] = 0
+
                 wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                        '(2) Collect', '(2) Remain', 
+                                        '(3) Collect', '(3) Remain', 
+                                        '(4) Collect', '(4) Remain',
+                                        '(5) Collect', '(5) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
                 wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
@@ -1406,7 +1415,7 @@ else:
                 st.rerun()
 
         def daily_totals_page():
-            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
+            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
                 st.title("📊 Daily Totals - Interviewer and Route Level")
                 # Load Snowflake-extracted DataFrames
                 by_interv_totals_df = dataframes['by_interv_totals_df']
@@ -2563,105 +2572,25 @@ else:
                         surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
                         route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
                         low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
+                        refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
+                        refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
+                        by_interv_totals_df = dataframes.get('by_interv_totals_df', pd.DataFrame())
+                        by_route_totals_df = dataframes.get('by_route_totals_df', pd.DataFrame())
+                        survey_detail_totals_df = dataframes.get('survey_detail_totals_df', pd.DataFrame())
+
+                        route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
+                        reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
+                        reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
+                        
                     st.success(f"Data synced successfully 🎉 … pipelines are tidy, tables are aligned, and we’re good to go ✅📂")
 
-            # if current_page != 'timedetails':
-            #     if current_page == "weekend":
-            #         st.header(f'Total Records: {wkend_df["# of Surveys"].sum()}')
-            #     else:  # Default to weekday data for main and weekday pages
-            #         st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
-            # current_date = datetime.datetime.now()
-            # formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
-            # st.markdown(f"##### **Last Refresh DATE**: {formatted_date}")
-
-            # Get the most recent "Completed" date from both wkday_raw_df and wkend_raw_df
-            # if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project:
-            #     completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
-            # else:
-            #     completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
-            # most_recent_completed_date = pd.to_datetime(completed_dates).max()
-
-            # # # # Display the most recent "Completed" date
-            # st.markdown(f"##### **Completed**: {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}")
-
-            # ADD THE ELVIS EXPORT BUTTON RIGHT HERE - BELOW SYNC BUTTON
-
-        # Page Content Section
-        # with header_col2:
-            
-
-                # Button for Time OF Day Details
-                # if st.button('Time OF Day Details'):
-                #     st.query_params["page"] = "timedetails"
-                #     st.rerun()
-                    # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=timedetails">', unsafe_allow_html=True)
-            # else:
-            #     st.header(f'Time OF Day Details')
-
-            # if 'actransit' in selected_project:
-            #     if st.button("LOW RESPONSE QUESTIONS"):
-            #         st.query_params["page"] = "low_response_questions_tab"
-            #         st.rerun()
 
         # Button Section
         with header_col2:
             if role.upper() != "CLIENT":
                 if st.button("Export Elvis Data"):
                     export_elvis_data()
-            # if current_page != 'timedetails':
-            #     if current_page == "weekend":
-            #         csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
-            #         download_csv(csv_weekend_raw, week_end_raw_file_name, "Download WeekEnd Raw Data")
-            #     else:  # Default to weekday data for main and weekday pages
-            #         st.header(f'Total Records: {wkday_df["# of Surveys"].sum()}')
-            #         csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
-            #         download_csv(csv_weekday_raw, week_day_raw_file_name, "Download WeekDay Raw Data")
-            # WEEKDAY-OVERALL button
-            # if st.button("WEEKDAY-OVERALL"):
-            #     st.query_params["page"] = "weekday"
-            #     st.rerun()
-                # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday">', unsafe_allow_html=True)
 
-            # WEEKEND-OVERALL button
-            # if st.button("WEEKEND-OVERALL"):
-            #     st.query_params["page"] = "weekend"
-            #     st.rerun()
-                # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend">', unsafe_allow_html=True)
-            # if 'actransit' in selected_project:
-            #     if st.button("REFUSAL ANALYSIS"):
-            #         st.query_params["page"] = "refusal"
-            #         st.rerun()
-
-            
-            # # Add these two new buttons for kcata simple project
-            # if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
-            #     # if st.button("Route Comparison"):
-            #     #     st.query_params["page"] = "route_comparison"
-            #     #     st.rerun()
-                    
-            #     if st.button("Reverse Routes"):
-            #         st.query_params["page"] = "reverse_routes"
-            #         st.rerun()
-
-            # if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
-            #     if st.button("DAILY TOTALS"):
-            #         st.query_params["page"] = "dailytotals"
-            #         st.rerun()
-            
-            #     if st.button("Surveyor/Route/Trend Reports"):
-            #         st.query_params["page"] = "surveyreport"
-            #         st.rerun()
-
-            # if 'rail' in selected_schema.lower():
-            #     if st.button("WEEKDAY StationWise Comparison"):
-            #         st.query_params["page"] = "weekday_station"
-            #         st.rerun()
-            #         # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekday_station">', unsafe_allow_html=True)
-
-            #     if st.button("WEEKEND StationWise Comparison"):
-            #         st.query_params["page"] = "weekend_station"
-            #         st.rerun()
-                    # st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=weekend_station">', unsafe_allow_html=True)
             with header_col3:
                 if role.upper() != "CLIENT":
                     if current_page == "weekend":
@@ -2685,9 +2614,6 @@ else:
 
             st.markdown('</div>', unsafe_allow_html=True)
         # === End of Unified Button Row ===
-
-
-
 
 
             
@@ -2751,16 +2677,16 @@ else:
             elif current_page=='timedetails':
                 time_details(detail_df)
             elif current_page == "dailytotals":
-                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
+                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
                     daily_totals_page()
             elif current_page == "low_response_questions_tab":
-                if 'actransit' in selected_project:  # Add this new route
+                if 'actransit' in selected_project or 'salem' in selected_project:  # Add this new route
                     low_response_questions_page()
             elif current_page == "refusal":  # ADD THIS NEW PAGE FOR REFUSAL ANALYSIS
-                if 'actransit' in selected_project:
+                if 'actransit' in selected_project or 'salem' in selected_project:
                     show_refusal_analysis(refusal_analysis_df, refusal_race_df)
             elif current_page == "surveyreport":
-                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project:
+                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
                     # 📌 Fields you want to show
                     percentage_fields = [
                         "% of Incomplete Home Address", "% of 0 Transfers",
@@ -2857,10 +2783,10 @@ else:
                         )
 
             elif current_page == "route_comparison":
-                if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
+                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project and 'rail' not in selected_schema.lower():
                     route_comparison_page()
             elif current_page == "reverse_routes":
-                if 'kcata' in selected_project or 'actransit' in selected_project and 'rail' not in selected_schema.lower():
+                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project and 'rail' not in selected_schema.lower():
                     reverse_routes_page()
             elif current_page == "location_maps":  # Add this line
                 location_maps_page()
@@ -2877,7 +2803,7 @@ else:
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                     wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
 
-                elif 'kcata' in selected_project or 'actransit' in selected_project:
+                elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']

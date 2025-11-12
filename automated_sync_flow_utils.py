@@ -69,6 +69,35 @@ def get_distance_between_coordinates(lat1, lon1, lat2, lon2):
         # Handle the exception here
         print(f"Error calculating distance: {e}")  # Change to the desired distance unit
 
+def get_distance_between_coordinates_using_haversine(lat1, lon1, lat2, lon2):
+    """
+    Fast Haversine-based distance (miles)
+    Compatible with original geodesic-based usage.
+    """
+    try:
+        if pd.isna(lat1) or pd.isna(lon1) or pd.isna(lat2) or pd.isna(lon2):
+            return None
+
+        lat1, lon1, lat2, lon2 = map(float, [lat1, lon1, lat2, lon2])
+
+        # Convert to radians
+        lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+
+        # Haversine formula
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
+        c = 2 * np.arcsin(np.sqrt(a))
+
+        # Radius of Earth in miles
+        r = 3958.8
+        return c * r
+
+    except (ValueError, TypeError) as e:
+        print(f"Error calculating distance: {e}")
+        return None
+
+
 def get_day_name(x):
     if pd.isna(x):  # Check if x is NaT (missing value)
         return None  # Or return 'Unknown' or 'Missing' based on your needs
@@ -484,6 +513,78 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
 
         # Add a display text column with sequential numbering
         new_df['Display_Text'] = range(1, len(new_df) + 1)
+    elif project=='SALEM':
+        """
+        Create a time-value DataFrame summarizing counts and time ranges.
+        """
+        early_am_values = ['AM1','AM2','AM3', 'MID1','MID2','MID7', 'MID3']
+        am_values = ['MID4', 'MID5', 'MID6']
+        midday_values = ['PM1','PM2','PM3']
+        pm_peak_values = ['PM4','PM5','PM6','PM7','PM8','PM9']
+        evening_values = ['PM10','PM11','PM12','PM13','PM14','PM15']
+
+        # Mapping time groups to corresponding columns
+        time_group_mapping = {
+            1: early_am_values,
+            2: am_values,
+            3: midday_values,
+            4: pm_peak_values,
+            5: evening_values,
+        }
+
+        time_mapping = {
+            'AM1': 'Before 6:00 am',
+            'AM2': '6:00 am - 6:30 am',
+            'AM3': '6:30 am - 7:00 am',
+            'MID1': '7:00 am - 7:30 am',
+            'MID2': '7:30 am - 8:00 am',
+            'MID7': '8:00 am - 8:30 am',
+            'MID3': '8:30 am - 9:00 am',
+            'MID4': '9:00 am - 10:00 am',
+            'MID5': '10:00 am - 11:00 am',
+            'MID6': '11:00 am - 12:00 pm',
+            'PM1': '12:00 pm - 1:00 pm',
+            'PM2': '1:00 pm - 2:00 pm',
+            'PM3': '2:00 pm - 3:00 pm',
+            'PM4': '3:00 pm - 3:30 pm',
+            'PM5': '3:30 pm - 4:00 pm',
+            'PM6': '4:00 pm - 4:30 pm',
+            'PM7': '4:30 pm - 5:00 pm',
+            'PM8': '5:00 pm - 5:30 pm',
+            'PM9': '5:30 pm - 6:00 pm',
+            'PM10': '6:00 pm - 6:30 pm',
+            'PM11': '6:30 pm - 7:00 pm',
+            'PM12': '7:00 pm - 8:00 pm',
+            'PM13': '8:00 pm - 9:00 pm',
+            'PM14': '9:00 pm - 10:00 pm',
+            'PM15': 'After 10:00 pm'
+        }
+
+        # Initialize the new DataFrame
+        new_df = pd.DataFrame(columns=["Original Text", 0, 1, 2, 3, 4,5,6])
+
+        # Populate the DataFrame with counts
+        for col, values in time_group_mapping.items():
+            for value in values:
+                count = df[df[time_column[0]] == value].shape[0]
+                row = {"Original Text": value}
+
+                # Initialize all columns to 0
+                for c in range(6):
+                    row[c] = 0
+
+                # Update the corresponding column with the count
+                row[col] = count
+                new_df = pd.concat([new_df, pd.DataFrame([row])], ignore_index=True)
+
+        # Map time values to time ranges
+        new_df['Time Range'] = new_df['Original Text'].map(time_mapping)
+
+        # Drop rows with missing time ranges
+        new_df.dropna(subset=['Time Range'], inplace=True)
+
+        # Add a display text column with sequential numbering
+        new_df['Display_Text'] = range(1, len(new_df) + 1)
     elif project=='KCATA RAIL':
         # Filter df where overall_df['ROUTE_SURVEYEDCode'] == df['ROUTE_SURVEYEDCode_Splited']
         matched_df = df[df['ROUTE_SURVEYEDCode_Splited'].isin(overall_df['ROUTE_SURVEYEDCode'])]
@@ -585,7 +686,6 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
         new_df['CR_Midday']=overalldf[midday_colum[0]].apply(math.ceil)
         new_df['CR_PM_Peak']=overalldf[pm_column[0]].apply(math.ceil)
         new_df['CR_Evening']=overalldf[evening_column[0]].apply(math.ceil)
-        # print("new_df_columns",new_df.columns)
         # new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         new_df.fillna(0,inplace=True)
@@ -675,7 +775,6 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
         new_df['CR_Midday'] = pd.to_numeric(overalldf[midday_colum[0]], errors='coerce').fillna(0).apply(math.ceil)
         new_df['CR_PM_Peak'] = pd.to_numeric(overalldf[pm_column[0]], errors='coerce').fillna(0).apply(math.ceil)
         new_df['CR_Evening'] = pd.to_numeric(overalldf[evening_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-        # print("new_df_columns",new_df.columns)
         new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         new_df.fillna(0,inplace=True)
 
@@ -753,7 +852,6 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
         new_df['CR_Midday']=overalldf[midday_colum[0]].apply(math.ceil)
         new_df['CR_PM_Peak']=overalldf[pm_column[0]].apply(math.ceil)
         new_df['CR_Evening']=overalldf[evening_column[0]].apply(math.ceil)
-        # print("new_df_columns",new_df.columns)
         new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         new_df.fillna(0,inplace=True)
 
@@ -959,6 +1057,73 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
         new_df['Evening_DIFFERENCE'] = (new_df['CR_Evening'] - new_df['DB_Evening']).clip(lower=0).apply(math.ceil)
         new_df['Total_DIFFERENCE'] = (new_df[['Early_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 
                                             'PM_PEAK_DIFFERENCE', 'Evening_DIFFERENCE']].sum(axis=1))
+    elif project=='SALEM':
+        # Time period values
+        early_am_values = ['AM1','AM2','AM3', 'MID1','MID2','MID7', 'MID3']
+        am_values = ['MID4', 'MID5', 'MID6']
+        midday_values = ['PM1','PM2','PM3']
+        pm_peak_values = ['PM4','PM5','PM6','PM7','PM8','PM9']
+        evening_values = ['PM10','PM11','PM12','PM13','PM14','PM15']
+
+        # Column names in the DataFrame (as strings)
+        early_am_column = ['1']  
+        am_column = ['2']        
+        midday_colum = ['3']     
+        pm_peak_column = ['4']   
+        evening_column = ['5']   
+
+        # Initialize new DataFrame
+        new_df = pd.DataFrame()
+        new_df['ROUTE_SURVEYEDCode'] = overalldf['LS_NAME_CODE']
+
+        # Convert and clean numeric columns
+        def safe_convert(x):
+            try:
+                return math.ceil(float(x)) if pd.notnull(x) else 0
+            except (ValueError, TypeError):
+                return 0
+
+        # Process each time period column
+        for col, col_name in [(early_am_column, 'CR_Early_AM'),
+                            (am_column, 'CR_AM_Peak'),
+                            (midday_colum, 'CR_Midday'),
+                            (pm_peak_column, 'CR_PM_Peak'),
+                            (evening_column, 'CR_Evening')]:
+            overalldf[col[0]] = pd.to_numeric(overalldf[col[0]], errors='coerce').fillna(0)
+            new_df[col_name] = overalldf[col[0]].apply(safe_convert)
+
+        # Calculate totals
+        new_df['CR_Total'] = new_df['CR_Early_AM'] + new_df['CR_AM_Peak'] + new_df['CR_Midday'] + new_df['CR_PM_Peak'] + new_df['CR_Evening']
+
+        # Get counts from the database
+        for index, row in new_df.iterrows():
+            route_code = row['ROUTE_SURVEYEDCode']
+
+            def get_counts(time_values):
+                subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+                return subset_df.drop_duplicates(subset='id').shape[0]
+
+            # Initialize all DB columns first
+            new_df.at[index, 'DB_Early_AM_Peak'] = get_counts(early_am_values)
+            new_df.at[index, 'DB_AM_Peak'] = get_counts(am_values)
+            new_df.at[index, 'DB_Midday'] = get_counts(midday_values)
+            new_df.at[index, 'DB_PM_Peak'] = get_counts(pm_peak_values)
+            new_df.at[index, 'DB_Evening'] = get_counts(evening_values)
+            new_df.at[index, 'DB_Total'] = (new_df.at[index, 'DB_Early_AM_Peak'] + 
+                                            new_df.at[index, 'DB_AM_Peak'] + 
+                                            new_df.at[index, 'DB_Midday'] + 
+                                            new_df.at[index, 'DB_PM_Peak'] + 
+                                            new_df.at[index, 'DB_Evening'])
+
+        # Calculate differences
+        new_df['Early_AM_DIFFERENCE'] = (new_df['CR_Early_AM'] - new_df['DB_Early_AM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['AM_DIFFERENCE'] = (new_df['CR_AM_Peak'] - new_df['DB_AM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['Midday_DIFFERENCE'] = (new_df['CR_Midday'] - new_df['DB_Midday']).clip(lower=0).apply(math.ceil)
+        new_df['PM_PEAK_DIFFERENCE'] = (new_df['CR_PM_Peak'] - new_df['DB_PM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['Evening_DIFFERENCE'] = (new_df['CR_Evening'] - new_df['DB_Evening']).clip(lower=0).apply(math.ceil)
+        new_df['Total_DIFFERENCE'] = (new_df[['Early_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 
+                                            'PM_PEAK_DIFFERENCE', 'Evening_DIFFERENCE']].sum(axis=1))
+
     elif project=='KCATA RAIL':
         early_am_values = ['AM1','AM2']
         am_values = ['AM3', 'MID1','MID2','MID7']
@@ -1153,7 +1318,6 @@ def create_tucson_weekend_route_direction_level_df(overalldf,df,time_column,proj
         new_df['CR_Midday'] = pd.to_numeric(overalldf[midday_colum[0]], errors='coerce').fillna(0).apply(math.ceil)
         new_df['CR_PM_Peak'] = pd.to_numeric(overalldf[pm_column[0]], errors='coerce').fillna(0).apply(math.ceil)
         new_df['CR_Evening'] = pd.to_numeric(overalldf[evening_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-        # print("new_df_columns",new_df.columns)
         new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         # new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         new_df.fillna(0,inplace=True)
@@ -1285,7 +1449,6 @@ def create_uta_station_wise_route_level_df(overall_df,df,time_column,time):
         midday_value, midday_value_ids = get_counts_and_ids(midday_values)
         pm_value, pm_value_ids = get_counts_and_ids(pm_values)
         evening_value, evening_value_ids = get_counts_and_ids(evening_values)
-    #     print(pre_early_am_value,early_am_value,am_value,midday_value,pm_value,evening_value)
         new_df.loc[index, 'CR_Total'] = row['CR_PRE_Early_AM']+row['CR_Early_AM']+row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
         new_df.loc[index, 'CR_AM_Peak'] =row['CR_AM_Peak']
         # new_df.loc[index, 'CR_AM_Peak'] =row['CR_PRE_EARLY_AM']+row['CR_EARLY_AM']+ row['CR_AM_Peak']
@@ -1397,7 +1560,6 @@ def create_station_wise_route_level_df(overall_df,df,time_column):
         midday_value, midday_value_ids = get_counts_and_ids(midday_values)
         pm_value, pm_value_ids = get_counts_and_ids(pm_values)
         evening_value, evening_value_ids = get_counts_and_ids(evening_values)
-    #     print(pre_early_am_value,early_am_value,am_value,midday_value,pm_value,evening_value)
         new_df.loc[index, 'CR_Total'] = row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
         # new_df.loc[index, 'CR_Total'] = row['CR_PRE_Early_AM']+row['CR_Early_AM']+row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
         new_df.loc[index, 'CR_AM_Peak'] =row['CR_AM_Peak']
@@ -1638,7 +1800,6 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
             new_df['CR_Midday']=overall_df[midday_colum[0]].apply(math.ceil)
             new_df['CR_PM_Peak']=overall_df[pm_column[0]].apply(math.ceil)
             new_df['CR_Evening']=overall_df[evening_column[0]].apply(math.ceil)
-            print("new_df_columns",new_df.columns)
             # new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
             new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
             #  new_df[['CR_EARLY_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_EARLY_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
@@ -1646,12 +1807,10 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
             new_df.fillna(0,inplace=True)
             # adding values for AM, PM, MIDDAY and Evening from Database file to new Dataframe
             for index, row in new_df.iterrows():
-                print("In loop 899")
                 route_code = row['ROUTE_SURVEYEDCode']
 
                 # Define a function to get the counts and IDs
                 def get_counts_and_ids(time_values):
-                    print("In get_counts_and_ids")
                     # Just for SALEM
                     # subset_df = df[(df['ROUTE_SURVEYEDCode_Splited'] == route_code) & (df[time_column[0]].isin(time_values))]
                     subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
@@ -1712,7 +1871,6 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
 
             # adding values from database file and compeletion report for Route_Level
             for index , row in route_level_df.iterrows():
-                print("In loop 965")
                 subset_df=new_df[new_df['ROUTE_SURVEYEDCode_Splited']==row['ROUTE_SURVEYEDCode']]
                 # sum_per_route_cr = subset_df[['CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening','CR_Total','Overall Goal']].sum()
                 
@@ -1751,7 +1909,6 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                 
             # calculating the difference between values of database and compeletion report for Route_Level
             for index, row in route_level_df.iterrows():
-                print("In loop 1004")
                 # pre_early_am_peak_diff=row['CR_PRE_Early_AM']-row['DB_PRE_Early_AM_Peak']
                 # early_am_peak_diff=row['CR_Early_AM']-row['DB_Early_AM_Peak']
                 am_peak_diff=row['CR_AM_Peak']-row['DB_AM_Peak']
@@ -1822,7 +1979,6 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                 midday_value, midday_value_ids = get_counts_and_ids(midday_values)
                 pm_value, pm_value_ids = get_counts_and_ids(pm_values)
                 evening_value, evening_value_ids = get_counts_and_ids(evening_values)
-            #     print(pre_early_am_value,early_am_value,am_value,midday_value,pm_value,evening_value)
                 new_df.loc[index, 'CR_Total'] = row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
                 # new_df.loc[index, 'CR_Total'] = row['CR_PRE_Early_AM']+row['CR_Early_AM']+row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
                 new_df.loc[index, 'CR_AM_Peak'] =row['CR_AM_Peak']
@@ -1955,7 +2111,6 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
             new_df['CR_Midday']=overall_df[midday_colum[0]].apply(math.ceil)
             new_df['CR_PM_Peak']=overall_df[pm_column[0]].apply(math.ceil)
             new_df['CR_Evening']=overall_df[evening_column[0]].apply(math.ceil)
-            print("new_df_columns",new_df.columns)
             new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
             #  new_df[['CR_EARLY_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_EARLY_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
             # new_df['Overall Goal']=cr_df[overall_goal_column[0]]
@@ -2133,7 +2288,6 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                 midday_value, midday_value_ids = get_counts_and_ids(midday_values)
                 pm_value, pm_value_ids = get_counts_and_ids(pm_values)
                 evening_value, evening_value_ids = get_counts_and_ids(evening_values)
-            #     print(pre_early_am_value,early_am_value,am_value,midday_value,pm_value,evening_value)
                 new_df.loc[index, 'CR_Total'] = row['CR_PRE_Early_AM']+row['CR_Early_AM']+row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
                 new_df.loc[index, 'CR_AM_Peak'] =row['CR_AM_Peak']
                 # new_df.loc[index, 'CR_AM_Peak'] =row['CR_PRE_EARLY_AM']+row['CR_EARLY_AM']+ row['CR_AM_Peak']
@@ -2480,6 +2634,116 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                     math.ceil(max(0, evening_diff))
                 )
                 route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
+        elif project=='SALEM':
+            early_am_values = ['AM1','AM2','AM3', 'MID1','MID2','MID7', 'MID3']
+            am_values = ['MID4', 'MID5', 'MID6']
+            midday_values = ['PM1','PM2','PM3']
+            pm_peak_values = ['PM4','PM5','PM6','PM7','PM8','PM9']
+            evening_values = ['PM10','PM11','PM12','PM13','PM14','PM15']
+
+            early_am_column = ['1']
+            am_column=['2']
+            midday_colum=['3']
+            pm_peak_column=['4']
+            evening_column=['5']
+
+            def convert_string_to_integer(x):
+                try:
+                    return float(x)
+                except (ValueError, TypeError):
+                    return 0
+
+            def safe_ceil(series):
+                return pd.to_numeric(series, errors='coerce').fillna(0).apply(lambda x: math.ceil(x))
+
+            new_df=pd.DataFrame()
+            new_df['ROUTE_SURVEYEDCode']=overall_df['LS_NAME_CODE']
+            new_df['CR_Early_AM'] = safe_ceil(overall_df[early_am_column[0]])
+            new_df['CR_AM_Peak']  = safe_ceil(overall_df[am_column[0]])
+            new_df['CR_Midday']   = safe_ceil(overall_df[midday_colum[0]])
+            new_df['CR_PM_Peak']  = safe_ceil(overall_df[pm_peak_column[0]])
+            new_df['CR_Evening']  = safe_ceil(overall_df[evening_column[0]])
+
+
+            # new_df['CR_Early_AM']=overall_df[early_am_column[0]].apply(math.ceil)
+            # new_df['CR_AM_Peak']=overall_df[am_column[0]].apply(math.ceil)
+            # new_df['CR_Midday']=overall_df[midday_colum[0]].apply(math.ceil)
+            # new_df['CR_PM_Peak']=overall_df[pm_peak_column[0]].apply(math.ceil)
+            # new_df['CR_Evening']=overall_df[evening_column[0]].apply(math.ceil)
+            new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
+            new_df.fillna(0,inplace=True)
+
+            for index, row in new_df.iterrows():
+                route_code = row['ROUTE_SURVEYEDCode']
+
+                def get_counts_and_ids(time_values):
+                    subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+                    subset_df=subset_df.drop_duplicates(subset='id')
+                    count = subset_df.shape[0]
+                    ids = subset_df['id'].values
+                    return count, ids
+                
+                early_am_value, early_am_value_ids = get_counts_and_ids(early_am_values)
+                am_value, am_value_ids = get_counts_and_ids(am_values)
+                midday_value, midday_value_ids = get_counts_and_ids(midday_values)
+                pm_peak_value, pm_peak_value_ids = get_counts_and_ids(pm_peak_values)
+                evening_value, evening_value_ids = get_counts_and_ids(evening_values)
+                
+                new_df.loc[index, 'CR_Total'] = row['CR_Early_AM'] + row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+                new_df.loc[index, 'CR_AM_Peak'] = row['CR_AM_Peak']
+
+                new_df.loc[index, 'DB_Early_AM_Peak'] = early_am_value
+                new_df.loc[index, 'DB_AM_Peak'] = am_value
+                new_df.loc[index, 'DB_Midday'] = midday_value
+                new_df.loc[index, 'DB_PM_Peak'] = pm_peak_value
+                new_df.loc[index, 'DB_Evening'] = evening_value
+                new_df.loc[index, 'DB_Total'] = evening_value + early_am_value + am_value + midday_value + pm_peak_value
+                
+            new_df['ROUTE_SURVEYEDCode_Splited']=new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]) )
+
+            route_level_df=pd.DataFrame()
+            unique_routes=new_df['ROUTE_SURVEYEDCode_Splited'].unique()
+            route_level_df['ROUTE_SURVEYEDCode']=unique_routes
+
+            route_df.rename(columns={'ROUTE_TOTAL':'CR_Overall_Goal','SURVEY_ROUTE_CODE':'ROUTE_SURVEYEDCode','LS_NAME_CODE':'ROUTE_SURVEYEDCode'},inplace=True)
+            route_df.dropna(subset=['ROUTE_SURVEYEDCode'],inplace=True)
+            route_level_df=pd.merge(route_level_df,route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']],on='ROUTE_SURVEYEDCode')
+
+            for index , row in route_level_df.iterrows():
+                subset_df=new_df[new_df['ROUTE_SURVEYEDCode_Splited']==row['ROUTE_SURVEYEDCode']]
+                sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
+                sum_per_route_db = subset_df[['DB_Early_AM_Peak','DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+                
+                route_level_df.loc[index,'CR_Early_AM']=sum_per_route_cr['CR_Early_AM']
+                route_level_df.loc[index,'CR_AM_Peak']=sum_per_route_cr['CR_AM_Peak']
+                route_level_df.loc[index,'CR_Midday']=sum_per_route_cr['CR_Midday']
+                route_level_df.loc[index,'CR_PM_Peak']=sum_per_route_cr['CR_PM_Peak']
+                route_level_df.loc[index,'CR_Evening']=sum_per_route_cr['CR_Evening']
+                route_level_df.loc[index,'CR_Total']=sum_per_route_cr['CR_Total']
+                
+                route_level_df.loc[index,'DB_Early_AM_Peak']=sum_per_route_db['DB_Early_AM_Peak']
+                route_level_df.loc[index,'DB_AM_Peak']=sum_per_route_db['DB_AM_Peak']
+                route_level_df.loc[index,'DB_Midday']=sum_per_route_db['DB_Midday']
+                route_level_df.loc[index,'DB_PM_Peak']=sum_per_route_db['DB_PM_Peak']
+                route_level_df.loc[index,'DB_Evening']=sum_per_route_db['DB_Evening']
+                route_level_df.loc[index,'DB_Total']=sum_per_route_db['DB_Total']   
+
+            for index, row in route_level_df.iterrows():
+                early_am_peak_diff=row['CR_Early_AM']-row['DB_Early_AM_Peak']
+                am_peak_diff=row['CR_AM_Peak']-row['DB_AM_Peak']
+                midday_diff=row['CR_Midday']-row['DB_Midday']    
+                pm_peak_diff=row['CR_PM_Peak']-row['DB_PM_Peak']
+                evening_diff=row['CR_Evening']-row['DB_Evening']
+                total_diff=row['CR_Total']-row['DB_Total']
+                overall_difference=row['CR_Overall_Goal']-row['DB_Total']
+                
+                route_level_df.loc[index, 'Early_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
+                route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+                route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+                route_level_df.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+                route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff)) + math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
+                route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0,overall_difference))
         elif project=='KCATA RAIL':
             early_am_values = ['AM1','AM2']
             am_values = ['AM3', 'MID1','MID2','MID7']
@@ -2625,21 +2889,12 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                     math.ceil(max(0, evening_diff))
                 ])
                 route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_diff))
-        # logger.info("\n=== FINAL RESULTS ===")
-        # logger.info(f"Final route_level_df shape: {route_level_df.shape}")
-        # logger.info("Sample of final results:")
-        # logger.info(route_level_df.head(3).to_string())
         
         return route_level_df
     except Exception as e:
-        # logger.error(f"Error in create_route_level_df: {str(e)}", exc_info=True)
         raise
     finally:
         pass
-        # logger.info("=== KCATA ROUTE LEVEL DEBUG COMPLETED ===")
-        # Ensure all logs are flushed
-        # for handler in logger.handlers:
-        #     handler.flush()
 
 
 
@@ -2681,7 +2936,6 @@ def create_wkend_route_level_df(overall_df, route_df, df,time_column,project):
             subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & 
                         (df[time_column[0]].isin(time_values)) & 
                         (df['Day'].str.lower() == str(day).lower())]
-            print(route_code,day,subset_df.shape)
             subset_df = subset_df.drop_duplicates(subset='id')
             count = subset_df.shape[0]
             ids = subset_df['id'].values
@@ -2711,13 +2965,11 @@ def create_wkend_route_level_df(overall_df, route_df, df,time_column,project):
     # route_level_df = pd.merge(route_level_df, route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']], on='ROUTE_SURVEYEDCode')
     route_level_df.drop_duplicates(subset=['ROUTE_SURVEYEDCode','Day'],inplace=True)
     for _,row in route_level_df.iterrows():
-        print(row['ROUTE_SURVEYEDCode'],row['Day'])
         subset_df = new_df[(new_df['ROUTE_SURVEYEDCode_Splited'] == row['ROUTE_SURVEYEDCode']) & 
                         (new_df['Day'] == row['Day'])]
 
         sum_per_route_cr = subset_df[['CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening','CR_Total']].sum()
         sum_per_route_db = subset_df[['DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening','DB_Total']].sum()
-        print(sum_per_route_cr['CR_AM_Peak'])
         route_level_df.loc[row.name,'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
         route_level_df.loc[row.name,'CR_Midday'] = sum_per_route_cr['CR_Midday']
         route_level_df.loc[row.name,'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
@@ -2784,7 +3036,6 @@ def create_uta_route_direction_level_df(overalldf, df,time_column,time):
     new_df['CR_Midday'] = pd.to_numeric(overalldf[midday_column[0]], errors='coerce').fillna(0).apply(math.ceil)
     new_df['CR_PM_Peak'] = pd.to_numeric(overalldf[pm_column[0]], errors='coerce').fillna(0).apply(math.ceil)
     new_df['CR_Evening'] = pd.to_numeric(overalldf[evening_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    # print("new_df_columns",new_df.columns)
     new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
     new_df.fillna(0,inplace=True)
 #     new code added for merging the same ROUTE_SURVEYEDCode
@@ -2952,7 +3203,7 @@ def process_survey_data(df):
     return interviewer_pivot, route_pivot, detail_table
 
 
-def process_surveyor_data_kcata(df, elvis_df):
+def process_surveyor_data_transit_ls6(df, elvis_df):
     """Process data for surveyor-level report"""
     # Clean and filter data
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
@@ -3786,7 +4037,7 @@ def process_route_data(df, elvis_df):
     return route_report_df[column_order]
 
 
-def process_route_data_kcata(df, elvis_df):
+def process_route_data_transit_ls6(df, elvis_df):
     """Process data for route-level report"""
     # Clean route names
     df['ROUTE_ROOT'] = clean_route_name(df['ROUTE_SURVEYED'])
@@ -4031,7 +4282,7 @@ def process_route_data_kcata(df, elvis_df):
     
     return route_report_df[column_order]
 
-def process_surveyor_date_data_kcata(df, elvis_df, survey_date_surveyor):
+def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
     """Process data for surveyor-level report with date"""
     df = df.copy()
     elvis_df = elvis_df.copy()
@@ -4040,9 +4291,6 @@ def process_surveyor_date_data_kcata(df, elvis_df, survey_date_surveyor):
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
     filtered_df = df[df['INTERV_INIT'] != "999"]
     valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1]
-    print("\n[DEBUG] Columns in valid_surveys_df:", valid_surveys_df.columns.tolist())
-    print("[DEBUG] First few rows:")
-    print(valid_surveys_df.head())
     # Base counts
     record_counts = (
         valid_surveys_df
@@ -4284,7 +4532,7 @@ def process_surveyor_date_data_kcata(df, elvis_df, survey_date_surveyor):
     
     return summary_df[column_order]
 
-def process_route_date_data_kcata(df, elvis_df, survey_date_route):
+def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route):
     """Process data for route-level report with date"""
     df = df.copy()
     elvis_df = elvis_df.copy()
@@ -5131,7 +5379,7 @@ def process_route_date_data(df, elvis_df, survey_date_route):
 
 
 # For KCATA three functions Route Comparison, Route Level Comparison, and Route Date Comparison
-def process_route_comparison_data(cr_df, df, ke_df):
+def process_route_comparison_data(cr_df, df, ke_df, project):
     """
     Process route comparison data and handle reverse direction logic
     """
@@ -5160,12 +5408,18 @@ def process_route_comparison_data(cr_df, df, ke_df):
     time_column = check_all_characters_present(df, ['timeoncode'])
     route_survey_column = check_all_characters_present(df, ['routesurveyedcode'])
     
-    # Time values
-    early_am_values = ['AM1','AM2']
-    am_values = ['AM3', 'MID1','MID2','MID7']
-    midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
-    pm_peak_values = ['PM2','PM3','PM4','PM5']
-    evening_values = ['PM6','PM7','PM8','PM9']
+    if project == 'SALEM':
+        early_am_values = ['AM1','AM2','AM3', 'MID1','MID2','MID7', 'MID3']
+        am_values = ['MID4', 'MID5', 'MID6']
+        midday_values = ['PM1','PM2','PM3']
+        pm_peak_values = ['PM4','PM5','PM6','PM7','PM8','PM9']
+        evening_values = ['PM10','PM11','PM12','PM13','PM14','PM15']
+    else:
+        early_am_values = ['AM1','AM2']
+        am_values = ['AM3', 'MID1','MID2','MID7']
+        midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+        pm_peak_values = ['PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
 
     # CR columns
     early_am_column = ['1']
@@ -5185,6 +5439,11 @@ def process_route_comparison_data(cr_df, df, ke_df):
     new_df['CR_PM_Peak'] = cr_df[pm_column[0]]
     new_df['CR_Evening'] = cr_df[evening_column[0]]
     new_df.fillna(0, inplace=True)
+
+    # Ensure CR columns are numeric
+    cr_columns = ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening']
+    for col in cr_columns:
+        new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0)
 
     # Add values from database
     for index, row in new_df.iterrows():
@@ -5210,6 +5469,7 @@ def process_route_comparison_data(cr_df, df, ke_df):
         new_df.loc[index, 'DB_Evening'] = evening_value
         new_df.loc[index, 'DB_Total'] = evening_value + am_value + midday_value + pm_value + early_am_value
         
+        # Store IDs as strings
         new_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(map(str, early_am_ids))
         new_df.loc[index, 'DB_AM_IDS'] = ', '.join(map(str, am_value_ids))
         new_df.loc[index, 'DB_Midday_IDS'] = ', '.join(map(str, midday_value_ids))
@@ -5222,52 +5482,91 @@ def create_route_level_comparison(new_df):
     """
     Create route level comparison from the processed data
     """
-    new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]))
+    # Safely create the split route code
+    new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(
+        lambda x: ('_').join(str(x).split('_')[:-1]) if pd.notna(x) and len(str(x).split('_')) > 1 else str(x)
+    )
+    
+    # Remove any empty or NaN split values
+    new_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'].notna() & (new_df['ROUTE_SURVEYEDCode_Splited'] != '')]
+    
+    # Debug: check what we have after splitting
+    print(f"Unique split routes: {new_df['ROUTE_SURVEYEDCode_Splited'].unique()}")
+    print(f"Original new_df shape: {new_df.shape}")
     
     route_level_df = pd.DataFrame()
     unique_routes = new_df['ROUTE_SURVEYEDCode_Splited'].unique()
     route_level_df['ROUTE_SURVEYEDCode'] = unique_routes
     
     for index, row in route_level_df.iterrows():
-        subset_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'] == row['ROUTE_SURVEYEDCode']]
-        sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
-        sum_per_route_db = subset_df[['DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+        route_code = row['ROUTE_SURVEYEDCode']
+        subset_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'] == route_code]
         
-        route_level_df.loc[index, 'CR_Early_AM'] = sum_per_route_cr['CR_Early_AM']
-        route_level_df.loc[index, 'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
-        route_level_df.loc[index, 'CR_Midday'] = sum_per_route_cr['CR_Midday']
-        route_level_df.loc[index, 'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
-        route_level_df.loc[index, 'CR_Evening'] = sum_per_route_cr['CR_Evening']
-        route_level_df.loc[index, 'CR_Total'] = sum_per_route_cr['CR_Total']
-        
-        route_level_df.loc[index, 'DB_Early_AM'] = sum_per_route_db['DB_Early_AM']
-        route_level_df.loc[index, 'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
-        route_level_df.loc[index, 'DB_Midday'] = sum_per_route_db['DB_Midday']
-        route_level_df.loc[index, 'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
-        route_level_df.loc[index, 'DB_Evening'] = sum_per_route_db['DB_Evening']
-        route_level_df.loc[index, 'DB_Total'] = sum_per_route_db['DB_Total']   
-        
-        route_level_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_Early_AM_IDS'].values)
-        route_level_df.loc[index, 'DB_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_AM_IDS'].values)
-        route_level_df.loc[index, 'DB_Midday_IDS'] = ', '.join(str(value) for value in subset_df['DB_Midday_IDS'].values)    
-        route_level_df.loc[index, 'DB_PM_IDS'] = ', '.join(str(value) for value in subset_df['DB_PM_IDS'].values)    
-        route_level_df.loc[index, 'DB_Evening_IDS'] = ', '.join(str(value) for value in subset_df['DB_Evening_IDS'].values)
+        # Check if subset_df is empty
+        if subset_df.empty:
+            continue
+            
+        try:
+            # Sum only numeric columns
+            sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
+            sum_per_route_db = subset_df[['DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+            
+            route_level_df.loc[index, 'CR_Early_AM'] = sum_per_route_cr['CR_Early_AM']
+            route_level_df.loc[index, 'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
+            route_level_df.loc[index, 'CR_Midday'] = sum_per_route_cr['CR_Midday']
+            route_level_df.loc[index, 'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
+            route_level_df.loc[index, 'CR_Evening'] = sum_per_route_cr['CR_Evening']
+            route_level_df.loc[index, 'CR_Total'] = sum_per_route_cr['CR_Total']
+            
+            route_level_df.loc[index, 'DB_Early_AM'] = sum_per_route_db['DB_Early_AM']
+            route_level_df.loc[index, 'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
+            route_level_df.loc[index, 'DB_Midday'] = sum_per_route_db['DB_Midday']
+            route_level_df.loc[index, 'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
+            route_level_df.loc[index, 'DB_Evening'] = sum_per_route_db['DB_Evening']
+            route_level_df.loc[index, 'DB_Total'] = sum_per_route_db['DB_Total']   
+            
+            # Handle ID columns separately (concatenate strings)
+            route_level_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_Early_AM_IDS'].values if pd.notna(value) and value != '')
+            route_level_df.loc[index, 'DB_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_AM_IDS'].values if pd.notna(value) and value != '')
+            route_level_df.loc[index, 'DB_Midday_IDS'] = ', '.join(str(value) for value in subset_df['DB_Midday_IDS'].values if pd.notna(value) and value != '')    
+            route_level_df.loc[index, 'DB_PM_IDS'] = ', '.join(str(value) for value in subset_df['DB_PM_IDS'].values if pd.notna(value) and value != '')    
+            route_level_df.loc[index, 'DB_Evening_IDS'] = ', '.join(str(value) for value in subset_df['DB_Evening_IDS'].values if pd.notna(value) and value != '')
+            
+        except Exception as e:
+            # Set default values for this route
+            for col in ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total',
+                       'DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']:
+                route_level_df.loc[index, col] = 0
+            for col in ['DB_Early_AM_IDS', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS']:
+                route_level_df.loc[index, col] = ""
+    
+    # Ensure all numeric columns are properly typed
+    numeric_columns = ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total',
+                      'DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']
+    
+    for col in numeric_columns:
+        route_level_df[col] = pd.to_numeric(route_level_df[col], errors='coerce').fillna(0)
     
     # Calculate differences
     for index, row in route_level_df.iterrows():
-        early_am_peak_diff = row['CR_Early_AM'] - row['DB_Early_AM']
-        am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
-        midday_diff = row['CR_Midday'] - row['DB_Midday']    
-        pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
-        evening_diff = row['CR_Evening'] - row['DB_Evening']
-        total_diff = row['CR_Total'] - row['DB_Total']
-        
-        route_level_df.loc[index, 'EARLY_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
-        route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
-        route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
-        route_level_df.loc[index, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
-        route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
-        route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff)) + math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
+        try:
+            early_am_peak_diff = row['CR_Early_AM'] - row['DB_Early_AM']
+            am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
+            midday_diff = row['CR_Midday'] - row['DB_Midday']    
+            pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
+            evening_diff = row['CR_Evening'] - row['DB_Evening']
+            total_diff = row['CR_Total'] - row['DB_Total']
+            
+            route_level_df.loc[index, 'EARLY_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
+            route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+            route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+            route_level_df.loc[index, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+            route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+            route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff)) + math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
+        except Exception as e:
+            print(f"Error calculating differences for index {index}: {e}")
+            for col in ['EARLY_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 'PM_DIFFERENCE', 'Evening_DIFFERENCE', 'Total_DIFFERENCE']:
+                route_level_df.loc[index, col] = 0
     
     return route_level_df
 
@@ -5312,16 +5611,36 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         
         # Extract time period (1, 2, 3, 4, 5) based on which column has values
         valid_time_periods = []
-        if pd.notna(row.get(early_am_column[0], 0)) and row[early_am_column[0]] > 0:
-            valid_time_periods.append('1')  # Early AM
-        if pd.notna(row.get(am_column[0], 0)) and row[am_column[0]] > 0:
-            valid_time_periods.append('2')  # AM Peak
-        if pd.notna(row.get(midday_colum[0], 0)) and row[midday_colum[0]] > 0:
-            valid_time_periods.append('3')  # Midday
-        if pd.notna(row.get(pm_column[0], 0)) and row[pm_column[0]] > 0:
-            valid_time_periods.append('4')  # PM Peak
-        if pd.notna(row.get(evening_column[0], 0)) and row[evening_column[0]] > 0:
-            valid_time_periods.append('5')  # Evening
+        try:
+            # Early AM
+            early_am_val = row.get('1', 0) if '1' in row else 0
+            if pd.notna(early_am_val) and early_am_val > 0:
+                valid_time_periods.append('1')
+            
+            # AM Peak  
+            am_val = row.get('2', 0) if '2' in row else 0
+            if pd.notna(am_val) and am_val > 0:
+                valid_time_periods.append('2')
+            
+            # Midday
+            midday_val = row.get('3', 0) if '3' in row else 0
+            if pd.notna(midday_val) and midday_val > 0:
+                valid_time_periods.append('3')
+            
+            # PM Peak
+            pm_val = row.get('4', 0) if '4' in row else 0
+            if pd.notna(pm_val) and pm_val > 0:
+                valid_time_periods.append('4')
+            
+            # Evening
+            evening_val = row.get('5', 0) if '5' in row else 0
+            if pd.notna(evening_val) and evening_val > 0:
+                valid_time_periods.append('5')
+                
+        except Exception as e:
+            print(f"Error processing time periods for route {route_code}: {e}")
+            continue
+
         
         # Randomly select one time period from the valid ones
         time_period = random.choice(valid_time_periods) if valid_time_periods else ''
@@ -5374,6 +5693,8 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     def create_url(record_id):
         if project_name.lower() == 'actransit':
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/ac-transit25/lime"
+        elif project_name.lower() == 'salem':
+            return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/salemor-cherriots25/lime"
         else:
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/kc-streetcar25/lime"
 
@@ -5532,7 +5853,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         Fix FINAL_DIRECTION_CODE for n1-n4, p1-p4 and Rev- routes by analyzing stop sequences
         for both reverse_df and all_type_df
         """
-        print(f"DEBUG: Starting to fix FINAL_DIRECTION_CODE for {len(reverse_df)} reverse_df records and {len(all_type_df)} all_type_df records")
         
         def fix_single_dataframe(df_to_fix, df_name):
             """Helper function to fix direction codes for a single dataframe"""
@@ -5550,7 +5870,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                 is_transfer_type = any(current_type.startswith(prefix) for prefix in ['p', 'n', 'Rev-p', 'Rev-n'])
                 
                 if is_transfer_type:
-                    print(f"DEBUG: Analyzing {df_name} - transfer type {current_type} for record {record_id} with route {current_route}")
                     
                     # Determine direction from transfer stops
                     direction_code = determine_direction_from_transfers(current_route, record_id, current_type)
@@ -5562,7 +5881,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                         # Update the FINAL_DIRECTION_CODE
                         df_to_fix.loc[index, 'FINAL_DIRECTION_CODE'] = final_direction_code
                         fixed_count += 1
-                        print(f"DEBUG: SUCCESS - Set FINAL_DIRECTION_CODE to {final_direction_code} for {df_name} record {record_id}")
                         
                         # Also update the specific type column if it exists
                         clean_type = current_type.replace('Rev-', '')
@@ -5570,7 +5888,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                         
                         if type_specific_col in df_to_fix.columns:
                             df_to_fix.loc[index, type_specific_col] = final_direction_code
-                            print(f"DEBUG: Also updated {type_specific_col} to {final_direction_code} in {df_name}")
                     else:
                         print(f"DEBUG: Could not determine direction for route {current_route} in {df_name}")
             
@@ -5580,7 +5897,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         reverse_fixed = fix_single_dataframe(reverse_df, "reverse_df")
         all_type_fixed = fix_single_dataframe(all_type_df, "all_type_df")
         
-        print(f"DEBUG: Fixed {reverse_fixed} records in reverse_df and {all_type_fixed} records in all_type_df")
 
     # Create reverse dataframe - include route name columns for previous/next trips
     reverse_df = df[df[trip_oppo_dir_column[0]].str.lower() == 'yes'][[
@@ -5691,7 +6007,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         # FINAL_DIRECTION_CODE: Use CR direction logic
         final_direction_code = get_final_direction_code(route_code)
         reverse_df.loc[target_index, 'FINAL_DIRECTION_CODE'] = final_direction_code
-        # print(f"DEBUG: update_route_surveyed_info - Set FINAL_DIRECTION_CODE for index {target_index}, route {route_code}: {final_direction_code}")
 
     def process_multiple_routes(row, route_list, counter_prefix, target_index, max_routes=4):
         """Process multiple routes and assign types like p1, p2, p3, p4 or n1, n2, n3, n4"""
@@ -5727,7 +6042,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                 # FIX: Populate FINAL_DIRECTION_CODE for ALL assigned routes, not just the first one
                 final_direction_code = get_final_direction_code(route_code)
                 reverse_df.loc[target_index, f'FINAL_DIRECTION_CODE_{counter_prefix}{i+1}'] = final_direction_code
-                # print(f"DEBUG: process_multiple_routes - Set FINAL_DIRECTION_CODE_{counter_prefix}{i+1} for index {target_index}, route {route_code}: {final_direction_code}")
                 
                 # If this is the first assigned route, update the main route surveyed info
                 if len(assigned_types) == 1:
@@ -5740,7 +6054,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             primary_route_code = assigned_routes[0]['code']
             final_direction_code = get_final_direction_code(primary_route_code)
             reverse_df.loc[target_index, 'FINAL_DIRECTION_CODE'] = final_direction_code
-            # print(f"DEBUG: process_multiple_routes - Set main FINAL_DIRECTION_CODE for index {target_index}, primary route {primary_route_code}: {final_direction_code}")
         else:
             reverse_df.loc[target_index, 'Type'] = 'Reverse'
             # If no routes assigned, keep original route info but apply reverse logic
@@ -5752,7 +6065,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
 
     # First pass - implement logic for handling Type values
     for index, row in reverse_df.iterrows():
-        # print(f"DEBUG: Processing index {index}, id {row['id']}")
         random_value = random.choice([0, 1])
         original_route_code = row['ORIGINAL_ROUTE_SURVEYEDCode']
         original_route_name = row['ORIGINAL_ROUTE_SURVEYED']
@@ -5772,7 +6084,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             default=0
         )
         
-        # print(f"DEBUG: index {index} - value: {value}, prev_trans_value: {prev_trans_value}, next_trans_value: {next_trans_value}, random_value: {random_value}")
         
         if random_value:
             if value > 0:
@@ -5780,10 +6091,8 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                 route_level_df.loc[route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
                 # Update route info for reverse records
                 update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                # print(f"DEBUG: index {index} - Assigned Type: Reverse")
             elif prev_trans_value:
                 prev_routes = get_valid_routes_and_names(row, prev_trip_route_code_column, prev_trip_route_name_column)
-                # print(f"DEBUG: index {index} - prev_routes found: {len(prev_routes)}")
                 if prev_routes:
                     success = process_multiple_routes(row, prev_routes, 'p', index, max_routes=4)
                     if not success:
@@ -5797,14 +6106,11 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                         else:
                             # Fallback: use original route info
                             update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
-                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
                 else:
                     reverse_df.loc[index, 'Type'] = 'Reverse'
                     update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                    # print(f"DEBUG: index {index} - No prev_routes, assigned Type: Reverse")
             elif next_trans_value:
                 next_routes = get_valid_routes_and_names(row, next_trip_route_code_column, next_trip_route_name_column)
-                # print(f"DEBUG: index {index} - next_routes found: {len(next_routes)}")
                 if next_routes:
                     success = process_multiple_routes(row, next_routes, 'n', index, max_routes=4)
                     if not success:
@@ -5818,19 +6124,15 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                         else:
                             # Fallback: use original route info
                             update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
-                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
                 else:
                     reverse_df.loc[index, 'Type'] = 'Reverse'
                     update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                    # print(f"DEBUG: index {index} - No next_routes, assigned Type: Reverse")
             else:
                 reverse_df.loc[index, 'Type'] = 'Reverse'
                 update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                # print(f"DEBUG: index {index} - No conditions met, assigned Type: Reverse")
         else:
             if prev_trans_value:
                 prev_routes = get_valid_routes_and_names(row, prev_trip_route_code_column, prev_trip_route_name_column)
-                # print(f"DEBUG: index {index} - prev_routes found: {len(prev_routes)}")
                 if prev_routes:
                     success = process_multiple_routes(row, prev_routes, 'p', index, max_routes=4)
                     if not success:
@@ -5844,14 +6146,11 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                         else:
                             # Fallback: use original route info
                             update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
-                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
                 else:
                     reverse_df.loc[index, 'Type'] = 'Reverse'
                     update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                    # print(f"DEBUG: index {index} - No prev_routes, assigned Type: Reverse")
             elif next_trans_value:
                 next_routes = get_valid_routes_and_names(row, next_trip_route_code_column, next_trip_route_name_column)
-                # print(f"DEBUG: index {index} - next_routes found: {len(next_routes)}")
                 if next_routes:
                     success = process_multiple_routes(row, next_routes, 'n', index, max_routes=4)
                     if not success:
@@ -5865,15 +6164,12 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                         else:
                             # Fallback: use original route info
                             update_route_surveyed_info(index, original_route_code, original_route_name, chosen_type, row)
-                        # print(f"DEBUG: index {index} - Fallback assigned Type: {chosen_type}")
                 else:
                     reverse_df.loc[index, 'Type'] = 'Reverse'
                     update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                    # print(f"DEBUG: index {index} - No next_routes, assigned Type: Reverse")
             else:
                 reverse_df.loc[index, 'Type'] = 'Reverse'
                 update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                # print(f"DEBUG: index {index} - No conditions met, assigned Type: Reverse")
     
     all_type_df = copy.deepcopy(reverse_df)
     
@@ -5881,7 +6177,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     new_route_level_df = copy.deepcopy(route_level_df)
     
     for index, row in reverse_df.iterrows():
-        # print(f"DEBUG: Second pass - Processing index {index}, id {row['id']}, current Type: {row['Type']}")
         random_value = random.choice([0, 1])
         original_route_code = row['ORIGINAL_ROUTE_SURVEYEDCode']
         original_route_name = row['ORIGINAL_ROUTE_SURVEYED']
@@ -5901,18 +6196,14 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             default=0
         )
         
-        # print(f"DEBUG: Second pass - index {index} - value: {value}, prev_trans_value: {prev_trans_value}, next_trans_value: {next_trans_value}, random_value: {random_value}")
-        
         if value:
             if not random_value:
                 reverse_df.loc[index, 'Type'] = 'Reverse'
                 new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
                 update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                # print(f"DEBUG: Second pass - index {index} - Assigned Type: Reverse")
             else:
                 if prev_trans_value:
                     prev_routes = get_valid_routes_and_names(row, prev_trip_route_code_column, prev_trip_route_name_column)
-                    # print(f"DEBUG: Second pass - index {index} - prev_routes found: {len(prev_routes)}")
                     if prev_routes:
                         success = process_multiple_routes(row, prev_routes, 'p', index, max_routes=4)
                         if not success:
@@ -5924,15 +6215,12 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                                 primary_route_code = prev_routes[0]['code']
                                 # CRITICAL FIX: Update ALL route info, not just direction code
                                 update_route_surveyed_info(index, primary_route_code, prev_routes[0]['name'], chosen_type, row)
-                            # print(f"DEBUG: Second pass - index {index} - Fallback assigned Type: {chosen_type}")
                     else:
                         reverse_df.loc[index, 'Type'] = 'Reverse'
                         new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
                         update_route_surveyed_info(index, original_route_code, original_route_name, 'Reverse', row)
-                        # print(f"DEBUG: Second pass - index {index} - No prev_routes, assigned Type: Reverse")
                 elif next_trans_value:
                     next_routes = get_valid_routes_and_names(row, next_trip_route_code_column, next_trip_route_name_column)
-                    # print(f"DEBUG: Second pass - index {index} - next_routes found: {len(next_routes)}")
                     if next_routes:
                         success = process_multiple_routes(row, next_routes, 'n', index, max_routes=4)
                         if not success:
@@ -5944,7 +6232,6 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                                 primary_route_code = next_routes[0]['code']
                                 # CRITICAL FIX: Update ALL route info, not just direction code
                                 # update_route_surveyed_info(index, primary_route_code, next_routes[0]['name'], chosen_type, row)
-                            # print(f"DEBUG: Second pass - index {index} - Fallback assigned Type: {chosen_type}")
                     else:
                         reverse_df.loc[index, 'Type'] = 'Reverse'
                         new_route_level_df.loc[new_route_level_df[route_survey_column[0]] == row[route_survey_column[0]], 'Total_DIFFERENCE'] = value - 1
@@ -5958,9 +6245,7 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             current_type = reverse_df.loc[index, 'Type']
             if not current_type or current_type == '':
                 reverse_df.loc[index, 'Type'] = ''
-                # print(f"DEBUG: Second pass - index {index} - No value and no current type, cleared Type")
             else:
-                # print(f"DEBUG: Second pass - index {index} - No value but keeping existing Type: {current_type}")
                 pass
                 # Keep the existing Type and FINAL_DIRECTION_CODE from first pass
     
@@ -5981,17 +6266,13 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     all_type_df.drop([col for col in original_columns_to_drop if col in all_type_df.columns], axis=1, inplace=True)
     
     # Final debug check
-    print("\nDEBUG: Final check - Types and FINAL_DIRECTION_CODE values:")
     empty_direction_count = 0
     for index, row in reverse_df.iterrows():
         if row['Type'] and row['Type'] != '' and (not row['FINAL_DIRECTION_CODE'] or row['FINAL_DIRECTION_CODE'] == ''):
             empty_direction_count += 1
-            # print(f"Index {index}: Type='{row['Type']}', FINAL_DIRECTION_CODE='{row['FINAL_DIRECTION_CODE']}' <- EMPTY!")
         else:
             pass
-            # print(f"Index {index}: Type='{row['Type']}', FINAL_DIRECTION_CODE='{row['FINAL_DIRECTION_CODE']}'")
     
-    print(f"\nDEBUG: Found {empty_direction_count} records with non-empty Type but empty FINAL_DIRECTION_CODE")
     
     return route_level_df, all_type_df, reverse_df
 

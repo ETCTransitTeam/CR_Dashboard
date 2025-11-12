@@ -111,7 +111,6 @@ def download_csv(csv, file_name, label):
             mime="text/csv",
             type="primary",  # Makes the button more prominent
             icon=":material/download:",  # Adds a download icon
-            width="stretch"  # Makes the button fill the container width
         )
 
 
