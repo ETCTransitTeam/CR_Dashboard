@@ -97,6 +97,26 @@ def get_distance_between_coordinates_using_haversine(lat1, lon1, lat2, lon2):
         print(f"Error calculating distance: {e}")
         return None
 
+def haversine_distance(lat1, lon1, lat2, lon2):
+    # Convert all inputs to float
+    try:
+        lat1, lon1, lat2, lon2 = map(float, [lat1, lon1, lat2, lon2])
+    except (TypeError, ValueError):
+        # Return None or np.nan if conversion fails
+        return None
+
+    # Convert degrees to radians
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+    c = 2 * np.arcsin(np.sqrt(a))
+    R = 6371  # Earth radius in km
+    return R * c
+
+
 
 def get_day_name(x):
     if pd.isna(x):  # Check if x is NaT (missing value)
@@ -5889,7 +5909,7 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
                         if type_specific_col in df_to_fix.columns:
                             df_to_fix.loc[index, type_specific_col] = final_direction_code
                     else:
-                        print(f"DEBUG: Could not determine direction for route {current_route} in {df_name}")
+                        pass
             
             return fixed_count
         

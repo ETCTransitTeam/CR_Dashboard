@@ -779,227 +779,193 @@ def fetch_and_process_data(project,schema):
 
     detail_df_stops['ETC_STOP_DIRECTION']=detail_df_stops['ETC_STOP_ID'].apply(lambda x : str(x).split('_')[-2])
     detail_df_stops[['ETC_STOP_DIRECTION']].head(2)
-
-
-    # Assuming you already have a DataFrame `df`
-    # df['STOP_ON_SEQ'] = None
-    # df['STOP_OFF_SEQ'] = None
-    # Iterate through df rows to get the STOP_ON points
-    for _, row in df.iterrows():
-        nearest_stop_seq = []    
+    import time
+    # Start the timer
+    start_time = time.time()
+    # -------------------------------------------------------------
+    # ✅ STOP_ON: Assign nearest stop for each survey point (MATCHING OLD CODE)
+    # -------------------------------------------------------------
+    for i, row in df.iterrows():
+        route_code = row['ROUTE_SURVEYEDCode']
         
-        stop_on_id=row[stop_on_id_column[0]]    
-        
+        # Check if route exists in detail_df_stops (same as old code validation)
+        if route_code not in detail_df_stops['ETC_ROUTE_ID'].values:
+            continue
+
         stop_on_lat = row[stop_on_lat_lon_columns[0]]
         stop_on_long = row[stop_on_lat_lon_columns[1]]
-    #     if pd.isna(origin_lat) or pd.isna(origin_long):
-    #         continue 
         
-        # Filtered data if you want to change the comparison based on DIRECTION/DIRECTIONLess
-        
-    #     filtered_df = detail_df_stops[detail_df_stops['ETC_ROUTE_ID_SPLITED'] == row['ROUTE_SURVEYEDCode_SPLITED']][
-    #         ['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID','ETC_STOP_NAME']
-    #     ]
-        filtered_df = detail_df_stops[detail_df_stops['ETC_ROUTE_ID'] == row['ROUTE_SURVEYEDCode']][
-            ['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID','ETC_STOP_NAME']
-        ]
-        
-        # List to store distances
-        distances = []
-        
-        # Calculate distances for all rows in filtered_df
-        for _, detail_row in filtered_df.iterrows():
-            stop_lat6 = detail_row['stop_lat6']
-            stop_lon6 = detail_row['stop_lon6']
-            
-            # Compute distance
-            distance = get_distance_between_coordinates_using_haversine(stop_on_lat, stop_on_long, stop_lat6, stop_lon6)
-            
-            # Skip distance if it is 0
-    #         if distance == 0:
-    #             continue
-            
-            distances.append((distance, detail_row['seq_fixed'], detail_row['ETC_STOP_ID'],detail_row['ETC_STOP_NAME'],detail_row['stop_lat6'],detail_row['stop_lon6']))
-        
-        # Find the nearest stop (minimum distance)
-        if distances:
-            valid_distances = [d for d in distances if d[0] is not None]  # Filter out None values
-            if valid_distances:  # Ensure there's at least one valid entry
-                nearest_stop = min(valid_distances, key=lambda x: x[0])  # x[0] is the distance
-                nearest_stop_seq.append(nearest_stop)
-            else:
-                print("No valid distances found.")
-        
-        # Process nearest_stop_seq as needed
+        # Same filtering logic as old code
+        filtered_df = detail_df_stops[
+            detail_df_stops['ETC_ROUTE_ID'] == route_code
+        ][['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID', 'ETC_STOP_NAME']]
 
-        if nearest_stop_seq:
-            df.loc[row.name, 'STOP_ON_ADDR_NEW'] = nearest_stop_seq[0][3]  # ETC_STOP_NAME
-            df.loc[row.name, 'STOP_ON_SEQ'] = nearest_stop_seq[0][1]      # seq_fixed
-            df.loc[row.name, 'STOP_ON_CLINTID_NEW'] = nearest_stop_seq[0][2]  # ETC_STOP_ID
-            df.loc[row.name, 'STOP_ON_LAT_NEW'] = nearest_stop_seq[0][4]      # stop_lat6
-            df.loc[row.name, 'STOP_ON_LONG_NEW'] = nearest_stop_seq[0][5]     # stop_lon6
+        if filtered_df.empty:
+            continue
 
-    # Iterate through df rows to get the STOP_OFF points
-    # Iterate through new_df rows
-    for _, row in df.iterrows():
-        if 'STOP_ON_SEQ' not in df.columns:
-            df['STOP_ON_SEQ'] = None
-        if 'STOP_OFF_SEQ' not in df.columns:
-            df['STOP_OFF_SEQ'] = None
+        # Vectorized distance calculation for speed
+        distances = haversine_distance(
+            stop_on_lat,
+            stop_on_long,
+            filtered_df['stop_lat6'].values,
+            filtered_df['stop_lon6'].values,
+        )
 
-        nearest_stop_seq = []
-        
-    #     stop_on_id=row[stop_on_id_column[0]]    
+        # Find nearest stop
+        idx_min = np.nanargmin(distances)
+        nearest = filtered_df.iloc[idx_min]
+
+        # Use EXACT same column names as old code
+        df.loc[i, 'STOP_ON_ADDR_NEW'] = nearest['ETC_STOP_NAME']
+        df.loc[i, 'STOP_ON_SEQ'] = nearest['seq_fixed']
+        df.loc[i, 'STOP_ON_CLINTID_NEW'] = nearest['ETC_STOP_ID']
+        df.loc[i, 'STOP_ON_LAT_NEW'] = nearest['stop_lat6']
+        df.loc[i, 'STOP_ON_LONG_NEW'] = nearest['stop_lon6']
+
+    # -------------------------------------------------------------
+    # ✅ STOP_OFF: Assign nearest stop in same route & direction (MATCHING OLD CODE)
+    # -------------------------------------------------------------
+    for i, row in df.iterrows():
         stop_off_lat = row[stop_off_lat_lon_columns[0]]
         stop_off_long = row[stop_off_lat_lon_columns[1]]
 
-    #     stop_on_lat = row['STOP_ON_LAT_NEW']
-    #     stop_on_long = row['STOP_ON_LONG_NEW']
+        # Same validation as old code
         if pd.isna(stop_off_lat) or pd.isna(stop_off_long):
             continue
-        stop_on_direction = str(row['STOP_ON_CLINTID_NEW']).split('_')[-2] if len(str(row['STOP_ON_CLINTID_NEW']).split('_')) >= 2 else None
-        if stop_on_direction is None:
-            # Skip the current iteration if the direction cannot be determined
+
+        route_code = row['ROUTE_SURVEYEDCode']
+        stop_on_clintid = row.get('STOP_ON_CLINTID_NEW')
+        
+        # Same direction extraction logic as old code
+        if not stop_on_clintid or '_' not in str(stop_on_clintid):
             continue
 
-        # Filtered data if you want to change the comparison based on DIRECTION/DIRECTIONLess
-    #     filtered_df = detail_df_stops[(detail_df_stops['ETC_ROUTE_ID_SPLITED'] == row['ROUTE_SURVEYEDCode_SPLITED'])&(detail_df_stops['ETC_STOP_DIRECTION']==stop_on_direction)][
-    #         ['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID','ETC_STOP_NAME']
-    #     ]
-        filtered_df = detail_df_stops[(detail_df_stops['ETC_ROUTE_ID'] == row['ROUTE_SURVEYEDCode'])&(detail_df_stops['ETC_STOP_DIRECTION']==stop_on_direction)][
-            ['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID','ETC_STOP_NAME']
-        ]
-    #     filtered_df = detail_df_stops[detail_df_stops['ETC_ROUTE_ID'] == row['ROUTE_SURVEYEDCode']][
-    #         ['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID','ETC_STOP_NAME']
+        stop_on_direction = str(stop_on_clintid).split('_')[-2]
 
-        # List to store distances
-        distances = []
-        
-        # Calculate distances for all rows in filtered_df
-        for _, detail_row in filtered_df.iterrows():
-            stop_lat6 = detail_row['stop_lat6']
-            stop_lon6 = detail_row['stop_lon6']
-            
-            # Compute distance
-            distance = get_distance_between_coordinates_using_haversine(stop_off_lat, stop_off_long, stop_lat6, stop_lon6)
-            # Skip distance if it is 0
-    #         if distance == 0:
-    #             continue
-    #         if distance>0.5:
-            distances.append((distance, detail_row['seq_fixed'], detail_row['ETC_STOP_ID'],detail_row['ETC_STOP_NAME'],detail_row['stop_lat6'],detail_row['stop_lon6']))
-        
-        # Find the nearest stop (minimum distance)
-        if distances:
-            valid_distances = [d for d in distances if d[0] is not None]  # Filter out None values
-            if valid_distances:  # Ensure there's at least one valid entry
-                nearest_stop = min(valid_distances, key=lambda x: x[0])  # x[0] is the distance
-                nearest_stop_seq.append(nearest_stop)
-            else:
-                print("No valid distances found.")
-        
+        # Same filtering logic as old code with direction constraint
+        filtered_df = detail_df_stops[
+            (detail_df_stops['ETC_ROUTE_ID'] == route_code)
+            & (detail_df_stops['ETC_STOP_DIRECTION'] == stop_on_direction)
+        ][['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID', 'ETC_STOP_NAME']]
 
-        # Process nearest_stop_seq as needed
-        if nearest_stop_seq:
-            df.loc[row.name, 'STOP_OFF_ADDRESS_NEW'] = nearest_stop_seq[0][3]  # ETC_STOP_NAME
-            df.loc[row.name, 'STOP_OFF_SEQ'] = nearest_stop_seq[0][1]      # seq_fixed
-            df.loc[row.name, 'STOP_OFF_CLINTID_NEW'] = nearest_stop_seq[0][2]  # ETC_STOP_ID
-            df.loc[row.name, 'STOP_OFF_LAT_NEW'] = nearest_stop_seq[0][4]      # stop_lat6
-            df.loc[row.name, 'STOP_OFF_LONG_NEW'] = nearest_stop_seq[0][5]     # stop_lon6
+        if filtered_df.empty:
+            continue
 
-    df['SEQ_DIFFERENCE']=df['STOP_OFF_SEQ']-df['STOP_ON_SEQ']
+        # Vectorized distance calculation
+        distances = haversine_distance(
+            stop_off_lat,
+            stop_off_long,
+            filtered_df['stop_lat6'].values,
+            filtered_df['stop_lon6'].values,
+        )
 
+        idx_min = np.nanargmin(distances)
+        nearest = filtered_df.iloc[idx_min]
+
+        # Use EXACT same column names as old code
+        df.loc[i, 'STOP_OFF_ADDRESS_NEW'] = nearest['ETC_STOP_NAME']
+        df.loc[i, 'STOP_OFF_SEQ'] = nearest['seq_fixed']
+        df.loc[i, 'STOP_OFF_CLINTID_NEW'] = nearest['ETC_STOP_ID']
+        df.loc[i, 'STOP_OFF_LAT_NEW'] = nearest['stop_lat6']
+        df.loc[i, 'STOP_OFF_LONG_NEW'] = nearest['stop_lon6']
+
+    # -------------------------------------------------------------
+    # ✅ Handle reverse route case when SEQ difference < 0 (MATCHING OLD CODE LOGIC)
+    # -------------------------------------------------------------
+    df['SEQ_DIFFERENCE'] = df['STOP_OFF_SEQ'] - df['STOP_ON_SEQ']
     ids_list = []
-    for _,row in df.iterrows():
-        nearest_stop_on_seq=[]
-        nearest_stop_off_seq=[]
-        route_code = row[route_surveyed_column[0]]
-        if row['SEQ_DIFFERENCE'] < 0:
-            ids_list.append(row['id'])
-            stop_on_lat = row['STOP_ON_LAT_NEW']
-            stop_on_long = row['STOP_ON_LONG_NEW']
 
-            stop_off_lat = row['STOP_OFF_LAT_NEW']
-            stop_off_long = row['STOP_OFF_LONG_NEW']
+    for i, row in df.iterrows():
+        route_code = row['ROUTE_SURVEYEDCode']
+        
+        # Same condition as old code
+        if row['SEQ_DIFFERENCE'] >= 0:
+            df.loc[i, 'ROUTE_SURVEYEDCode_New'] = route_code
+            df.loc[i, 'ROUTE_SURVEYED_NEW'] = row['ROUTE_SURVEYED']
+            continue
+
+        ids_list.append(row['id'])
+
+        # Get coordinates from newly assigned stops (same as old code)
+        stop_on_lat = row['STOP_ON_LAT_NEW']
+        stop_on_long = row['STOP_ON_LONG_NEW']
+        stop_off_lat = row['STOP_OFF_LAT_NEW']
+        stop_off_long = row['STOP_OFF_LONG_NEW']
+        
+        # Same direction extraction logic as old code
+        stop_on_direction = str(row['STOP_ON_CLINTID_NEW']).split('_')[-2] if len(str(row['STOP_ON_CLINTID_NEW']).split('_')) >= 2 else None
+        stop_off_direction = str(row['STOP_OFF_CLINTID_NEW']).split('_')[-2] if len(str(row['STOP_OFF_CLINTID_NEW']).split('_')) >= 2 else None
+        
+        if stop_on_direction is None or stop_off_direction is None:
+            continue
+
+        # Same route code transformation logic as old code
+        new_route_code = (
+            f"{'_'.join(route_code.split('_')[:-1])}_01" 
+            if route_code.split('_')[-1] == '00' 
+            else f"{'_'.join(route_code.split('_')[:-1])}_00"
+        )
+        
+        # Update route information (same as old code)
+        df.loc[i, 'ROUTE_SURVEYEDCode_New'] = route_code  # Temporary assignment
+        df.loc[i, 'ROUTE_SURVEYED_NEW'] = row['ROUTE_SURVEYED']  # Temporary assignment
+        
+        new_route_name_row = detail_df_stops[detail_df_stops['ETC_ROUTE_ID'] == new_route_code]
+        if not new_route_name_row.empty:
+            new_route_name = new_route_name_row['ETC_ROUTE_NAME'].iloc[0]
             
-            stop_on_direction = row[ 'STOP_ON_CLINTID_NEW'].split('_')[-2]
-            stop_off_direction = row[ 'STOP_OFF_CLINTID_NEW'].split('_')[-2]
-            new_route_code = (
-                f"{'_'.join(route_code.split('_')[:-1])}_01" 
-                if route_code.split('_')[-1] == '00' 
-                else f"{'_'.join(route_code.split('_')[:-1])}_00"
-            )
-            df.loc[row.name, 'ROUTE_SURVEYEDCode_New'] = route_code
-            df.loc[row.name, 'ROUTE_SURVEYED_NEW'] = df.loc[row.name, 'ROUTE_SURVEYED']
-            new_route_name_row = detail_df_stops[detail_df_stops['ETC_ROUTE_ID'] == new_route_code]
-            if not new_route_name_row.empty:
-                new_route_name = new_route_name_row['ETC_ROUTE_NAME'].iloc[0]
+            df.loc[i, 'ROUTE_SURVEYEDCode_New'] = new_route_code
+            df.loc[i, 'ROUTE_SURVEYED_NEW'] = new_route_name
+
+            # SAME FILTERING LOGIC AS OLD CODE - using ETC_ROUTE_ID_SPLITED and opposite direction
+            filtered_stop_on_df = detail_df_stops[
+                (detail_df_stops['ETC_ROUTE_ID_SPLITED'] == row['ROUTE_SURVEYEDCode_SPLITED'])
+                & (detail_df_stops['ETC_STOP_DIRECTION'] != stop_on_direction)
+            ][['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID', 'ETC_STOP_NAME']]
+
+            if not filtered_stop_on_df.empty:
+                # Vectorized distance calculation
+                stop_on_dist = haversine_distance(
+                    stop_on_lat,
+                    stop_on_long,
+                    filtered_stop_on_df['stop_lat6'].values,
+                    filtered_stop_on_df['stop_lon6'].values,
+                )
+                nearest_on = filtered_stop_on_df.iloc[np.nanargmin(stop_on_dist)]
                 
-                df.loc[row.name, 'ROUTE_SURVEYEDCode_New'] = new_route_code
-                df.loc[row.name, 'ROUTE_SURVEYED_NEW'] = new_route_name
+                # Update STOP_ON with EXACT same column names as old code
+                df.loc[i, 'STOP_ON_ADDR_NEW'] = nearest_on['ETC_STOP_NAME']  # Note: ADDR not ADDRESS
+                df.loc[i, 'STOP_ON_SEQ'] = nearest_on['seq_fixed']
+                df.loc[i, 'STOP_ON_CLINTID_NEW'] = nearest_on['ETC_STOP_ID']
+                df.loc[i, 'STOP_ON_LAT_NEW'] = nearest_on['stop_lat6']
+                df.loc[i, 'STOP_ON_LONG_NEW'] = nearest_on['stop_lon6']
 
-                filtered_stop_on_df = detail_df_stops[(detail_df_stops['ETC_ROUTE_ID_SPLITED'] == row['ROUTE_SURVEYEDCode_SPLITED'])&(detail_df_stops['ETC_STOP_DIRECTION']!=stop_on_direction)][
-                ['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID','ETC_STOP_NAME']
-            ]
-                filtered_stop_off_df = detail_df_stops[(detail_df_stops['ETC_ROUTE_ID_SPLITED'] == row['ROUTE_SURVEYEDCode_SPLITED'])&(detail_df_stops['ETC_STOP_DIRECTION']!=stop_off_direction)][
-                ['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID','ETC_STOP_NAME']
-            ]
+            # SAME FILTERING LOGIC AS OLD CODE - using ETC_ROUTE_ID_SPLITED and opposite direction  
+            filtered_stop_off_df = detail_df_stops[
+                (detail_df_stops['ETC_ROUTE_ID_SPLITED'] == row['ROUTE_SURVEYEDCode_SPLITED'])
+                & (detail_df_stops['ETC_STOP_DIRECTION'] != stop_off_direction)
+            ][['stop_lat6', 'stop_lon6', 'seq_fixed', 'ETC_STOP_ID', 'ETC_STOP_NAME']]
 
-                stop_on_distances = []
-
-                # Calculate distances for all rows in filtered_df
-                for _, detail_row in filtered_stop_on_df.iterrows():
-                    stop_lat6 = detail_row['stop_lat6']
-                    stop_lon6 = detail_row['stop_lon6']
-
-                    # Compute distance
-                    stop_on_distance = get_distance_between_coordinates_using_haversine(stop_on_lat, stop_on_long,stop_lat6, stop_lon6)
-
-                    # Skip distance if it is 0
-        #             if stop_on_distance == 0:
-        #                 continue
-
-                    stop_on_distances.append((stop_on_distance, detail_row['seq_fixed'], detail_row['ETC_STOP_ID'],detail_row['ETC_STOP_NAME'],detail_row['stop_lat6'],detail_row['stop_lon6']))
-                # Find the nearest stop (minimum distance)
-                if stop_on_distances:
-                    nearest_stop_on = min(stop_on_distances, key=lambda x: x[0])  # x[0] is the distance
-                    nearest_stop_on_seq.append(nearest_stop_on)
-    #             print(f"Nearest stop details for row: {nearest_stop_on_seq}")
-                if nearest_stop_on_seq:
-                    df.loc[row.name, 'STOP_ON_ADDRESS_NEW'] = nearest_stop_on_seq[0][3]  # ETC_STOP_NAME
-                    df.loc[row.name, 'STOP_ON_SEQ'] = nearest_stop_on_seq[0][1]      # seq_fixed
-                    df.loc[row.name, 'STOP_ON_CLINTID_NEW'] = nearest_stop_on_seq[0][2]  # ETC_STOP_ID
-                    df.loc[row.name, 'STOP_ON_LAT_NEW'] = nearest_stop_on_seq[0][4]      # stop_lat6
-                    df.loc[row.name, 'STOP_ON_LONG_NEW'] = nearest_stop_on_seq[0][5]     # stop_lon6
-                stop_off_distances = []
-
-                # Calculate distances for all rows in filtered_df
-                for _, detail_row in filtered_stop_off_df.iterrows():
-                    stop_lat6 = detail_row['stop_lat6']
-                    stop_lon6 = detail_row['stop_lon6']
-
-                    # Compute distance
-                    stop_off_distance = get_distance_between_coordinates_using_haversine(stop_off_lat, stop_off_long,stop_lat6, stop_lon6)
-
-        #             Skip distance if it is 0
-        #             if stop_off_distance == 0:
-        #                 continue
-
-                    stop_off_distances.append((stop_off_distance, detail_row['seq_fixed'], detail_row['ETC_STOP_ID'],detail_row['ETC_STOP_NAME'],detail_row['stop_lat6'],detail_row['stop_lon6']))
-                # Find the nearest stop (minimum distance)0
+            if not filtered_stop_off_df.empty:
+                # Vectorized distance calculation
+                stop_off_dist = haversine_distance(
+                    stop_off_lat,
+                    stop_off_long,
+                    filtered_stop_off_df['stop_lat6'].values,
+                    filtered_stop_off_df['stop_lon6'].values,
+                )
+                nearest_off = filtered_stop_off_df.iloc[np.nanargmin(stop_off_dist)]
                 
-                if stop_off_distances:
-                    nearest_stop_off = min(stop_off_distances, key=lambda x: x[0])  # x[0] is the distance
-                    nearest_stop_off_seq.append(nearest_stop_off)
+                # Update STOP_OFF with EXACT same column names as old code
+                df.loc[i, 'STOP_OFF_ADDRESS_NEW'] = nearest_off['ETC_STOP_NAME']
+                df.loc[i, 'STOP_OFF_SEQ'] = nearest_off['seq_fixed']
+                df.loc[i, 'STOP_OFF_CLINTID_NEW'] = nearest_off['ETC_STOP_ID']
+                df.loc[i, 'STOP_OFF_LAT_NEW'] = nearest_off['stop_lat6']
+                df.loc[i, 'STOP_OFF_LONG_NEW'] = nearest_off['stop_lon6']
 
-                if nearest_stop_off_seq:
-                    df.loc[row.name, 'STOP_OFF_ADDRESS_NEW'] = nearest_stop_off_seq[0][3]  # ETC_STOP_NAME
-                    df.loc[row.name, 'STOP_OFF_SEQ'] = nearest_stop_off_seq[0][1]      # seq_fixed
-                    df.loc[row.name, 'STOP_OFF_CLINTID_NEW'] = nearest_stop_off_seq[0][2]  # ETC_STOP_ID
-                    df.loc[row.name, 'STOP_OFF_LAT_NEW'] = nearest_stop_off_seq[0][4]      # stop_lat6
-                    df.loc[row.name, 'STOP_OFF_LONG_NEW'] = nearest_stop_off_seq[0][5]
-        else:
-            df.loc[row.name, 'ROUTE_SURVEYEDCode_New'] = route_code
-            df.loc[row.name, 'ROUTE_SURVEYED_NEW'] = df.loc[row.name, 'ROUTE_SURVEYED']
+    # -------------------------------------------------------------
+    # ✅ FINAL CLEANUP
+    # -------------------------------------------------------------
 
     # with open(f'{project_name}_SEQUENCE_DIFFERENCEIDS.txt','w') as f:
     #     for item in ids_list:
@@ -1012,7 +978,12 @@ def fetch_and_process_data(project,schema):
     # # if we have generated route_direction_database file using route_direction_refator_database.py file then have to replace and rename the columns
     df.drop(columns=['ROUTE_SURVEYEDCode','ROUTE_SURVEYED'],inplace=True)
     df.rename(columns={'ROUTE_SURVEYEDCode_New':'ROUTE_SURVEYEDCode','ROUTE_SURVEYED_NEW':'ROUTE_SURVEYED'},inplace=True) 
+    # End the timer
+    end_time = time.time()
 
+    total_time = end_time - start_time
+    print(f"Total time taken: {total_time:.2f} seconds")
+    df.to_csv('test_route_direction_fix_hehe.csv',index=False)
 
 
     df['ROUTE_SURVEYEDCode_Splited']=df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(str(x).split('_')[:-1]) )
