@@ -5,86 +5,109 @@ from st_aggrid.grid_options_builder import GridOptionsBuilder
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 
-column_name_patterns=['(0) Remain', '(1) Remain', '(2) Remain', 
-    '(3) Remain', '(4) Remain', '(5) Remain' ,'Remaining']
+# Columns to apply the coloring
+column_name_patterns = ['(0) Remain', '(1) Remain', '(2) Remain', 
+                        '(3) Remain', '(4) Remain', '(5) Remain', 'Remaining']
 
-def render_aggrid(dataframe, height, pinned_column,key):
-    """
-    Render an AgGrid with the specified dataframe, height, and pinned column.
-    
-    Args:
-        dataframe (pd.DataFrame): The dataframe to display in AgGrid.
-        height (int): The height of the grid in pixels.
-        pinned_column (str): The column to pin to the left.
+# JS code for conditional formatting
+cellStyle = JsCode("""
+    function(params) {
+        const val = params.value;
+        if (val === null || val === undefined || val === "") return null;
+        if (val >= -10000 && val < 1) return {'background-color': '#BCE29E', 'color': 'black'};
+        if (val >= 1 && val < 6) return {'background-color': '#E5EBB2', 'color': 'black'};
+        if (val >= 6 && val < 35) return {'background-color': '#F8C4B4', 'color': 'black'};
+        if (val >= 35 && val < 10000) return {'background-color': '#FF8787', 'color': 'black'};
+        return null;
+    }
+""")
 
-    Returns:
-        None: Displays the AgGrid.
-    """
-    # JavaScript code for cell styling
-    cellStyle = JsCode("""
-        function(params) {
-            const val = params.value;
-
-            if (val >= -10000 && val < 1) {
-                return {'background-color': '#BCE29E', 'color': 'black'};
-            } else if (val >= 1 && val < 6) {
-                return {'background-color': '#E5EBB2', 'color': 'black'};
-            } else if (val >= 6 && val < 35) {
-                return {'background-color': '#F8C4B4', 'color': 'black'};
-            } else if (val >= 35 && val < 10000) {
-                return {'background-color': '#FF8787', 'color': 'black'};
-            }
-            return null;  // Default style
-        }
-    """)
-
-    # Create GridOptionsBuilder
+def render_aggrid(dataframe, height=400, pinned_column=None, key="grid"):
     gb = GridOptionsBuilder.from_dataframe(dataframe)
     gb.configure_default_column(editable=False, groupable=False, autoSizeColumns=True)
-
-    # Pin the specified column
-    if pinned_column in dataframe.columns:
+    
+    if pinned_column and pinned_column in dataframe.columns:
         gb.configure_column(pinned_column, pinned='left')
-    else:
-        print(f"Column '{pinned_column}' not found in the dataframe")
-
-    # Apply cell style to target columns
-    valid_columns = [col for col in dataframe.columns if any(pattern in col for pattern in column_name_patterns)]
-    for column in valid_columns:
-        gb.configure_column(column, cellStyle=cellStyle)
-
-    other_options = {'suppressColumnVirtualisation': True}
-
-    # Build grid options
+    
+    # Apply conditional formatting to matching columns
+    for col in dataframe.columns:
+        if any(pattern in col for pattern in column_name_patterns):
+            gb.configure_column(col, cellStyle=cellStyle)
+    
+    # Grid options
     gb.configure_grid_options(
         alwaysShowHorizontalScroll=True,
         enableRangeSelection=True,
         pagination=True,
         paginationPageSize=10000,
         domLayout='normal',
-        **other_options
+        suppressColumnVirtualisation=True
     )
-
+    
     grid_options = gb.build()
-
     grid_options["autoSizeAllColumns"] = True
     
-    # Render AgGrid
     AgGrid(
         dataframe,
         gridOptions=grid_options,
         height=height,
-        theme="streamlit",  # Choose theme: 'streamlit', 'light', 'dark', etc.
-        allow_unsafe_jscode=True,  # Required to enable custom JsCode
-        key=f'grid_{key}',  # Unique key for the grid instance
+        theme="streamlit",
+        allow_unsafe_jscode=True,
+        key=f"{key}",
         suppressHorizontalScroll=False,
         fit_columns_on_grid_load=False,
         columns_auto_size_mode=ColumnsAutoSizeMode.FIT_CONTENTS,
-        reload_data=True,  # Allow horizontal scrolling
-        width='100%',  # Ensure the grid takes full width
+        reload_data=True,
+        width='100%'
     )
 
+def apply_optimized_styling(df):
+    """Apply optimized conditional formatting without changing data types"""
+    column_name_patterns = ['(0) Remain', '(1) Remain', '(2) Remain', 
+                           '(3) Remain', '(4) Remain', '(5) Remain', 'Remaining']
+    
+    target_columns = [col for col in df.columns if any(pattern in col for pattern in column_name_patterns)]
+    
+    if not target_columns:
+        return df.style
+    
+    def color_conditions(val):
+        if pd.isna(val):
+            return ''
+        try:
+            num_val = float(val)
+            if -10000 <= num_val < 1:
+                return 'background-color: #BCE29E; color: black'
+            elif 1 <= num_val < 6:
+                return 'background-color: #E5EBB2; color: black'
+            elif 6 <= num_val < 35:
+                return 'background-color: #F8C4B4; color: black'
+            elif 35 <= num_val < 10000:
+                return 'background-color: #FF8787; color: black'
+        except (ValueError, TypeError):
+            pass
+        return ''
+    
+    # Create styled dataframe
+    styled_df = df.style
+    
+    # Apply coloring only to target columns
+    for col in target_columns:
+        if col in df.columns:
+            styled_df = styled_df.map(color_conditions, subset=[col])
+    
+    return styled_df
 
+def render_styled_dataframe(dataframe, height=400, pinned_column=None, key="grid"):
+    """Render dataframe with conditional formatting"""
+    styled_df = apply_optimized_styling(dataframe)
+    
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        height=height
+    )
 
 def create_csv(df, file_name):
     """

@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import snowflake.connector
 from automated_refresh_flow_new import fetch_and_process_data
-from utils import render_aggrid,create_csv,download_csv,update_query_params, fetch_data
+from utils import render_aggrid,create_csv,download_csv,update_query_params, fetch_data, render_styled_dataframe
 from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
@@ -1169,19 +1169,18 @@ else:
                 else:
                     st.subheader("Route Direction Level Comparison")
                 filtered_df1 = filter_dataframe(data1, search_query)
+                # render_aggrid(filtered_df1, height=500, pinned_column='ROUTE_SURVEYEDCode', key='grid1')
+                render_styled_dataframe(filtered_df1, height=500, key='grid1')
 
 
-                # render_aggrid(filtered_df1,500,'ROUTE_SURVEYEDCode',1)
-                st.dataframe(filtered_df1, use_container_width=True, hide_index=True)
-                # csv1, file_name1 = create_csv(filtered_df1, "route_direction_comparison.csv")
-                # download_csv(csv1, file_name1, "Download Route Direction Comparison Data")
+                # st.dataframe(filtered_df1, use_container_width=True, hide_index=True)
+
 
                 filtered_df3 = filter_dataframe(data3, search_query)
                 st.subheader("Route Level Comparison")
-                # render_aggrid(filtered_df3,400,'ROUTE_SURVEYEDCode',2)
-                st.dataframe(filtered_df3, use_container_width=True, hide_index=True)
-                # csv3, file_name3 = create_csv(filtered_df3, "route_level_comparison.csv")
-                # download_csv(csv3, file_name3, "Download Route Level Comparison Data")
+                render_styled_dataframe(filtered_df3, height=400, key='grid3')
+                # st.dataframe(filtered_df3, use_container_width=True, hide_index=True)
+
 
             # Display buttons and dataframes in the second column (col2)
             with col2:
@@ -1211,20 +1210,17 @@ else:
 
 
                 filtered_df2 = filter_dataframe(data2, search_query)
-
-                # render_aggrid(filtered_df2,500,'Display_Text',3)
-                st.dataframe(filtered_df2, use_container_width=True, hide_index=True)
-                # csv2, file_name2 = create_csv(filtered_df2, "time_range_data.csv")
-                # download_csv(csv2, file_name2, "Download Time Range Data")
-
-
+                # render_aggrid(filtered_df2, height=500, pinned_column='Display_Text', key='grid2')
+                render_styled_dataframe(filtered_df2, height=500, key='grid2')
+                # st.dataframe(filtered_df2, use_container_width=True, hide_index=True)
 
                 filtered_df4 = filter_dataframe(result_df, search_query)
             
                 # Render AgGrid
                 st.subheader("Time Period OverAll Data")
+                render_styled_dataframe(filtered_df4, height=400, key='grid4')
                 # render_aggrid(filtered_df4,400,'Time Period',4)
-                st.dataframe(filtered_df4, use_container_width=True, hide_index=True)
+                # st.dataframe(filtered_df4, use_container_width=True, hide_index=True)
 
                 # csv4, file_name4 = create_csv(filtered_df4, "time_period_overall_data.csv")
                 # download_csv(csv4, file_name4, "Download Time Period Overall Data")
@@ -2550,7 +2546,7 @@ else:
                         result = fetch_and_process_data(st.session_state["selected_project"],st.session_state["schema"])
                         if "cache_key" not in st.session_state:
                             st.session_state["cache_key"] = 0
-                        st.session_state["cache_key"] += 1                
+                        st.session_state["cache_key"] += 1
                         # Fetch and process data again
                         dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
                         print("Data fetched successfully")  # Debug statement
