@@ -324,75 +324,65 @@ def fetch_and_process_data(project,schema):
     table_name = elvis_config['table']
     database_name = elvis_config["database"]
 
-    main_config = project_config['databases']["main"] if "main" in project_config["databases"] else None
+    main_config = project_config['databases'].get("main", None)
     main_table_name = main_config["table"] if main_config else None
     main_database_name = main_config["database"] if main_config else None
 
-    # Initialize session states for both datasets
-    if "elvis_data" not in st.session_state:
-        st.session_state.elvis_data = None
-    if "main_data" not in st.session_state:
-        st.session_state.main_data = None
+    # -----------------------
+    # Fetch fresh data every run (do NOT store raw data in session)
+    # -----------------------
+    csv_buffer = fetch_data(database_name, table_name)
+    if csv_buffer:
+        df = pd.read_csv(csv_buffer)
+    else:
+        st.error("Failed to load elvis data.")
+        df = None
 
-    # Fetch data only if not already in session state
-    if st.session_state.elvis_data is None:
-        csv_buffer = fetch_data(database_name, table_name)
-        if csv_buffer:
-            st.session_state.elvis_data = pd.read_csv(csv_buffer)
-        else:
-            st.error("Failed to load elvis data.")
-
-    if main_config and st.session_state.main_data is None:
+    df1 = None
+    if main_config:
         main_csv_buffer = fetch_data(main_database_name, main_table_name)
         if main_csv_buffer:
-            st.session_state.main_data = pd.read_csv(main_csv_buffer)
+            df1 = pd.read_csv(main_csv_buffer)
         else:
             st.error("Failed to load main data.")
 
-    # Assign to your original variables - these are references to session state data
-    df = st.session_state.elvis_data
-    df1 = st.session_state.main_data if main_config else None
-
-    # Process elvis data (df) - EXACTLY AS IN YOUR ORIGINAL CODE
+    # -----------------------
+    # Process elvis data
+    # -----------------------
     if df is not None:
-        # Apply KCATA header mapping if this is the KCATA project
-        if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT" or project=="SALEM":
-            # First clean up column names by removing any extra whitespace
+        if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
             df.columns = df.columns.str.strip()
-            # Apply the header mapping
             df = df.rename(columns=KCATA_HEADER_MAPPING)
             elvis_df = df.drop(index=0).reset_index(drop=True)
-            
-            # After renaming, you might want to standardize the case (optional)
-            # df.columns = df.columns.str.upper()
 
-        # Apply filters only after confirming df is loaded
-        time_value_code_check=['have5minforsurvecode']
-        route_surveyed_code_check=['routesurveyedcode']
-        route_surveyed_code=check_all_characters_present(df,route_surveyed_code_check)
-        time_value_code_df=check_all_characters_present(df,time_value_code_check)
-        # Convert both columns to string type to ensure consistent comparison
+        # Filtering & cleaning
+        time_value_code_check = ['have5minforsurvecode']
+        route_surveyed_code_check = ['routesurveyedcode']
+        route_surveyed_code = check_all_characters_present(df, route_surveyed_code_check)
+        time_value_code_df = check_all_characters_present(df, time_value_code_check)
+
         df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
         df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
-        df=df[df[time_value_code_df[0]]=='1']
-        df=df[df['INTERV_INIT']!='999']
-        elvis_status_column_check=['elvisstatus']
-        elvis_status_column=check_all_characters_present(df,elvis_status_column_check)
-        df=df[df[elvis_status_column[0]].str.lower()!='delete']
-        df.drop_duplicates(subset='id',inplace=True)
-        time_column_check=['timeoncode']
-        time_period_column_check=['timeon']
-        df.rename(columns={route_surveyed_code[0]:'ROUTE_SURVEYEDCode'},inplace=True)
+        df = df[df[time_value_code_df[0]] == '1']
+        df = df[df['INTERV_INIT'] != '999']
 
-        time_column_df=check_all_characters_present(df,time_column_check)
-        time_period_column_df=check_all_characters_present(df,time_period_column_check)
+        elvis_status_column_check = ['elvisstatus']
+        elvis_status_column = check_all_characters_present(df, elvis_status_column_check)
+        df = df[df[elvis_status_column[0]].str.lower() != 'delete']
 
-        
-        # st.write(df.head())  # Display the filtered data
+        df.drop_duplicates(subset='id', inplace=True)
+        time_column_check = ['timeoncode']
+        time_period_column_check = ['timeon']
+        df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
+
+        time_column_df = check_all_characters_present(df, time_column_check)
+        time_period_column_df = check_all_characters_present(df, time_period_column_check)
     else:
         st.warning("No data available. Click 'Fetch Data' to load the dataset.")
 
-    # Process main data (df1) - EXACTLY AS IN YOUR ORIGINAL CODE
+    # -----------------------
+    # Process main data
+    # -----------------------
     if df1 is not None:
         column_mapping = {}
         for df1_col in df1.columns:
@@ -400,72 +390,59 @@ def fetch_and_process_data(project,schema):
             for df_col in df.columns:
                 if cleaned_df1_col == clean_string(df_col):
                     column_mapping[df1_col] = df_col
-                    break  # Move to next df1 column once we find a match
+                    break
 
-        # Rename df1 columns to match df column names exactly
         df1 = df1.rename(columns=column_mapping)
-        time_column_check=['timeoncode']
-        time_period_column_check=['timeon']
-        time_column_df1=check_all_characters_present(df1,time_column_check)
-        time_period_column_df1=check_all_characters_present(df1,time_period_column_check)
 
-    # Merge logic - EXACTLY AS IN YOUR ORIGINAL CODE
+        time_column_df1 = check_all_characters_present(df1, ['timeoncode'])
+        time_period_column_df1 = check_all_characters_present(df1, ['timeon'])
+
+    # -----------------------
+    # Merge logic
+    # -----------------------
+    baby_elvis_df_merged = None
     if df is not None and df1 is not None:
         df3 = df.copy()
-        # Code for Adding new records from baby elvis to elvis database file 
-        # added 
         missing_ids = set(df1['id']) - set(df['id'])
-
-        # Filter df1 to get only records with missing IDs
         df1_new = df1[df1['id'].isin(missing_ids)]
-
-        # Concatenate df3 (original df) with the filtered df1_new
         df = pd.concat([df, df1_new], ignore_index=True)
-        
-        df.drop_duplicates(subset=['id'],inplace=True)
-        # Sort by ID (optional)
+        df.drop_duplicates(subset=['id'], inplace=True)
         df = df.sort_values('id').reset_index(drop=True)
-        # Code for Adding new records from baby elvis to elvis database file ends here
 
-        # Code for Adding Time_ONCode values from baby elvis to elvis database file 
-        # Identify rows where time_column_df[0] is either NaN or empty string
+        # Fill missing Time_ONCode values
         mask = df[time_column_df[0]].isna() | (df[time_column_df[0]].str.strip() == '')
-
-        # Create a mapping dictionary from df1 using 'id' as key and time_column_df1[0] as value
         time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
-
-        # Fill the missing/empty values in df using the mapping
         df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
-        # Code for Adding Time_ONCode values from baby elvis to elvis database file ends here
+
         baby_elvis_df_merged = df
         print("Data merged successfully!")
-    else:
-        print("One or both dataframes failed to load.")
 
-    # Fetch baby_elvis data - EXACTLY AS IN YOUR ORIGINAL CODE
+    # -----------------------
+    # Prepare baby_elvis_df (already fetched in df1)
+    # -----------------------
+    baby_elvis_df = None
     if "main" in PROJECTS[project]["databases"]:
         baby_elvis_config = PROJECTS[project]["databases"]["main"]
         baby_table_name = baby_elvis_config['table']
         baby_database_name = baby_elvis_config["database"]
 
-        # Initialize session state for baby_elvis_df if it doesn't exist
-        if "baby_elvis_df" not in st.session_state:
-            st.session_state.baby_elvis_df = None
+        # Use df1 as the baby_elvis_df
+        if df1 is not None:
+            baby_elvis_df = df1.copy()
 
-        # BUT NOW WE DON'T NEED TO FETCH - WE ALREADY HAVE THE DATA
-        # Just assign from our already fetched data
-        if st.session_state.baby_elvis_df is None and df1 is not None:
-            st.session_state.baby_elvis_df = df1.copy()  # Use the already fetched main data
-        
-        baby_elvis_df = st.session_state.baby_elvis_df  # Create local reference
-
-        # Apply KCATA header mapping to baby_elvis if this is the KCATA project
-        if project == "KCATA" or project == "KCATA RAIL" or project == "ACTRANSIT" or project=="SALEM":
+        if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"] and baby_elvis_df is not None:
             baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
             baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
 
-        # Display success message
+    # -----------------------
+    # Store only the final merged & cleaned dataframe in session_state
+    # -----------------------
+    st.session_state.merged_clean_df = baby_elvis_df_merged
+
+    # Display success
+    if baby_elvis_df_merged is not None:
         st.success(f"Collected {len(baby_elvis_df_merged)} records from baby_elvis and elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
+
 
     bucket_name = os.getenv('bucket_name')
     s3_client = boto3.client(
