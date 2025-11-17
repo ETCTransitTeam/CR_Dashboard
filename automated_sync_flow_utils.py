@@ -3228,7 +3228,7 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     # Clean and filter data
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
     filtered_df = df[df['INTERV_INIT'] != "999"]
-    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1]
+    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1']
     
     # Base counts
     record_counts = (
@@ -3246,7 +3246,7 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     delete_counts = (
         filtered_df[
             (filtered_df['ELVIS_STATUS'] == 'Delete') & 
-            (filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+            (filtered_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
         ]
         .groupby('INTERV_INIT')['id']
         .count()
@@ -3289,7 +3289,7 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
     address_filtered = elvis_df[
         (elvis_df['INTERV_INIT'] != "999") &
-        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
     ].copy()
     
     # Address completeness
@@ -3348,8 +3348,8 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
         ('0 Transfers', 
          (address_filtered['PREV_TRANSFERSCode'] == '(0) None') & 
          (address_filtered['NEXT_TRANSFERSCode'] == '(0) None')),
-        ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
-        ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
+        ('Access Walk', address_filtered['VAL_ACCESS_WALK'].astype(str) == '1'),
+        ('Egress Walk', address_filtered['VAL_EGRESS_WALK'].astype(str) == '1'),
         ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
         ('No Income', 
          (address_filtered['INCOMECode'].isna()) | 
@@ -3384,7 +3384,7 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     # Contest metrics (keeping only contest-related metrics)
     contest_filtered = elvis_df[
         (elvis_df['INTERV_INIT'] != "999") & 
-        (elvis_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
     ].copy()
     
     contest_filtered['contest_yes'] = (
@@ -4065,7 +4065,7 @@ def process_route_data_transit_ls6(df, elvis_df):
     
     # Filter data
     filtered_df = df[df['INTERV_INIT'] != "999"]
-    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1]
+    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1']
     
     # Base counts
     record_counts = (
@@ -4083,7 +4083,7 @@ def process_route_data_transit_ls6(df, elvis_df):
     delete_counts = (
         filtered_df[
             (filtered_df['ELVIS_STATUS'] == 'Delete') & 
-            (filtered_df['HAVE_5_MIN_FOR_SURVECode'] == 1)
+            (filtered_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
         ]
         .groupby('ROUTE_ROOT')['id']
         .count()
@@ -5938,7 +5938,10 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     reverse_df['FINAL_DIRECTION_CODE'] = reverse_df[route_survey_column[0]].apply(get_final_direction_code)
     reverse_df['URL'] = reverse_df['id'].apply(create_url)
 
-    reverse_df[route_survey_column[0]] = reverse_df[route_survey_column[0]].apply(lambda x: '_'.join(x.split("_")[:-1]))
+    reverse_df[route_survey_column[0]] = reverse_df[route_survey_column[0]].apply(
+        lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) and isinstance(x, str) and '_' in x else x
+    )
+
     reverse_df.reset_index(inplace=True, drop=True)
     reverse_df[[*prev_trip_route_code_column, *next_trip_route_code_column, 
                 *prev_trip_route_name_column, *next_trip_route_name_column,
