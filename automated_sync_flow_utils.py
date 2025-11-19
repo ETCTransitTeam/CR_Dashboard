@@ -3657,7 +3657,7 @@ def process_surveyor_data(df, elvis_df):
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
         ('No Income', 
          (address_filtered['INCOME_Code_'].isna()) | 
-         (address_filtered['INCOME_Code_'].astype(str) == 'REFUSED')),
+         (address_filtered['INCOME_Code_'].astype(str) == '14')),
         ('Hispanic', address_filtered['RACE_6_'].astype(str).str.strip().str.upper() == 'YES'),
         ('Black', address_filtered['RACE_5_'].astype(str).str.strip().str.upper() == 'YES'),
         ('White', address_filtered['RACE_4_'].astype(str).str.strip().str.upper() == 'YES')
@@ -4576,7 +4576,7 @@ def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
         ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
         ('No Income', 
          (address_filtered['INCOMECode'].isna()) | 
-         (address_filtered['INCOMECode'].astype(str) == 'REFUSED')),
+         (address_filtered['INCOMECode'].astype(str) == '14')),
         ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
         ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
         ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
@@ -4827,7 +4827,7 @@ def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route):
         ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
         ('No Income', 
          (address_filtered['INCOMECode'].isna()) | 
-         (address_filtered['INCOMECode'].astype(str) == 'REFUSED')),
+         (address_filtered['INCOMECode'].astype(str) == '14')),
         ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
         ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
         ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
