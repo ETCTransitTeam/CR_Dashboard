@@ -437,7 +437,7 @@ def fetch_and_process_data(project,schema):
     # -----------------------
     # Store only the final merged & cleaned dataframe in session_state
     # -----------------------
-    st.session_state.merged_clean_df = baby_elvis_df_merged
+    # st.session_state.merged_clean_df = baby_elvis_df_merged
 
     # Display success
     if baby_elvis_df_merged is not None:
@@ -750,12 +750,12 @@ def fetch_and_process_data(project,schema):
     # df[['ROUTE_SURVEYEDCode_SPLITED']]
 
     detail_df_stops['ETC_ROUTE_ID_SPLITED']=detail_df_stops['ETC_ROUTE_ID'].apply(lambda x : '_'.join(str(x).split('_')[0:-1]))
-    detail_df_stops[['ETC_ROUTE_ID_SPLITED']].head(2)
+    # detail_df_stops[['ETC_ROUTE_ID_SPLITED']].head(2)
 
 
 
     detail_df_stops['ETC_STOP_DIRECTION']=detail_df_stops['ETC_STOP_ID'].apply(lambda x : str(x).split('_')[-2])
-    detail_df_stops[['ETC_STOP_DIRECTION']].head(2)
+    # detail_df_stops[['ETC_STOP_DIRECTION']].head(2)
     import time
     # Start the timer
     start_time = time.time()
@@ -960,7 +960,6 @@ def fetch_and_process_data(project,schema):
 
     total_time = end_time - start_time
     print(f"Total time taken: {total_time:.2f} seconds")
-    df.to_csv('test_route_direction_fix_hehe.csv',index=False)
 
 
     df['ROUTE_SURVEYEDCode_Splited']=df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(str(x).split('_')[:-1]) )
@@ -1065,8 +1064,6 @@ def fetch_and_process_data(project,schema):
         wkend_route_level =create_wkend_route_level_df(wkend_overall_df,wkend_route_df,weekend_df,time_column,project)
     else:
         wkend_route_level =create_route_level_df(wkend_overall_df,wkend_route_df,weekend_df,time_column,project)
-    # wkday_route_df.to_csv("CHECk TOTAL_Difference.csv",index=False)
-    # wkend_route_df.to_csv("WKENDCHECk TOTAL_Difference.csv",index=False)
     wkday_comparison_df=copy.deepcopy(wkday_route_level)
     wkday_new_route_level_df=copy.deepcopy(wkday_route_level)
 
