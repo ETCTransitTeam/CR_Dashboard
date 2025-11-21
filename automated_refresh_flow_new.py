@@ -1612,6 +1612,7 @@ def fetch_and_process_data(project,schema):
         low_response_questions_df = create_low_response_report(df)
         refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df)
 
+        demographic_review_df = generate_demographic_summary(df, project_name)
 
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
@@ -2243,6 +2244,7 @@ def fetch_and_process_data(project,schema):
             'LOW RESPONSE QUESTIONS': low_response_questions_df,
             'Refusal Analysis Report': refusal_analysis_df,
             'Refusal Race Report': refusal_race_df,
+            'Demographic Review': demographic_review_df,
         }
 
         # Add weekend dataframes only if they exist
@@ -2268,7 +2270,8 @@ def fetch_and_process_data(project,schema):
             'Reverse Routes Difference': 'reverse_routes_difference',
             'LOW RESPONSE QUESTIONS': 'low_response_questions',
             'Refusal Analysis Report': 'refusal_analysis_report',
-            'Refusal Race Report': 'refusal_race_report'
+            'Refusal Race Report': 'refusal_race_report',
+            'Demographic Review': 'demographic_review',
         }
 
         # Add weekend table mappings only if weekend data exists

@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 import plotly.express as px
+import plotly.graph_objects as go
 import time
 
 
@@ -181,6 +182,7 @@ else:
                 'low_response_questions': 'low_response_questions_df',
                 'refusal_analysis_report': 'refusal_analysis_df',
                 'refusal_race_report': 'refusal_race_df',
+                'demographic_review': 'demographic_review_df',
             }
 
             # Initialize an empty dictionary to hold DataFrames
@@ -252,6 +254,7 @@ else:
 
         refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
         refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
+        demographic_review_df = dataframes.get('demographic_review_df', pd.DataFrame())
 
         ####################################################################################################
 
@@ -268,7 +271,8 @@ else:
                 "∆   Surveyor/Route/Trend Reports": "surveyreport",
                 "◉  WEEKDAY StationWise Comparison": "weekday_station",
                 "⦾  WEEKEND StationWise Comparison": "weekend_station",
-                "🚫  Refusal Analysis": "refusal"
+                "🚫  Refusal Analysis": "refusal",
+                "👥  Demographic Review": "demographic",
             }
             return mapping.get(selected_page, "main")
         
@@ -877,7 +881,7 @@ else:
 
                 if 'actransit' in selected_project or 'salem' in selected_project:
                     menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
-                    "🗺️  Location Maps"])
+                    "🗺️  Location Maps","👥  Demographic Review"])
 
                 if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project and 'rail' not in selected_schema.lower()):
                     menu_items.append("↺   Clone Records")
@@ -932,9 +936,9 @@ else:
 
             # Determine total records (based on current page)
             if current_page == "weekend":
-                total_records = wkend_df["# of Surveys"].sum()
+                total_records = int(wkend_df["# of Surveys"].sum())
             else:
-                total_records = wkday_df["# of Surveys"].sum()
+                total_records = int(wkday_df["# of Surveys"].sum())
 
             # === STYLING ===
             st.markdown("""
@@ -2516,6 +2520,79 @@ else:
                 st.query_params["page"] = "main"
                 st.rerun()
 
+        def demographic_review_page(df: pd.DataFrame):
+            # --- PAGE CONFIG ---
+            st.set_page_config(page_title="Demographic Review", layout="wide")
+            st.title("🧭 Demographic Review")
+
+            # --- MAIN LAYOUT ---
+            left_col, right_col = st.columns([2, 1])
+
+            # --- RIGHT: QUESTIONS PANEL ---
+            with right_col:
+                with st.container(height=600, border=True):
+                    st.markdown("### Survey Questions")
+                    search_query = st.text_input("🔍 Search Question", placeholder="Type to search a question...")
+
+                    # Filter questions
+                    all_questions = df["Question"].unique()
+                    filtered_questions = [
+                        q for q in all_questions if search_query.lower() in q.lower()
+                    ]
+
+                    selected_question = st.radio(
+                        "Select a Question",
+                        filtered_questions,
+                        label_visibility="collapsed",
+                        index=None,
+                    )
+
+            # --- LEFT: GRAPH AREA ---
+            with left_col:
+                with st.container(height=600, border=True):
+                    st.markdown("### Results")
+
+                    if selected_question:
+                        question_data = df[df["Question"] == selected_question].copy()
+                        question_data = question_data.sort_values(by="Percentage", ascending=False).reset_index(drop=True)
+
+                        # Calculate dynamic width based on number of bars
+                        # Each bar gets ~200 pixels of width to show only 5-6 bars at once
+                        num_bars = len(question_data)
+                        chart_width = num_bars * 200  # 200px per bar
+
+                        # Create the bar chart manually (one trace only)
+                        fig = go.Figure()
+
+                        fig.add_trace(
+                            go.Bar(
+                                x=question_data["Answer Text"],
+                                y=question_data["Percentage"],
+                                text=[f"{p:.1f}%" for p in question_data["Percentage"]],
+                                textposition="outside",
+                                hovertemplate="<b>%{x}</b><br>Percentage: %{y:.1f}%<br>Count: %{customdata}<extra></extra>",
+                                customdata=question_data["Count"],
+                                marker=dict(color="#0068c9"),
+                            )
+                        )
+
+                        fig.update_layout(
+                            xaxis_title=None,
+                            yaxis_title=None,
+                            yaxis=dict(ticksuffix="%", range=[0, 100]),
+                            showlegend=False,
+                            height=500,
+                            width=chart_width,  # Dynamic width
+                            margin=dict(t=50, b=50, l=50, r=50),
+                            plot_bgcolor="white",
+                            font=dict(color="black"),
+                            autosize=False  # Disable autosize
+                        )
+
+                        # Use width="content" instead of use_container_width=False
+                        st.plotly_chart(fig, width="content")
+                    else:
+                        st.info("👆 Select a question from the right to view its results.")
 
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
@@ -2935,6 +3012,9 @@ else:
                     reverse_routes_page()
             elif current_page == "location_maps":  # Add this line
                 location_maps_page()
+            elif current_page == "demographic":
+                if 'actransit' in selected_project or 'salem' in selected_project:
+                   demographic_review_page(demographic_review_df)
 
             else:
                 if 'tucson' in selected_project:

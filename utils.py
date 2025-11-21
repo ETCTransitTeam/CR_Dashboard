@@ -70,7 +70,7 @@ def apply_optimized_styling(df):
     
     if not target_columns:
         return df.style
-    
+
     def color_conditions(val):
         if pd.isna(val):
             return ''
@@ -87,15 +87,18 @@ def apply_optimized_styling(df):
         except (ValueError, TypeError):
             pass
         return ''
-    
-    # Create styled dataframe
+
     styled_df = df.style
-    
+
+    # Force integer formatting for all numeric columns
+    int_cols = df.select_dtypes(include=["int", "float"]).columns
+    styled_df = styled_df.format({col: "{:.0f}" for col in int_cols})
+
     # Apply coloring only to target columns
     for col in target_columns:
         if col in df.columns:
             styled_df = styled_df.map(color_conditions, subset=[col])
-    
+
     return styled_df
 
 def render_styled_dataframe(dataframe, height=400, pinned_column=None, key="grid"):

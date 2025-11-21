@@ -7154,3 +7154,167 @@ def create_location_maps_interface(df):
             mime="text/csv",
             key="download_csv_btn"
         )
+
+## Demographic Summary Report
+def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str):
+    print(elvis_df.columns.tolist())
+    elvis_df = elvis_df.copy()
+    demographic_review = []
+
+    # ===============================
+    # 1) DEFINE PROJECT-SPECIFIC QUESTIONS
+    # ===============================
+
+    if project_name.upper() == "ACTRANSIT":
+        question_dict = {
+                "AltIncome":  "We want to make sure we get responses from ACT users with different income levels. Is your TOTAL ANNUAL HOUSEHOLD INCOME in 2024 higher than {if(HHSize.NAOK == \"1?",
+                "Assistance": "Do you or anyone in your household currently receive any government assistance or public benefits (such as CalFresh, Medi-Cal, WIC, Section 8, or similar)?",
+                "ClipperDiscount": "Are you part of the Clipper Pass Discount Program?",
+                "COUNT_VH_HH": "How many vehicles (cars, trucks, or motorcycles) are available to your household?",
+                "DaysPerWeek": "How many days in a typical week do you ride AC Transit?",
+                "DESTIN_PLACE_TYPE": "What type of place are you GOING TO NOW? (the ending place for your one-way trip)",
+                "DESTIN_TRANSPORT": "How will you GET TO your destination?",
+                "DisabilitySpecify": "Which of the following disabilities currently affect your daily life? (select all that apply)",
+                "EMPLOYMENT_STATUS": "What is your employment status? (Check the one response that BEST describes you)",
+                "ENGLISH_ABILITY": "How well do you speak English?",
+                "FareCategory": "What fare category did you pay?",
+                "FareType": "What kind of fare did you pay for this trip?",
+                "HHSIZE": "Including YOU, how many people live in your household?",
+                "HAVE_DISABILITY": "Are you a person with a disability?",
+                "HOME_LANG_Other": "What language do you speak at home?",
+                "INCOME": "Which of the following BEST describes your TOTAL ANNUAL HOUSEHOLD INCOME in 2024 before taxes?",
+                "NEXT_TRANSFERS": "How many buses/trains will you ride AFTER you get off?",
+                "ORIGIN_PLACE_TYPE": "What type of place are you COMING FROM NOW? (the starting place for your one-way trip)",
+                "ORIGIN_TRANSPORT": "How did you GET FROM your origin?",
+                "OwnPhone": "Do you own a smartphone?",
+                "PAY_TO_RIDE": "How did you pay for this one-way trip?",
+                "PhoneData": "Do you have internet access through your smartphone?",
+                "PREV_TRANSFERS": "How many buses/trains did you travel on BEFORE you boarded?",
+                "Race": "What is your race / ethnicity? (check all that apply)",
+                "ROUTE_SURVEYED": "ROUTE_SURVEYED",
+                "STUDENT_STATUS": "What is your student status? (check the one response that BEST describes you)",
+                "TRIP_IN_OPPO_DIR": "Will you (or did you) make this same trip in exactly the opposite direction today?",
+                "WORK_DAYS": "How many days per week do you commute to work (work outside the home)?",
+                "YOUR_GENDER": "What is your gender? (select one that best describes your current gender identity)",
+                "YEAR_BORN": "YEAR_BORN"
+                             
+            }
+
+        # ACT-specific multi-select fields
+        multi_select_fields = {
+            "Race": {
+                "Hispanic or Latino": "RACE_1",
+                "Asian or Asian American": "RACE_2",
+                "White or Caucasian": "RACE_3",
+                "Black or African American": "RACE_4",
+                "Native Hawaiian or Pacific Islander": "RACE_5",
+                "American Indian / Alaska Native / Indigenous": "RACE_6",
+                "Middle Eastern or North African": "RACE_7"
+            },
+            "DisabilitySpecify": {
+                "Blindness or vision impairment": "DISABILITY_SPECIFY_1",
+                "Mobility disability": "DISABILITY_SPECIFY_2",
+                "Hearing impairment": "DISABILITY_SPECIFY_4",
+                "Cognitive or intellectual impairment": "DISABILITY_SPECIFY_5",
+                "None": "DISABILITY_SPECIFY_6"
+            }
+        }
+
+    elif project_name.upper() == "SALEM":
+        question_dict = {
+            "ORIGIN_PLACE_TYPE": "What type of place are you COMING FROM NOW? (the starting place for your one-way trip)",
+            "PREV_TRANSFERS": "How many buses/trains did you travel on BEFORE you boarded?",
+            "ORIGIN_TRANSPORT": "How did you GET FROM your origin?",
+            "DESTIN_PLACE_TYPE": "What type of place are you GOING TO NOW? (the ending place for your one-way trip)",
+            "NEXT_TRANSFERS": "How many buses/trains will you ride AFTER you get off?",
+            "DESTIN_TRANSPORT": "How will you GET TO your destination?",
+            "TRIP_IN_OPPO_DIR": "Will you (or did you) make this same trip in exactly the opposite direction today?",
+            "FareType": "What type of fare did you use for this trip?",
+            "HowLongPass": "How long is your fare/pass good for?",
+            "COUNT_VH_HH": "How many vehicles (cars, trucks, or motorcycles) are available to your household?",
+            "UseVehicle": "Could you have used one of these vehicles to complete this trip?",
+            "HHSIZE": "Including YOU, how many people live in your household?",
+            "HH_16_OVER": "Including you, how many people aged 16 and over live in your household?",
+            "HH16Emp": "Including YOU, how many people age 16 and over in your household are employed full/part-time?",
+            "EMPLOYMENT_STATUS": "What is your employment status? (Check the one response that BEST describes you)",
+            "WorkLocationType": "Which of the following best describes your current work location?",
+            "STUDENT_STATUS": "What is your student status? (check the one response that BEST describes you)",
+            "DriverLicense": "Do you have a valid driver's license?",
+            "YEAR_BORN": "In what year were you born?",
+            "YOUR_GENDER": "What is your gender? (select one that best describes your current gender identity)",
+            "INCOME": "Which of the following BEST describes your TOTAL ANNUAL HOUSEHOLD INCOME in 2024 before taxes?",
+            "HomeLangSpoken": "Do you speak a language other than English at home?",
+            "ENGLISH_ABILITY": "How well do you speak English?",
+            "ChooseImprove": "Which one of the following things would you choose for Cherriots to improve service? (choose only one)",
+            "FrequencyDay": "Weekday or weekend? (Choose only one)",
+            "FreqWeekday": "If weekday, which route(s)?",
+            "FreqWeekend": "If weekend, which route(s)?",
+            "IncreaseSpanDay": "Weekday or weekend? (Choose only one)",
+            "SpanWeekday": "If weekday, earlier morning or later evening? (choose only one)",
+            "SpanWeekend": "If weekend, earlier morning or later evening? (choose only one)",
+            "WeekendCoverage": "Which route(s)?",
+            "ROUTE_SURVEYED": "Select the ROUTE and [DIRECTION] you are working."
+        }
+
+        # Salem has no multi-select fields
+        multi_select_fields = {}
+
+    else:
+        raise ValueError(f"❌ Unknown project_name '{project_name}'")
+
+    # ===============================
+    # 2) Helper: YES % for multi-select
+    # ===============================
+    def calculate_yes_percentages(df, col_map):
+        results = {}
+        for label, col in col_map.items():
+            if col in df.columns:
+                yes = (df[col].astype(str).str.upper() == "YES").sum()
+                total = df[col].notna().sum()
+                results[label] = (yes / total * 100) if total > 0 else 0
+        return results
+
+    # ===============================
+    # 3) MAIN PROCESSING LOOP
+    # ===============================
+    for column, q_text in question_dict.items():
+
+        # Handle multi-select
+        if column in multi_select_fields:
+            mapping = multi_select_fields[column]
+            percentages = calculate_yes_percentages(elvis_df, mapping)
+
+            for ans, pct in percentages.items():
+                count = int(pct / 100 * len(elvis_df))
+                demographic_review.append({
+                    "Question Column": column,
+                    "Question": q_text,
+                    "Answer Code": ans,
+                    "Answer Text": ans,
+                    "Count": count,
+                    "Percentage": round(pct, 2)
+                })
+            continue
+
+        # Normal question
+        if column not in elvis_df.columns:
+            print(f"⚠️ Warning: Column '{column}' not found — skipping.")
+            continue
+
+        col_data = elvis_df[column].dropna().astype(str)
+        ans_counts = col_data.value_counts().sort_index()
+        total = ans_counts.sum()
+
+        for ans, count in ans_counts.items():
+            pct = (count / total * 100) if total > 0 else 0
+            demographic_review.append({
+                "Question Column": column,
+                "Question": q_text,
+                "Answer Code": ans,
+                "Answer Text": ans,
+                "Count": count,
+                "Percentage": round(pct, 2)
+            })
+
+    return pd.DataFrame(demographic_review)
+
