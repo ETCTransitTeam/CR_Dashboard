@@ -869,7 +869,9 @@ else:
                     "🗓︎   WEEKDAY-OVERALL", 
                     "☀︎   WEEKEND-OVERALL",
                     "🕒  Time Of Day Details",
-                    "🗺️  Location Maps"
+                    "🗺️  Location Maps",
+                    "👥  Demographic Review",
+                    "🚫  Refusal Analysis"
                 ]
             else:
                 menu_items = [

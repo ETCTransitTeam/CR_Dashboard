@@ -223,10 +223,16 @@ def add_custom_css():
     """, unsafe_allow_html=True)
 
 
-def render_auth_layout(content_function, title, subtitle=None):
+def render_auth_layout(content_function, title, subtitle=None, dashboard_type="supervisor"):
     add_custom_css()
 
     subtitle_html = f"<p class='subtitle'>{subtitle}</p>" if subtitle else ""
+
+    # Determine the dashboard title based on the type
+    if dashboard_type == "client":
+        dashboard_title = "Client"
+    else:
+        dashboard_title = "Supervisor"
 
     # Create the two-column layout using Streamlit columns
     col1, col2 = st.columns([1.1, 1])
@@ -234,11 +240,11 @@ def render_auth_layout(content_function, title, subtitle=None):
     # ---- LEFT PANEL ----
     with col1:
         st.markdown(
-            """
+            f"""
             <div class="left-panel">
                 <img src="https://etcinstitute.com/wp-content/uploads/2023/09/ETC-NewLogo-Horizontal-Web.png"
                         alt="ETC Logo" style="width:300px; margin-bottom:20px;"/> <br/>
-                <h1>Welcome to Supervisor <br/> Dashboard</h1>
+                <h1>Welcome to {dashboard_title} <br/> Dashboard</h1>
                     <h4 style="margin-bottom:10px">TRANSIT SURVEY 2025</h4>
                     <h5>Origin-Destination Collection Dashboard</h5>
                     <p>725 W. Frontier Lane, Olathe, KS</p>
@@ -520,7 +526,7 @@ def register_page():
             """, unsafe_allow_html=True)
 
     
-    render_auth_layout(register_content, "Create Account", "Join ETC Institute's analytics platform")
+    render_auth_layout(register_content, "Create Account", "Join ETC Institute's analytics platform", dashboard_type="client")
 
 
 def activate_account():
