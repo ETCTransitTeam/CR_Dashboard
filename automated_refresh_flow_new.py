@@ -1016,16 +1016,18 @@ def fetch_and_process_data(project,schema):
     
     # ----- Route Direction DF -----
     if project=='UTA':
-            wkend_route_direction_df=create_uta_route_direction_level_df(wkend_overall_df,weekend_df,time_column,'weekend')
-            wkday_route_direction_df=create_uta_route_direction_level_df(wkday_overall_df,weekday_df,time_column,None)        
+        wkend_route_direction_df = create_uta_route_direction_level_df(wkend_overall_df, weekend_df, time_column, 'weekend')
+        wkday_route_direction_df = create_uta_route_direction_level_df(wkday_overall_df, weekday_df, time_column, None)        
+    elif project in ["TUCSON", "TUCSON RAIL"]:
+        wkend_route_direction_df = create_tucson_weekend_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
+    elif project in ["ACTRANSIT", "SALEM"]:
+        wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
+        wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
     else:
-        if project in ["TUCSON", "TUCSON RAIL"]:
-            wkend_route_direction_df=create_tucson_weekend_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
-        else:
-            if project not in ["ACTRANSIT", "SALEM"]:
-                print("Creating weekend route direction df")
-                wkend_route_direction_df=create_route_direction_level_df(wkend_overall_df,weekend_df,time_column,project)
-        wkday_route_direction_df=create_route_direction_level_df(wkday_overall_df,weekday_df,time_column,project)
+        print("Creating weekend route direction df for other projects")
+        wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
+        wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
+
     # ----- Station-wise Route DF -----
     if project=='UTA':
         wkend_stationwise_route_df=create_uta_station_wise_route_level_df(wkend_overall_df,weekend_df,time_column,'weekend')
@@ -1057,7 +1059,6 @@ def fetch_and_process_data(project,schema):
         weekend_raw_df=weekend_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
         weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
         weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
-
 
     wkday_route_level =create_route_level_df(wkday_overall_df,wkday_route_df,weekday_df,time_column,project)
     if project=='TUCSON':
