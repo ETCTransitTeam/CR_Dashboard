@@ -56,7 +56,8 @@ def user_connect_to_snowflake():
         role=os.getenv('SNOWFLAKE_ROLE'),
     )
 
-schema_value = {'TUCSON': 'tucson_bus','TUCSON RAIL': 'tucson_rail','VTA': 'public', 'UTA': 'uta_rail', 'STL':'stl_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail', 'ACTRANSIT': 'actransit_bus', 'SALEM': 'salem_bus'}
+# schema_value = {'TUCSON': 'tucson_bus','TUCSON RAIL': 'tucson_rail','VTA': 'public', 'UTA': 'uta_rail', 'STL':'stl_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail', 'ACTRANSIT': 'actransit_bus', 'SALEM': 'salem_bus'}
+schema_value = {'SALEM': 'salem_bus', 'ACTRANSIT': 'actransit_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail'}
 
 # Add custom CSS for styling
 def add_custom_css():
