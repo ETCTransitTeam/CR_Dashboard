@@ -1680,7 +1680,6 @@ else:
                 
                 # Create a merged view of both dataframes
                 if not reverse_routes_df.empty and not reverse_routes_difference_df.empty:
-                    # Merge both dataframes and remove exact duplicates
                     merged_df = pd.concat([reverse_routes_df, reverse_routes_difference_df], ignore_index=True)
                     
                     # Remove exact duplicates (keeping first occurrence)
@@ -1695,9 +1694,107 @@ else:
                 elif not reverse_routes_difference_df.empty:
                     merged_df = reverse_routes_difference_df.copy()
                 
+                # Function to extract main route name (before any dash)
+                def get_main_route_name(route_string):
+                    if pd.isna(route_string):
+                        return None
+                    
+                    route_str = str(route_string).strip()
+                    
+                    # Get the part before the first dash
+                    if ' - ' in route_str:
+                        return route_str.split(' - ')[0]
+                    else:
+                        return route_str
+                
+                # ------------------------------------------
+                # FIXED CLEAN DIRECTION EXTRACTION LOGIC
+                # ------------------------------------------
+                direction_code_mapping = {}
+
+                if 'FINAL_DIRECTION_CODE' in merged_df.columns and 'ROUTE_SURVEYED' in merged_df.columns:
+                    from collections import defaultdict, Counter
+                    import re
+
+                    code_to_directions = defaultdict(Counter)
+
+                    for idx, row in merged_df.iterrows():
+                        route = row.get('ROUTE_SURVEYED')
+                        direction_code = row.get('FINAL_DIRECTION_CODE')
+
+                        if pd.isna(direction_code):
+                            continue
+
+                        code_str = str(direction_code)
+
+                        if pd.notna(route):
+                            route_str = str(route).strip()
+
+                            direction_text = None
+
+                            # 1️⃣ Check for square brackets [] first
+                            brackets = re.findall(r'\[([^\]]+)\]', route_str)
+                            if brackets:
+                                direction_text = brackets[-1].strip()  # take last occurrence
+                            # 2️⃣ If no brackets, fallback to last part after dash
+                            elif ' - ' in route_str:
+                                parts = route_str.split(' - ')
+                                if len(parts) >= 2:
+                                    direction_text = parts[-1].strip()
+                            
+                            if direction_text:
+                                code_to_directions[code_str][direction_text] += 1
+
+                    # Assign most common extracted text per direction code
+                    for code_str, counter in code_to_directions.items():
+                        if len(counter) > 0:
+                            direction_code_mapping[code_str] = counter.most_common(1)[0][0]
+
+
+                # ------------------------------------------
+                # DEFAULT MAPPING — UNCHANGED AS YOU REQUESTED
+                # ------------------------------------------
+                if not direction_code_mapping and 'FINAL_DIRECTION_CODE' in merged_df.columns:
+                    default_mapping = {
+                        '_00': 'Outbound',
+                        '_01': 'Inbound',
+                        '_02': 'Loop',
+                        '_03': 'Clockwise',
+                        '_04': 'Counterclockwise',
+                        '0': 'Outbound',
+                        '1': 'Inbound',
+                        '2': 'Loop',
+                        '3': 'Clockwise',
+                        '4': 'Counterclockwise',
+                    }
+                    
+                    for code in merged_df['FINAL_DIRECTION_CODE'].dropna().unique():
+                        code_str = str(code)
+                        if code_str in default_mapping:
+                            direction_code_mapping[code_str] = default_mapping[code_str]
+                        elif '_00' in code_str:
+                            direction_code_mapping[code_str] = 'Outbound'
+                        elif '_01' in code_str:
+                            direction_code_mapping[code_str] = 'Inbound'
+                        elif '_02' in code_str:
+                            direction_code_mapping[code_str] = 'Loop'
+                        else:
+                            direction_code_mapping[code_str] = code_str
+                # ------------------------------------------
+                # END DEFAULT MAPPING
+                # ------------------------------------------
+
+                # Create mapping for main route names
+                main_routes = set()
+                if 'ROUTE_SURVEYED' in merged_df.columns:
+                    for route in merged_df['ROUTE_SURVEYED'].dropna().unique():
+                        main_route = get_main_route_name(route)
+                        if main_route:
+                            main_routes.add(main_route)
+                
                 # Reset index to show row numbers
                 merged_df = merged_df.reset_index(drop=True)
-                merged_df.index = merged_df.index + 1  # Start index from 1 instead of 0
+                merged_df.index = merged_df.index + 1
                 
                 # Display the merged table
                 st.subheader("Reverse Routes View")
@@ -1706,12 +1803,10 @@ else:
                 col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
-                    # Filter by Type
                     type_options = ['All'] + sorted(merged_df['Type'].dropna().unique().tolist())
                     selected_type = st.selectbox("Filter by Type:", type_options)
                     
                 with col2:
-                    # Filter by Day Type
                     if 'DAY_TYPE' in merged_df.columns:
                         day_type_options = ['All'] + sorted(merged_df['DAY_TYPE'].dropna().unique().tolist())
                         selected_day_type = st.selectbox("Filter by Day Type:", day_type_options)
@@ -1719,7 +1814,6 @@ else:
                         selected_day_type = 'All'
                 
                 with col3:
-                    # Filter by Time Period
                     if 'TIME_PERIOD' in merged_df.columns:
                         time_period_options = ['All'] + sorted(merged_df['TIME_PERIOD'].dropna().unique().tolist())
                         selected_time_period = st.selectbox("Filter by Time Period:", time_period_options)
@@ -1727,18 +1821,48 @@ else:
                         selected_time_period = 'All'
                 
                 with col4:
-                    # Filter by Route
-                    if 'ROUTE_SURVEYED' in merged_df.columns:
-                        route_options = ['All'] + sorted(merged_df['ROUTE_SURVEYED'].dropna().unique().tolist())
-                        selected_route = st.selectbox("Filter by Route:", route_options)
+                    if main_routes:
+                        def sort_route(name):
+                            parts = name.split()
+                            if parts and parts[0].replace('.', '').isdigit():
+                                try:
+                                    num = float(parts[0])
+                                    return (0, num, name)
+                                except:
+                                    return (1, name)
+                            else:
+                                return (1, name)
+                        
+                        sorted_main_routes = sorted(main_routes, key=sort_route)
+                        route_options = ['All'] + sorted_main_routes
+                        
+                        selected_main_route = st.selectbox("Filter by Route:", route_options)
                     else:
-                        selected_route = 'All'
+                        selected_main_route = 'All'
                 
                 with col5:
-                    # Filter by Direction
                     if 'FINAL_DIRECTION_CODE' in merged_df.columns:
-                        direction_options = ['All'] + sorted(merged_df['FINAL_DIRECTION_CODE'].dropna().unique().tolist())
-                        selected_direction = st.selectbox("Filter by Direction:", direction_options)
+                        direction_options = ['All']
+                        
+                        unique_codes = sorted(merged_df['FINAL_DIRECTION_CODE'].dropna().unique())
+                        
+                        for direction_code in unique_codes:
+                            direction_code_str = str(direction_code)
+                            
+                            if direction_code_str in direction_code_mapping:
+                                human_name = direction_code_mapping[direction_code_str]
+                                display_text = f"{direction_code_str} ({human_name})"
+                            else:
+                                display_text = direction_code_str
+                            
+                            direction_options.append(display_text)
+                        
+                        selected_direction_display = st.selectbox("Filter by Direction:", direction_options)
+                        
+                        if selected_direction_display != 'All':
+                            selected_direction = selected_direction_display.split(' (')[0]
+                        else:
+                            selected_direction = 'All'
                     else:
                         selected_direction = 'All'
                 
@@ -1754,19 +1878,22 @@ else:
                 if selected_time_period != 'All' and 'TIME_PERIOD' in filtered_df.columns:
                     filtered_df = filtered_df[filtered_df['TIME_PERIOD'] == selected_time_period]
                 
-                if selected_route != 'All' and 'ROUTE_SURVEYED' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['ROUTE_SURVEYED'] == selected_route]
+                if selected_main_route != 'All' and 'ROUTE_SURVEYED' in filtered_df.columns:
+                    filtered_df = filtered_df[
+                        filtered_df['ROUTE_SURVEYED'].apply(
+                            lambda x: get_main_route_name(x) == selected_main_route if pd.notna(x) else False
+                        )
+                    ]
                 
                 if selected_direction != 'All' and 'FINAL_DIRECTION_CODE' in filtered_df.columns:
-                    filtered_df = filtered_df[filtered_df['FINAL_DIRECTION_CODE'] == selected_direction]
+                    filtered_df = filtered_df[filtered_df['FINAL_DIRECTION_CODE'].astype(str) == selected_direction]
                 
                 # Additional search filter
                 search_term = st.text_input("Search across all columns:", "")
                 if search_term:
-                    # Create a mask for searching across all string columns
                     mask = pd.Series(False, index=filtered_df.index)
                     for col in filtered_df.columns:
-                        if filtered_df[col].dtype == 'object':  # String columns
+                        if filtered_df[col].dtype == 'object':
                             mask = mask | filtered_df[col].astype(str).str.contains(search_term, case=False, na=False)
                     filtered_df = filtered_df[mask]
                 
@@ -1774,12 +1901,11 @@ else:
                 display_df = filtered_df.reset_index(drop=True)
                 display_df.index = display_df.index + 1
                 
-                # Display the filtered dataframe with index
                 st.dataframe(display_df, use_container_width=True, height=400)
                 
-                # Show statistics
+                # Statistics
                 st.subheader("Statistics")
-                col1, col2, col3, col4, col5 = st.columns(5)  # Updated to 5 columns
+                col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
                     st.metric("Total Records", len(filtered_df))
@@ -1792,47 +1918,66 @@ else:
                 
                 with col3:
                     if 'TIME_PERIOD' in filtered_df.columns and len(filtered_df) > 0:
-                        time_period_counts = filtered_df['TIME_PERIOD'].value_counts()
-                        if len(time_period_counts) > 0:
-                            st.metric("Most Common Time Period", time_period_counts.index[0])
+                        time_counts = filtered_df['TIME_PERIOD'].value_counts()
+                        if len(time_counts) > 0:
+                            st.metric("Most Common Time Period", time_counts.index[0])
                 
                 with col4:
-                    if 'ROUTE_SURVEYED' in filtered_df.columns and len(filtered_df) > 0:
-                        route_counts = filtered_df['ROUTE_SURVEYED'].value_counts()
-                        if len(route_counts) > 0:
-                            st.metric("Most Common Route", route_counts.index[0])
+                    if selected_main_route != 'All':
+                        st.metric("Selected Route", selected_main_route)
+                    elif 'ROUTE_SURVEYED' in filtered_df.columns and len(filtered_df) > 0:
+                        main_route_counts = {}
+                        for route in filtered_df['ROUTE_SURVEYED']:
+                            main_route = get_main_route_name(route)
+                            if main_route:
+                                main_route_counts[main_route] = main_route_counts.get(main_route, 0) + 1
+                        if main_route_counts:
+                            st.metric("Most Common Route", max(main_route_counts, key=main_route_counts.get))
                 
                 with col5:
-                    if 'FINAL_DIRECTION_CODE' in filtered_df.columns and len(filtered_df) > 0:
+                    if selected_direction != 'All' and 'FINAL_DIRECTION_CODE' in filtered_df.columns and len(filtered_df) > 0:
+                        if selected_direction in direction_code_mapping:
+                            human_name = direction_code_mapping[selected_direction]
+                            st.metric("Selected Direction", f"{selected_direction} ({human_name})")
+                        else:
+                            st.metric("Selected Direction", selected_direction)
+                    elif 'FINAL_DIRECTION_CODE' in filtered_df.columns and len(filtered_df) > 0:
                         direction_counts = filtered_df['FINAL_DIRECTION_CODE'].value_counts()
                         if len(direction_counts) > 0:
-                            st.metric("Most Common Direction", direction_counts.index[0])
+                            top_code = str(direction_counts.index[0])
+                            if top_code in direction_code_mapping:
+                                human_name = direction_code_mapping[top_code]
+                                display_text = f"{top_code} ({human_name})"
+                            else:
+                                display_text = top_code
+                            st.metric("Most Common Direction", display_text)
                 
-                # Download buttons for both individual and merged data
+                # Download buttons
                 st.subheader("Download Data")
                 
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
                     if not reverse_routes_df.empty:
-                        csv_reverse, file_reverse = create_csv(reverse_routes_df, "reverse_routes.csv")
-                        download_csv(csv_reverse, file_reverse, "Download Reverse Routes")
+                        csv1, file1 = create_csv(reverse_routes_df, "reverse_routes.csv")
+                        download_csv(csv1, file1, "Download Reverse Routes")
                 
                 with col2:
                     if not reverse_routes_difference_df.empty:
-                        csv_difference, file_difference = create_csv(reverse_routes_difference_df, "reverse_routes_difference.csv")
-                        download_csv(csv_difference, file_difference, "Download Reverse Routes Difference")
+                        csv2, file2 = create_csv(reverse_routes_difference_df, "reverse_routes_difference.csv")
+                        download_csv(csv2, file2, "Download Reverse Routes Difference")
                 
                 with col3:
-                    csv_merged, file_merged = create_csv(filtered_df, "merged_reverse_routes.csv")
-                    download_csv(csv_merged, file_merged, "Download Filtered View")
-                
+                    csv3, file3 = create_csv(filtered_df, "merged_reverse_routes.csv")
+                    download_csv(csv3, file3, "Download Filtered View")
+            
             else:
                 st.warning("No reverse routes data available")
             
             if st.button("Home Page"):
                 st.query_params["page"] = "main"
                 st.rerun()
+
 
         def show_refusal_analysis(refusal_analysis_df, refusal_race_df):
             """
