@@ -702,17 +702,20 @@ def fetch_and_process_data(project,schema):
     date_columns_check=['completed','datestarted']
     date_columns=check_all_characters_present(df,date_columns_check)
 
-    def determine_date(row):
-        if not pd.isnull(row[date_columns[0]]):
-            return row[date_columns[0]]
-        elif not pd.isnull(row[date_columns[1]]):
-            return row[date_columns[1]]
-        else:
-            return pd.NaT
+    # def determine_date(row):
+    #     if not pd.isnull(row[date_columns[0]]):
+    #         return row[date_columns[0]]
+    #     elif not pd.isnull(row[date_columns[1]]):
+    #         return row[date_columns[1]]
+    #     else:
+    #         return pd.NaT
 
-    df['Date'] = df.apply(determine_date, axis=1)
+    print("✅ Using LocalTime column for date classification")
+    df['Date'] = pd.to_datetime(df['LocalTime'], errors='coerce')
+    df['Day'] = df['Date'].dt.day_name()
 
-    df['Day']=df['Date'].apply(get_day_name)
+    # Fill any NaN values
+    df['Day'] = df['Day'].fillna('Unknown')
 
 
     try:
@@ -767,18 +770,33 @@ def fetch_and_process_data(project,schema):
         pass
 
 
+    # if project=='KCATA' or project=='KCATA RAIL' or project=='ACTRANSIT' or project=='SALEM':
+    #     weekday_df.dropna(subset=[time_column[0]],inplace=True)
+    #     weekday_raw_df=weekday_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
+    #     weekend_df.dropna(subset=[time_column[0]],inplace=True)
+    #     weekend_raw_df=weekend_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
+    #     weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+    #     weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+    # else:
+    #     weekday_df.dropna(subset=[time_column[0]],inplace=True)
+    #     weekday_raw_df=weekday_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+    #     weekend_df.dropna(subset=[time_column[0]],inplace=True)
+    #     weekend_raw_df=weekend_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+    #     weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+    #     weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+    # Include LocalTime column in raw data exports
     if project=='KCATA' or project=='KCATA RAIL' or project=='ACTRANSIT' or project=='SALEM':
         weekday_df.dropna(subset=[time_column[0]],inplace=True)
-        weekday_raw_df=weekday_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
+        weekday_raw_df=weekday_df[['id', 'LocalTime', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_df.dropna(subset=[time_column[0]],inplace=True)
-        weekend_raw_df=weekend_df[['id', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
+        weekend_raw_df=weekend_df[['id', 'LocalTime', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
         weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
     else:
         weekday_df.dropna(subset=[time_column[0]],inplace=True)
-        weekday_raw_df=weekday_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        weekday_raw_df=weekday_df[['id', 'LocalTime', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
         weekend_df.dropna(subset=[time_column[0]],inplace=True)
-        weekend_raw_df=weekend_df[['id', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        weekend_raw_df=weekend_df[['id', 'LocalTime', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
         weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
         weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
 
@@ -880,7 +898,7 @@ def fetch_and_process_data(project,schema):
         print("Processing survey data...")  
         # Process survey data
         df_for_processing = baby_elvis_df_merged.rename(columns={
-            'DATE_SUBMITTED': 'Completed',
+            'LocalTime': 'Completed',
             'HAVE_5_MIN_FOR_SURVECode': 'HAVE_5_MIN_FOR_SURVE_Code_',
             'ROUTE_SURVEYEDCode': 'ROUTE_SURVEYED_Code_'
         })
@@ -903,10 +921,10 @@ def fetch_and_process_data(project,schema):
 
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
-        df['DATE_SUBMITTED'] = pd.to_datetime(df['DATE_SUBMITTED'], errors='coerce')
+        df['LocalTime'] = pd.to_datetime(df['LocalTime'], errors='coerce')
         # Get valid dates (non-NaN)
         ke_valid_dates = ke_df['Elvis_Date'].dropna()
-        df_valid_dates = df['DATE_SUBMITTED'].dropna()
+        df_valid_dates = df['LocalTime'].dropna()
 
         # Clean route names
         def clean_route_name(route_series):
@@ -980,14 +998,14 @@ def fetch_and_process_data(project,schema):
 
         df = df.merge(
             survey_date_surveyor,
-            left_on=['DATE_SUBMITTED', 'INTERV_INIT'],
+            left_on=['LocalTime', 'INTERV_INIT'],
             right_on=['Date', 'INTERV_INIT'],
             how='left'
         )
 
         df = df.merge(
             survey_date_route,
-            left_on=['DATE_SUBMITTED', 'ROUTE_ROOT'],
+            left_on=['LocalTime', 'ROUTE_ROOT'],
             right_on=['Date', 'ROUTE_ROOT'],
             how='left',
             suffixes=('', '_r')
@@ -1467,8 +1485,8 @@ def fetch_and_process_data(project,schema):
             'WkDAY Stationwise Comparison': safe_drop_columns(wkday_stationwise_route_df, ['CR_Total', 'Total_DIFFERENCE', 'DB_Total']),
             'WkDAY Route Comparison': safe_drop_columns(wkday_comparison_df, ['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
             'WkEND Route Comparison': safe_drop_columns(wkend_comparison_df, ['CR_Total', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS', 'Total_DIFFERENCE']),
-            "WkDAY RAW DATA": weekday_raw_df[['id', 'DATE_SUBMITTED', route_survey_column[0], 'ROUTE_SURVEYED', 'BOARDING LOCATION', 'ALIGHTING LOCATION', time_column[0], time_period_column[0], 'Day', 'ElvisStatus']],
-            'WkEND RAW DATA': weekend_raw_df[['id', 'DATE_SUBMITTED', route_survey_column[0], 'ROUTE_SURVEYED', 'BOARDING LOCATION', 'ALIGHTING LOCATION', time_column[0], time_period_column[0], 'Day', 'ElvisStatus']],
+            "WkDAY RAW DATA": weekday_raw_df[['id', 'LocalTime', 'DATE_SUBMITTED', route_survey_column[0], 'ROUTE_SURVEYED', 'BOARDING LOCATION', 'ALIGHTING LOCATION', time_column[0], time_period_column[0], 'Day', 'ElvisStatus']],
+            'WkEND RAW DATA': weekend_raw_df[['id', 'LocalTime', 'DATE_SUBMITTED', route_survey_column[0], 'ROUTE_SURVEYED', 'BOARDING LOCATION', 'ALIGHTING LOCATION', time_column[0], time_period_column[0], 'Day', 'ElvisStatus']],
             'LAST SURVEY DATE': latest_date_df
         }
         

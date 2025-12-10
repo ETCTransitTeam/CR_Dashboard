@@ -931,7 +931,11 @@ else:
 
             # Get most recent "Completed" date
             if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
-                completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
+                if 'LocalTime' in wkday_raw_df.columns and 'LocalTime' in wkend_raw_df.columns:
+                    completed_dates = pd.concat([wkday_raw_df['LocalTime'], wkend_raw_df['LocalTime']])
+                else:
+                    # Fallback to DATE_SUBMITTED if LocalTime doesn't exist
+                    completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
             else:
                 completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
             most_recent_completed_date = pd.to_datetime(completed_dates).max()
@@ -2003,8 +2007,11 @@ else:
                 return
             
             # FIX: Convert DATE_SUBMITTED to datetime safely
-            if 'DATE_SUBMITTED' in refusal_df.columns:
-                refusal_df['DATE_SUBMITTED'] = pd.to_datetime(refusal_df['DATE_SUBMITTED'], errors='coerce')
+            # Use LocalTime if available, otherwise use DATE_SUBMITTED
+            if 'LocalTime' in refusal_df.columns:
+                refusal_df['Survey_Date'] = pd.to_datetime(refusal_df['LocalTime'], errors='coerce')
+            elif 'DATE_SUBMITTED' in refusal_df.columns:
+                refusal_df['Survey_Date'] = pd.to_datetime(refusal_df['DATE_SUBMITTED'], errors='coerce')
             
             # Create tabs for different refusal statistics
             tab1, tab2, tab3, tab4 = st.tabs([
