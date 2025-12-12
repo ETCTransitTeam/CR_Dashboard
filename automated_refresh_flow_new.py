@@ -216,6 +216,120 @@ def fetch_and_process_data(project,schema):
     # -----------------------
     # Fetch fresh data every run (do NOT store raw data in session)
     # -----------------------
+    # csv_buffer = fetch_data(database_name, table_name)
+    # if csv_buffer:
+    #     df = pd.read_csv(csv_buffer)
+    # else:
+    #     st.error("Failed to load elvis data.")
+    #     df = None
+
+    # df1 = None
+    # if main_config:
+    #     main_csv_buffer = fetch_data(main_database_name, main_table_name)
+    #     if main_csv_buffer:
+    #         df1 = pd.read_csv(main_csv_buffer)
+    #     else:
+    #         st.error("Failed to load main data.")
+
+    # # -----------------------
+    # # Process elvis data
+    # # -----------------------
+    # if df is not None:
+    #     if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
+    #         df.columns = df.columns.str.strip()
+    #         df = df.rename(columns=KCATA_HEADER_MAPPING)
+    #         elvis_df = df.drop(index=0).reset_index(drop=True)
+
+    #     # Filtering & cleaning
+    #     time_value_code_check = ['have5minforsurvecode']
+    #     route_surveyed_code_check = ['routesurveyedcode']
+    #     route_surveyed_code = check_all_characters_present(df, route_surveyed_code_check)
+    #     time_value_code_df = check_all_characters_present(df, time_value_code_check)
+
+    #     df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
+    #     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    #     df = df[df[time_value_code_df[0]] == '1']
+    #     df = df[df['INTERV_INIT'] != '999']
+
+    #     elvis_status_column_check = ['elvisstatus']
+    #     elvis_status_column = check_all_characters_present(df, elvis_status_column_check)
+    #     df = df[df[elvis_status_column[0]].str.lower() != 'delete']
+
+    #     df.drop_duplicates(subset='id', inplace=True)
+    #     time_column_check = ['timeoncode']
+    #     time_period_column_check = ['timeon']
+    #     df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
+
+    #     time_column_df = check_all_characters_present(df, time_column_check)
+    #     time_period_column_df = check_all_characters_present(df, time_period_column_check)
+    # else:
+    #     st.warning("No data available. Click 'Fetch Data' to load the dataset.")
+
+    # # -----------------------
+    # # Process main data
+    # # -----------------------
+    # if df1 is not None:
+    #     column_mapping = {}
+    #     for df1_col in df1.columns:
+    #         cleaned_df1_col = clean_string(df1_col)
+    #         for df_col in df.columns:
+    #             if cleaned_df1_col == clean_string(df_col):
+    #                 column_mapping[df1_col] = df_col
+    #                 break
+
+    #     df1 = df1.rename(columns=column_mapping)
+
+    #     time_column_df1 = check_all_characters_present(df1, ['timeoncode'])
+    #     time_period_column_df1 = check_all_characters_present(df1, ['timeon'])
+
+    # # -----------------------
+    # # Merge logic
+    # # -----------------------
+    # baby_elvis_df_merged = None
+    # if df is not None and df1 is not None:
+    #     df3 = df.copy()
+    #     missing_ids = set(df1['id']) - set(df['id'])
+    #     df1_new = df1[df1['id'].isin(missing_ids)]
+    #     df = pd.concat([df, df1_new], ignore_index=True)
+    #     df.drop_duplicates(subset=['id'], inplace=True)
+    #     df = df.sort_values('id').reset_index(drop=True)
+
+    #     # Fill missing Time_ONCode values
+    #     mask = df[time_column_df[0]].isna() | (df[time_column_df[0]].str.strip() == '')
+    #     time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
+    #     df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
+
+    #     baby_elvis_df_merged = df
+    #     print("Data merged successfully!")
+
+    # # -----------------------
+    # # Prepare baby_elvis_df (already fetched in df1)
+    # # -----------------------
+    # baby_elvis_df = None
+    # if "main" in PROJECTS[project]["databases"]:
+    #     baby_elvis_config = PROJECTS[project]["databases"]["main"]
+    #     baby_table_name = baby_elvis_config['table']
+    #     baby_database_name = baby_elvis_config["database"]
+
+    #     # Use df1 as the baby_elvis_df
+    #     if df1 is not None:
+    #         baby_elvis_df = df1.copy()
+
+    #     if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"] and baby_elvis_df is not None:
+    #         baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
+    #         baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+
+    # # -----------------------
+    # # Store only the final merged & cleaned dataframe in session_state
+    # # -----------------------
+    # # st.session_state.merged_clean_df = baby_elvis_df_merged
+
+    # # Display success
+    # if baby_elvis_df_merged is not None:
+    #     st.success(f"Collected {len(baby_elvis_df_merged)} records from baby_elvis and elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
+        # -----------------------
+    # Fetch fresh data every run (do NOT store raw data in session)
+    # -----------------------
     csv_buffer = fetch_data(database_name, table_name)
     if csv_buffer:
         df = pd.read_csv(csv_buffer)
@@ -232,43 +346,11 @@ def fetch_and_process_data(project,schema):
             st.error("Failed to load main data.")
 
     # -----------------------
-    # Process elvis data
+    # Step 1: Merge df and df1
     # -----------------------
-    if df is not None:
-        if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
-            df.columns = df.columns.str.strip()
-            df = df.rename(columns=KCATA_HEADER_MAPPING)
-            elvis_df = df.drop(index=0).reset_index(drop=True)
-
-        # Filtering & cleaning
-        time_value_code_check = ['have5minforsurvecode']
-        route_surveyed_code_check = ['routesurveyedcode']
-        route_surveyed_code = check_all_characters_present(df, route_surveyed_code_check)
-        time_value_code_df = check_all_characters_present(df, time_value_code_check)
-
-        df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
-        df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
-        df = df[df[time_value_code_df[0]] == '1']
-        df = df[df['INTERV_INIT'] != '999']
-
-        elvis_status_column_check = ['elvisstatus']
-        elvis_status_column = check_all_characters_present(df, elvis_status_column_check)
-        df = df[df[elvis_status_column[0]].str.lower() != 'delete']
-
-        df.drop_duplicates(subset='id', inplace=True)
-        time_column_check = ['timeoncode']
-        time_period_column_check = ['timeon']
-        df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
-
-        time_column_df = check_all_characters_present(df, time_column_check)
-        time_period_column_df = check_all_characters_present(df, time_period_column_check)
-    else:
-        st.warning("No data available. Click 'Fetch Data' to load the dataset.")
-
-    # -----------------------
-    # Process main data
-    # -----------------------
-    if df1 is not None:
+    merged_df = None
+    if df is not None and df1 is not None:
+        # Align columns between df1 and df before merging
         column_mapping = {}
         for df1_col in df1.columns:
             cleaned_df1_col = clean_string(df1_col)
@@ -276,55 +358,104 @@ def fetch_and_process_data(project,schema):
                 if cleaned_df1_col == clean_string(df_col):
                     column_mapping[df1_col] = df_col
                     break
-
+        
         df1 = df1.rename(columns=column_mapping)
+        
+        # Merge logic
+        df3 = df.copy()  # Keep original df copy as df3
+        missing_ids = set(df1['id']) - set(df['id'])
+        df1_new = df1[df1['id'].isin(missing_ids)]
+        merged_df = pd.concat([df, df1_new], ignore_index=True)
+        merged_df.drop_duplicates(subset=['id'], inplace=True)
+        merged_df = merged_df.sort_values('id').reset_index(drop=True)
+        print("Data merged successfully!")
 
+    # -----------------------
+    # Step 2: Apply header mapping to merged dataframe
+    # -----------------------
+    if merged_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
+        merged_df.columns = merged_df.columns.str.strip()
+        merged_df = merged_df.rename(columns=KCATA_HEADER_MAPPING)
+        # Remove first row if it exists (as in original code)
+        merged_df = merged_df.drop(index=0).reset_index(drop=True)
+
+    # -----------------------
+    # Step 3: Create baby_elvis_df for refusal analysis (NO CLEANING)
+    # -----------------------
+    # This should be the merged data BEFORE any cleaning/filtering
+    baby_elvis_df = merged_df.copy() if merged_df is not None else None
+    
+    # Apply header mapping to baby_elvis_df if needed (but NO cleaning)
+    if baby_elvis_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
+        baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
+        baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+        baby_elvis_df = baby_elvis_df.drop(index=0).reset_index(drop=True)
+
+    # -----------------------
+    # Step 4: Process and clean df for main analysis
+    # -----------------------
+    # df will be the cleaned version for main analysis
+    df = merged_df.copy() if merged_df is not None else None
+    
+    if df is not None:
+        # Get required column names
+        time_value_code_check = ['have5minforsurvecode']
+        route_surveyed_code_check = ['routesurveyedcode']
+        elvis_status_column_check = ['elvisstatus']
+        time_column_check = ['timeoncode']
+        time_period_column_check = ['timeon']
+        
+        route_surveyed_code = check_all_characters_present(df, route_surveyed_code_check)
+        time_value_code_df = check_all_characters_present(df, time_value_code_check)
+        elvis_status_column = check_all_characters_present(df, elvis_status_column_check)
+        time_column_df = check_all_characters_present(df, time_column_check)
+        time_period_column_df = check_all_characters_present(df, time_period_column_check)
+        
+        # Apply filters and cleaning (SAME AS YOUR ORIGINAL CODE)
+        df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
+        df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+        df = df[df[time_value_code_df[0]] == '1']
+        df = df[df['INTERV_INIT'] != '999']
+        
+        if elvis_status_column:
+            df = df[df[elvis_status_column[0]].str.lower() != 'delete']
+        
+        df.drop_duplicates(subset='id', inplace=True)
+        
+        # Rename route surveyed column
+        if route_surveyed_code:
+            df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
+        
+        # Fill missing Time_ONCode values from original df1
+        if time_column_df and df1 is not None:
+            time_column_df1 = check_all_characters_present(df1, ['timeoncode'])
+            if time_column_df1:
+                mask = df[time_column_df[0]].isna() | (df[time_column_df[0]].str.strip() == '')
+                time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
+                df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
+
+    # -----------------------
+    # Step 5: Create other required variables
+    # -----------------------
+    # baby_elvis_df_merged - cleaned merged dataframe (same as df)
+    baby_elvis_df_merged = df.copy() if df is not None else None
+    
+    # elvis_df - copy of cleaned dataframe (for backward compatibility)
+    elvis_df = df.copy() if df is not None else None
+    
+    # Also keep time_column_df, time_period_column_df variables available
+    # These were already created in Step 4
+    
+    # For df1 time columns (if needed later)
+    time_column_df1 = None
+    time_period_column_df1 = None
+    if df1 is not None:
         time_column_df1 = check_all_characters_present(df1, ['timeoncode'])
         time_period_column_df1 = check_all_characters_present(df1, ['timeon'])
 
     # -----------------------
-    # Merge logic
-    # -----------------------
-    baby_elvis_df_merged = None
-    if df is not None and df1 is not None:
-        df3 = df.copy()
-        missing_ids = set(df1['id']) - set(df['id'])
-        df1_new = df1[df1['id'].isin(missing_ids)]
-        df = pd.concat([df, df1_new], ignore_index=True)
-        df.drop_duplicates(subset=['id'], inplace=True)
-        df = df.sort_values('id').reset_index(drop=True)
-
-        # Fill missing Time_ONCode values
-        mask = df[time_column_df[0]].isna() | (df[time_column_df[0]].str.strip() == '')
-        time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
-        df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
-
-        baby_elvis_df_merged = df
-        print("Data merged successfully!")
-
-    # -----------------------
-    # Prepare baby_elvis_df (already fetched in df1)
-    # -----------------------
-    baby_elvis_df = None
-    if "main" in PROJECTS[project]["databases"]:
-        baby_elvis_config = PROJECTS[project]["databases"]["main"]
-        baby_table_name = baby_elvis_config['table']
-        baby_database_name = baby_elvis_config["database"]
-
-        # Use df1 as the baby_elvis_df
-        if df1 is not None:
-            baby_elvis_df = df1.copy()
-
-        if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"] and baby_elvis_df is not None:
-            baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
-            baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
-
-    # -----------------------
-    # Store only the final merged & cleaned dataframe in session_state
-    # -----------------------
-    # st.session_state.merged_clean_df = baby_elvis_df_merged
-
     # Display success
+    # -----------------------
     if baby_elvis_df_merged is not None:
         st.success(f"Collected {len(baby_elvis_df_merged)} records from baby_elvis and elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
 
@@ -436,8 +567,11 @@ def fetch_and_process_data(project,schema):
         wkday_overall_df[[0,1,2,3,4,5]]=wkday_overall_df[[0,1,2,3,4,5]].fillna(0)
         wkend_overall_df[[0,1,2,3,4,5]]=wkend_overall_df[[0,1,2,3,4,5]].fillna(0)
 
-
-
+    # ke_df=ke_df[ke_df['INTERV_INIT']!='999']
+    # ke_df=ke_df[ke_df['INTERV_INIT']!=999]
+    # ke_df=ke_df[ke_df['1st Cleaner']!='No 5 MIN']
+    # ke_df=ke_df[ke_df['1st Cleaner']!='Test']
+    # ke_df=ke_df[ke_df['1st Cleaner']!='Test/No 5 MIN']
     # detail_df_stops = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'STOPS')
     # detail_df_xfers = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'XFERS')
 
@@ -447,24 +581,28 @@ def fetch_and_process_data(project,schema):
     # wkday_overall_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-Overall')
     # wkday_route_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-RouteTotal')
 
-    have5min_column_check=['have5minforsurvecode']
-    have5min_column=check_all_characters_present(df,have5min_column_check)
+    # have5min_column_check=['have5minforsurvecode']
+    # have5min_column=check_all_characters_present(df,have5min_column_check)
     # Ensure consistent types
-    df[have5min_column[0]] = df[have5min_column[0]].astype(str)
-    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
-    df=df[df[have5min_column[0]]=='1']
-    df=df[df['INTERV_INIT']!='999']
+    # df[have5min_column[0]] = df[have5min_column[0]].astype(str)
+    # df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    # df=df[df[have5min_column[0]]=='1']
+    # df=df[df['INTERV_INIT']!='999']
     # df=df[df['INTERV_INIT']!=999]
+    # stop_on_column_check=['stoponaddr']
+    # stop_off_column_check=['stopoffaddr']
+    # stop_on_id_column_check=['stoponclntid']
+    # stop_off_id_column_check=['stopoffclntid']
+    # stop_on_id_column=check_all_characters_present(df,stop_on_id_column_check)
+    # stop_off_id_column=check_all_characters_present(df,stop_off_id_column_check)
+    # stop_on_column=check_all_characters_present(df,stop_on_column_check)
+    # stop_off_column=check_all_characters_present(df,stop_off_column_check)
 
-    stop_on_column_check=['stoponaddr']
-    stop_off_column_check=['stopoffaddr']
-    stop_on_id_column_check=['stoponclntid']
-    stop_off_id_column_check=['stopoffclntid']
-    stop_on_id_column=check_all_characters_present(df,stop_on_id_column_check)
-    stop_off_id_column=check_all_characters_present(df,stop_off_id_column_check)
-    stop_on_column=check_all_characters_present(df,stop_on_column_check)
-    stop_off_column=check_all_characters_present(df,stop_off_column_check)
-
+    print("Filtered df data = ",len(df))
+    ke_df=ke_df[ke_df['Final_Usage'].str.lower()=='use']
+    # Getting Data from Database where the Final Usage is Use in KINGELVIS  
+    df=pd.merge(df,ke_df['id'],on='id',how='inner')
+    print("Merged KINGELVIS data",len(df))
     stop_on_lat_lon_columns_check=['stoponlat','stoponlong']
     stop_off_lat_lon_columns_check=['stopofflat','stopofflong']
     stop_on_lat_lon_columns=check_all_characters_present(df,stop_on_lat_lon_columns_check)
@@ -716,7 +854,8 @@ def fetch_and_process_data(project,schema):
 
     # Fill any NaN values
     df['Day'] = df['Day'].fillna('Unknown')
-
+    unknown_count = len(df[df['Day'] == 'Unknown'])
+    print("Day = Unknown Count",unknown_count)
 
     try:
         df['LAST_SURVEY_DATE'] = pd.to_datetime(df['Date'], format='%d/%m/%Y %H:%M', errors='coerce')
@@ -728,9 +867,9 @@ def fetch_and_process_data(project,schema):
 
 
     weekend_df=df[df['Day'].isin(['Saturday','Sunday'])]
-
+    print("Weekend DF length:", len(weekend_df))
     weekday_df=df[~(df['Day'].isin(['Saturday','Sunday']))]
-
+    print("Weekday DF length:", len(weekday_df))
     #to get the TIMEON column
     time_column_check=['timeoncode']
     time_period_column_check=['timeon']

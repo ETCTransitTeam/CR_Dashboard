@@ -2055,20 +2055,35 @@ else:
                 else:
                     st.warning("Refusal reason data not available.")
                 
-                # Daily refusal trend - FIXED datetime conversion
+                # --- Daily refusal trend (FULLY FIXED) ---
                 st.subheader("Daily Refusal Trend")
-                
+
+                # Ensure DATE_SUBMITTED is converted to datetime safely
+                if 'DATE_SUBMITTED' in refusal_df.columns:
+                    refusal_df['DATE_SUBMITTED'] = pd.to_datetime(refusal_df['DATE_SUBMITTED'], errors='coerce')
+
                 if 'DATE_SUBMITTED' in refusal_df.columns and not refusal_df['DATE_SUBMITTED'].isna().all():
-                    # Remove rows with invalid dates
+                    # Remove rows with invalid or missing DATE_SUBMITTED
                     valid_dates_df = refusal_df.dropna(subset=['DATE_SUBMITTED'])
-                    
+
                     if not valid_dates_df.empty:
-                        daily_refusals = valid_dates_df.groupby(valid_dates_df['DATE_SUBMITTED'].dt.date).size().reset_index()
+                        # Group by calendar date
+                        daily_refusals = (
+                            valid_dates_df
+                            .groupby(valid_dates_df['DATE_SUBMITTED'].dt.date)
+                            .size()
+                            .reset_index(name="Refusals")
+                        )
+
                         daily_refusals.columns = ['Date', 'Refusals']
-                        
+
                         if not daily_refusals.empty:
-                            fig_trend = px.line(daily_refusals, x='Date', y='Refusals',
-                                            title="Daily Refusal Count Trend")
+                            fig_trend = px.line(
+                                daily_refusals,
+                                x='Date',
+                                y='Refusals',
+                                title="Daily Refusal Count Trend"
+                            )
                             st.plotly_chart(fig_trend, use_container_width=True)
                         else:
                             st.info("No valid date data available for trend analysis.")
