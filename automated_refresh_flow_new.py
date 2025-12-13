@@ -598,11 +598,22 @@ def fetch_and_process_data(project,schema):
     # stop_on_column=check_all_characters_present(df,stop_on_column_check)
     # stop_off_column=check_all_characters_present(df,stop_off_column_check)
 
-    print("Filtered df data = ",len(df))
-    ke_df=ke_df[ke_df['Final_Usage'].str.lower()=='use']
-    # Getting Data from Database where the Final Usage is Use in KINGELVIS  
-    df=pd.merge(df,ke_df['id'],on='id',how='inner')
-    print("Merged KINGELVIS data",len(df))
+    print("Filtered df data =", len(df))
+
+    # Safe Final_Usage filtering
+    fu = ke_df['Final_Usage'].astype(str).str.strip().str.lower()
+
+    ke_df = ke_df[
+        fu.eq('use') |
+        ke_df['Final_Usage'].isna() |
+        fu.eq('')
+    ]
+
+    # Filter df using elvis_id
+    df = df[df['id'].isin(ke_df['elvis_id'])]
+
+    print("Merged KINGELVIS data", len(df))
+
     stop_on_lat_lon_columns_check=['stoponlat','stoponlong']
     stop_off_lat_lon_columns_check=['stopofflat','stopofflong']
     stop_on_lat_lon_columns=check_all_characters_present(df,stop_on_lat_lon_columns_check)
