@@ -2045,9 +2045,6 @@ else:
                         for _, row in shortages_df.iterrows():
                             route_code = row.get('ROUTE_SURVEYEDCode', 'Unknown')
                             
-                            # Try to get route name from the comparison dataframe
-                            route_name = row.get('ROUTE_SURVEYED', route_code)
-                            
                             # Build the "What's Needed" description
                             needs = []
                             
@@ -2068,7 +2065,6 @@ else:
                                     needs_text += "s"
                                 
                                 simple_data.append({
-                                    'Route Name': route_name,
                                     'Route Code': route_code,
                                     'What\'s Needed': needs_text,
                                     'Total Needed': int(row.get('Total_DIFFERENCE', 0))
@@ -2079,11 +2075,11 @@ else:
                             simple_df = pd.DataFrame(simple_data)
                             
                             # Sort by total needed (descending) and then by route name
-                            simple_df = simple_df.sort_values(['Total Needed', 'Route Name'], ascending=[False, True])
+                            simple_df = simple_df.sort_values(['Total Needed', 'Route Code'], ascending=[False, True])
                             
                             # Display in a clean format
                             st.dataframe(
-                                simple_df[['Route Name', 'Route Code', 'What\'s Needed']],
+                                simple_df[['Route Code', 'What\'s Needed']],
                                 use_container_width=True,
                                 height=400,
                                 hide_index=True
@@ -2103,7 +2099,7 @@ else:
                             with col3:
                                 if not simple_df.empty:
                                     max_route = simple_df.iloc[0]  # First row has highest need
-                                    st.metric("Highest Need Route", f"{max_route['Route Name']} ({max_route['Total Needed']})")
+                                    st.metric("Highest Need Route", f"{max_route['Route Code']} ({max_route['Total Needed']})")
                             
                             # Download button
                             csv_data = simple_df.to_csv(index=False)
@@ -2141,7 +2137,7 @@ else:
                             top_5_df.index = range(1, 6)  # Show ranking numbers
                             
                             st.dataframe(
-                                top_5_df[['Route Name', 'Route Code', 'What\'s Needed', 'Total Needed']],
+                                top_5_df[['Route Code', 'What\'s Needed', 'Total Needed']],
                                 use_container_width=True,
                                 height=200
                             )
@@ -2157,9 +2153,8 @@ else:
                     st.markdown("""
                     **Quick Guide:**
                     
-                    1. **Route Name**: The name of the route that needs additional records
-                    2. **Route Code**: Technical identifier for reference
-                    3. **What's Needed**: Specific time periods and quantities required
+                    1. **Route Code**: Technical identifier for reference
+                    2. **What's Needed**: Specific time periods and quantities required
                     
                     **Example:** If it says "6 Early AM, 3 AM, 15 Midday records":
                     - Route 9 needs 6 records during Early AM time period
