@@ -603,16 +603,30 @@ def fetch_and_process_data(project,schema):
     # Safe Final_Usage filtering
     fu = ke_df['Final_Usage'].astype(str).str.strip().str.lower()
 
-    ke_df = ke_df[
-        fu.eq('use') |
-        ke_df['Final_Usage'].isna() |
-        fu.eq('')
-    ]
+    # Get IDs to EXCLUDE (Remove or No Data)
+    exclude_ids = ke_df[
+        fu.isin(['remove', 'no data'])
+    ]['elvis_id' if 'elvis_id' in ke_df.columns else 'id'].unique()
+    
+        # Get IDs to INCLUDE (everything except Remove/No Data)
+        # This includes: Use, Empty, and any other values
+    include_ids = ke_df[
+        ~fu.isin(['remove', 'no data'])
+    ]['elvis_id' if 'elvis_id' in ke_df.columns else 'id'].unique()
+        
+    print(f"KingElvis - Excluding {len(exclude_ids)} records (Remove/No Data)")
+    print(f"KingElvis - Including {len(include_ids)} records (everything else)")
+    print(f"Total unique IDs in kingelvis: {len(ke_df)}")
 
-    # Filter df using elvis_id
-    df = df[df['id'].isin(ke_df['elvis_id'])]
-
-    print("Merged KINGELVIS data", len(df))
+    # Apply kingelvis filter to ALL records
+    if ke_df is not None and df is not None:
+        # Method 1: Exclude Remove/No Data IDs
+        df = df[~df['id'].isin(exclude_ids)]
+    
+        # OR Method 2: Include all except Remove/No Data (same result)
+        # df = df[df['id'].isin(include_ids)]
+    
+    print(f"After KingElvis filter (exclude Remove/No Data): {len(df)} records")
 
     stop_on_lat_lon_columns_check=['stoponlat','stoponlong']
     stop_off_lat_lon_columns_check=['stopofflat','stopofflong']
