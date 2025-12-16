@@ -1211,7 +1211,7 @@ def fetch_and_process_data(project,schema):
 
         # 2. Reverse Routes sheet
         reverse_routes_export = all_type_df[[
-            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'COMPLETED By', 'URL'
+            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL'
         ]].copy()
 
         # Rename columns to match Excel format if needed
@@ -1221,7 +1221,7 @@ def fetch_and_process_data(project,schema):
         })
 
         # Ensure all expected columns are present
-        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'COMPLETED By', 'URL']
+        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL']
         for col in expected_reverse_columns:
             if col not in reverse_routes_export.columns:
                 reverse_routes_export[col] = ''
@@ -1230,7 +1230,7 @@ def fetch_and_process_data(project,schema):
 
         # 3. Reverse Routes Difference sheet
         reverse_diff_export = reverse_df[reverse_df['Type'] != ''][[
-            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'COMPLETED By', 'URL'
+            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL'
         ]].copy()
 
         # Rename columns to match Excel format

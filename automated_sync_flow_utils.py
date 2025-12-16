@@ -4257,6 +4257,10 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     # Also get route name columns for previous/next trips
     prev_trip_route_name_column = check_all_characters_present(df, ['tripfirstroute', 'tripsecondroute', 'tripthirdroute', 'tripfourthroute'])
     next_trip_route_name_column = check_all_characters_present(df, ['tripnextroute', 'tripafterroute', 'trip3rdroute', 'triplast4throute'])
+
+    # Get elvis status code and reverse trips columns for tracking already generated reverse trips
+    elvis_status_code_column = check_all_characters_present(df, ['elvisstatuscode'])
+    reverse_trips_column = check_all_characters_present(df, ['reversetrips'])
     
     values_to_replace = ['-oth-']
     df[[*prev_trip_route_code_column, *next_trip_route_code_column]] = df[
@@ -4569,7 +4573,8 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         'id', *route_survey_column, *route_survey_name_column, *trip_code_column, 
         *prev_trip_route_code_column, *next_trip_route_code_column,
         *prev_trip_route_name_column, *next_trip_route_name_column,
-        *time_on_column, *oppo_dir_time_column
+        *time_on_column, *oppo_dir_time_column,
+        *elvis_status_code_column, *reverse_trips_column  # Add the new columns
     ]]
 
     # Store original values before processing
@@ -4583,6 +4588,26 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     reverse_df['DAY_TYPE'] = reverse_df[route_survey_column[0]].apply(lambda x: get_route_info(x, 'DAY_TYPE'))
     reverse_df['FINAL_DIRECTION_CODE'] = reverse_df[route_survey_column[0]].apply(get_final_direction_code)
     reverse_df['URL'] = reverse_df['id'].apply(create_url)
+
+    # NEW: Add a column to track if reverse trips are already generated
+    reverse_df['REVERSE_TRIPS_STATUS'] = ''
+    
+    # Function to check if reverse trips are already generated for a record
+    def check_reverse_trips_already_generated(row):
+        """Check if reverse trips are already generated for this record"""
+        if elvis_status_code_column and reverse_trips_column:
+            elvis_status = row[elvis_status_code_column[0]] if elvis_status_code_column[0] in row else ''
+            reverse_trips = row[reverse_trips_column[0]] if reverse_trips_column[0] in row else ''
+            
+            # Check if elvis status code is '6' and reverse trips column is not empty
+            if str(elvis_status) == '6' and pd.notna(reverse_trips) and str(reverse_trips).strip() != '':
+                return 'Already Generated'
+        return ''
+
+    # Apply the check for already generated reverse trips
+    for index, row in reverse_df.iterrows():
+        status = check_reverse_trips_already_generated(row)
+        reverse_df.loc[index, 'REVERSE_TRIPS_STATUS'] = status
 
     reverse_df[route_survey_column[0]] = reverse_df[route_survey_column[0]].apply(
         lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) and isinstance(x, str) and '_' in x else x
