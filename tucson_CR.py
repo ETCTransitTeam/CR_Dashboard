@@ -1593,7 +1593,202 @@ else:
             df[new_column_name] = df[column_name].str.split(split_char).str[1]
             return df
 
-        # Function to display report with optional filtering
+
+        def convert_percentage_columns(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+
+            percent_cols = [col for col in df.columns if '%' in col]
+
+            for col in percent_cols:
+                df[col] = (
+                    df[col]
+                    .astype(str)
+                    .str.replace('%', '', regex=False)
+                    .replace('', None)
+                )
+
+                # Convert safely (invalid values → NaN, not crash)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            return df
+
+        # ===============================
+        # THRESHOLD CONFIG
+        # ===============================
+        PERCENT_THRESHOLD_RULES = {
+            "% of Female": {"low": 40, "high": 60},
+            "% of Male": {"low": 40, "high": 60},
+            "% of White": {"low": 30, "high": 80},
+            "% of Black": {"low": 5, "high": 30},
+            "% of Hispanic": {"low": 10, "high": 40},
+            "% of LowIncome": {"low": 20, "high": 60},
+            "% of No Income": {"low": 5, "high": 25},
+            "% of Follow-Up Survey": {"low": 5, "high": 20},
+            "% of Contest - Yes": {"low": 0, "high": 100},
+            "% of Contest - (Yes & Good Info)/Overall # of Records": {"low": 0, "high": 100}
+        }
+
+        TIME_THRESHOLD_RULES = {
+            "SurveyTime (All)": {"warn": 6, "critical": 8},
+            "SurveyTime (TripLogic)": {"warn": 5, "critical": 7},
+            "SurveyTime (DemoLogic)": {"warn": 4, "critical": 6},
+        }
+
+
+        # ===============================
+        # HELPERS
+        # ===============================
+        def convert_percentage_columns(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            for col in df.columns:
+                if "%" in col:
+                    df[col] = (
+                        df[col]
+                        .astype(str)
+                        .str.replace('%', '', regex=False)
+                        .replace('', None)
+                    )
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            return df
+
+
+        def time_to_minutes(time_str):
+            try:
+                h, m, s = map(int, time_str.split(":"))
+                return h * 60 + m + s / 60
+            except:
+                return None
+
+
+        def style_percentage(val, col):
+            if pd.isna(val):
+                return ""
+
+            rule = PERCENT_THRESHOLD_RULES.get(col)
+            if not rule:
+                return ""
+
+            try:
+                val_num = pd.to_numeric(val, errors="coerce")
+            except Exception:
+                return ""
+
+            if pd.isna(val_num):
+                return ""
+
+            if val_num < rule["low"]:
+                return "background-color:#e6f0ff"
+            elif val_num > rule["high"]:
+                return "background-color:#4d79ff;color:white"
+            return ""
+
+
+
+        def style_time(val, col):
+            rule = TIME_THRESHOLD_RULES.get(col)
+            if not rule or not isinstance(val, str):
+                return ""
+            minutes = time_to_minutes(val)
+            if minutes is None:
+                return ""
+            if minutes >= rule["critical"]:
+                return "background-color:#ff4d4d;color:white"
+            if minutes >= rule["warn"]:
+                return "background-color:#ffe6e6"
+            return ""
+
+
+        # FIXED: Added counter to ensure unique keys for sorting
+        _sort_counter = 0
+
+        def apply_column_sorting(df, section_title):
+            global _sort_counter
+            sort_options = ["None"]
+
+            # Build SORT_RULES dynamically based on available columns
+            SORT_RULES = {
+                "percent": {
+                    "columns": [col for col in PERCENT_THRESHOLD_RULES.keys() if col in df.columns],
+                    "ascending": False
+                },
+                "time": {
+                    "columns": [col for col in TIME_THRESHOLD_RULES.keys() if col in df.columns],
+                    "ascending": False
+                },
+                "count": {
+                    "columns": [
+                        col for col in [
+                            "# of Records",
+                            "# of Records Reviewed",
+                            "# of Records Not Reviewed",
+                            "# of Supervisor Delete",
+                            "# of Errors",
+                            "# of Issues"
+                        ] if col in df.columns
+                    ],
+                    "ascending": False
+                }
+            }
+
+            for group, cfg in SORT_RULES.items():
+                for col in cfg["columns"]:
+                    if col in df.columns:
+                        sort_options.append(col)
+
+            # Use a unique key by combining section_title with a counter
+            _sort_counter += 1
+            unique_key = f"{section_title}_sort_{_sort_counter}"
+            
+            selected_sort = st.selectbox(
+                "Sort by",
+                sort_options,
+                key=unique_key
+            )
+
+            if selected_sort != "None":
+                if selected_sort in TIME_THRESHOLD_RULES and selected_sort in df.columns:
+                    df = df.copy()
+                    df["_sort_time"] = df[selected_sort].apply(time_to_minutes)
+                    df = df.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
+                elif selected_sort in df.columns:
+                    df = df.sort_values(selected_sort, ascending=False)
+
+            return df
+
+
+        def render_metrics(row: dict, title: str):
+            st.markdown(f"### {title}")
+
+            excluded_columns = [
+                "INTERV_INIT", "Route",
+                "# of Records", "# of Supervisor Delete",
+                "# of Records Remove", "# of Records Reviewed",
+                "# of Records Not Reviewed",
+                "% of LowIncome",
+                "% of Contest - Yes",
+                "% of Follow-Up Survey",
+                "% of Contest - (Yes & Good Info)/Overall # of Records"
+            ]
+
+            filtered_items = [(k, v) for k, v in row.items() if k not in excluded_columns]
+
+            for i in range(0, len(filtered_items), 4):
+                cols = st.columns(min(4, len(filtered_items) - i))
+                for col, (field, value) in zip(cols, filtered_items[i:i + 4]):
+                    with col:
+                        st.markdown(
+                            f"""
+                            <div style="padding:2px 0; margin-bottom:4px;">
+                                <span style="font-size:0.65rem; font-weight:600; color:#000;">{field}</span><br>
+                                <span style="font-size:0.8rem; color:#000;">{value}</span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+
+        # FIXED: Added unique key generator for date selectboxes
+        _date_counter = 0
+
         def display_filtered_or_unfiltered_report(
             unfiltered_df: pd.DataFrame,
             filtered_df: pd.DataFrame,
@@ -1602,61 +1797,79 @@ else:
             section_title: str,
             date_label: str
         ):
+            global _date_counter
             st.subheader(section_title)
 
-            # Debug print
-            print(f"\nProcessing {section_title}")
-            print(f"Filter column in DataFrame: {filter_column_name in filtered_df.columns}")
-            print(f"All columns: {filtered_df.columns.tolist()}")
+            # Convert % columns safely
+            unfiltered_df = convert_percentage_columns(unfiltered_df)
+            filtered_df = convert_percentage_columns(filtered_df)
 
-            # Handle case where filter column doesn't exist
+            # Ensure date column exists
+            original_filter_column = filter_column_name
             if filter_column_name not in filtered_df.columns:
-                # Try alternative column names
-                possible_date_columns = ['Date', 'DATE', 'date', 'Survey_Date']
-                for col in possible_date_columns:
+                for col in ['Date', 'DATE', 'date', 'Survey_Date']:
                     if col in filtered_df.columns:
                         filter_column_name = col
                         break
                 else:
-                    st.error(f"Could not find date column in {section_title} data")
+                    st.error(f"Date column not found for {section_title}")
                     return
 
-            # Prepare date filter options
             temp_df = filtered_df.copy()
-            
-            # Ensure we have a date column
             temp_df['date'] = pd.to_datetime(temp_df[filter_column_name], errors='coerce')
-            
-            # Drop rows with invalid dates
             temp_df = temp_df.dropna(subset=['date'])
-            
-            # Convert to date strings for display
             temp_df['date'] = temp_df['date'].dt.strftime('%Y-%m-%d')
-            
-            # Get unique dates (now guaranteed to be valid)
-            unique_dates = sorted(temp_df['date'].unique())
 
-            # Show filter
-            selected_date = st.selectbox(f"{date_label} Date", ["All"] + unique_dates)
+            unique_dates = sorted(temp_df['date'].unique())
+            
+            # Create a unique key for the date selectbox
+            _date_counter += 1
+            date_key = f"{section_title}_date_{_date_counter}"
+            
+            selected_date = st.selectbox(
+                f"{date_label} Date",
+                ["All"] + unique_dates,
+                key=date_key
+            )
 
             if selected_date == "All":
-                st.dataframe(unfiltered_df, use_container_width=True)
+                df_to_show = unfiltered_df
             else:
-                df_filtered = temp_df[temp_df['date'] == selected_date]
-                df_filtered = df_filtered.drop(columns=[filter_column_name])
-                
-                # Rename and reorder columns
-                df_filtered = df_filtered.rename(columns={
+                df_to_show = temp_df[temp_df['date'] == selected_date].drop(columns=[filter_column_name])
+                df_to_show = df_to_show.rename(columns={
                     display_column_name: display_column_name.upper(),
                     'date': 'Date'
                 })
-                
-                # Reorder columns
-                first_cols = ['Date', display_column_name.upper()]
-                remaining_cols = [col for col in df_filtered.columns if col not in first_cols]
-                reordered_df = df_filtered[first_cols + remaining_cols]
 
-                st.dataframe(reordered_df, use_container_width=True)
+                first_cols = ['Date', display_column_name.upper()]
+                remaining_cols = [c for c in df_to_show.columns if c not in first_cols]
+                df_to_show = df_to_show[first_cols + remaining_cols]
+
+            # Apply sorting
+            df_to_show = apply_column_sorting(df_to_show, section_title)
+
+            # Build style matrix - FIXED: Ensure all values are properly styled
+            styles = pd.DataFrame("", index=df_to_show.index, columns=df_to_show.columns)
+
+            for col in df_to_show.columns:
+                if "%" in col:
+                    # Apply styling to all rows for percentage columns
+                    styles[col] = df_to_show[col].apply(lambda v: style_percentage(v, col))
+                elif col in TIME_THRESHOLD_RULES:
+                    # Apply styling to all rows for time columns
+                    styles[col] = df_to_show[col].apply(lambda v: style_time(v, col))
+
+            styled_df = df_to_show.style.format(
+                {col: "{:.2f}" for col in df_to_show.select_dtypes(include="number").columns}
+            )
+            # Display the dataframe with styling
+            st.dataframe(
+                styled_df.apply(lambda _: styles, axis=None),
+                use_container_width=True
+            )
+
+
+
 
         def route_comparison_page():
             st.title("Route Comparison")
@@ -3267,82 +3480,27 @@ else:
                 if 'actransit' in selected_project or 'salem' in selected_project:
                     show_refusal_analysis(refusal_analysis_df, refusal_race_df)
             elif current_page == "surveyreport":
-                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
-                    # 📌 Fields you want to show
-                    percentage_fields = [
-                        "% of Incomplete Home Address", "% of 0 Transfers",
-                        "% of Access Walk", "% of Egress Walk",
-                        "% of LowIncome", "% of No Income",
-                        "% of Hispanic", "% of Black", "% of White",
-                        "% of Follow-Up Survey", "% of Contest - Yes"
-                    ]
-
-                    time_fields = [
-                        "SurveyTime (All)", "SurveyTime (TripLogic)", "SurveyTime (DemoLogic)"
-                    ]
-
-                    count_fields = [
-                        "# of Records", "# of Supervisor Delete", "# of Records Remove",
-                        "# of Records Reviewed", "# of Records Not Reviewed"
-                    ]
-
-                    # 📌 Columns to exclude
-                    excluded_columns = [
-                        "INTERV_INIT",
-                        "Route",
-                        "# of Records",
-                        "# of Supervisor Delete",
-                        "# of Records Remove",
-                        "# of Records Reviewed",
-                        "# of Records Not Reviewed",
-                        "% of LowIncome",
-                        "% of Contest - Yes",
-                        "% of Follow-Up Survey",
-                        "% of Contest - (Yes & Good Info)/Overall # of Records"
-                    ]
-
-                    
-                    def render_metrics(row, title):
-                        st.markdown(f"### {title}")
-
-                        # ---- Force black text no matter what ----
-                        text_color = "#000000"
-
-                        filtered_items = [(k, v) for k, v in row.items() if k not in excluded_columns]
-
-                        for i in range(0, len(filtered_items), 4):
-                            cols = st.columns(min(4, len(filtered_items) - i))
-                            for col, (field, value) in zip(cols, filtered_items[i:i+4]):
-                                with col:
-                                    st.markdown(
-                                        f"""
-                                        <div style="padding:2px 0; margin-bottom:4px;">
-                                            <span style="font-size:0.65rem; font-weight:600; color:{text_color} !important;">{field}</span><br>
-                                            <span style="font-size:0.8rem; color:{text_color} !important;">{value}</span>
-                                        </div>
-                                        """,
-                                        unsafe_allow_html=True
-                                    )
-
-
-
-                    # 📌 Layout: add spacer
-                    col1, _, col2 = st.columns([1, 0.1, 1])
+                if any(x in selected_project for x in ['stl', 'kcata', 'actransit', 'salem']):
 
                     surveyor_last_row = surveyor_report_trends_df.iloc[-1].to_dict()
                     route_last_row = route_report_trends_df.iloc[-1].to_dict()
 
+                    filter_col = "Date_Surveyor" if 'stl' in selected_project else "Date"
 
+                    # ==========================
+                    # CREATE TABS
+                    # ==========================
+                    tab_surveyor, tab_route = st.tabs(["Surveyor Report", "Route Report"])
 
+                    # ==========================
+                    # SURVEYOR TAB
+                    # ==========================
+                    with tab_surveyor:
+                        render_metrics(
+                            surveyor_last_row,
+                            "TRIP LOGIC & QAQC REPORT – SURVEYOR REPORT"
+                        )
 
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        # print("Columns in surveyor_report_trends_df:", dataframes['surveyor_report_trends_df'].columns.tolist())
-                        # print("Columns in surveyor_report_date_trends_df:", dataframes['surveyor_report_date_trends_df'].columns.tolist())
-
-                        render_metrics(surveyor_last_row, "TRIP LOGIC & QAQC REPORT - SURVEYOR REPORT")
-                        filter_col = "Date_Surveyor" if 'stl' in selected_project else "Date"
                         display_filtered_or_unfiltered_report(
                             unfiltered_df=dataframes['surveyor_report_trends_df'],
                             filtered_df=dataframes['surveyor_report_date_trends_df'],
@@ -3352,8 +3510,15 @@ else:
                             date_label="Surveyor"
                         )
 
-                    with col2:
-                        render_metrics(route_last_row, "TRIP LOGIC & QAQC REPORT - ROUTE REPORT")
+                    # ==========================
+                    # ROUTE TAB
+                    # ==========================
+                    with tab_route:
+                        render_metrics(
+                            route_last_row,
+                            "TRIP LOGIC & QAQC REPORT – ROUTE REPORT"
+                        )
+
                         display_filtered_or_unfiltered_report(
                             unfiltered_df=dataframes['route_report_trends_df'],
                             filtered_df=dataframes['route_report_date_trends_df'],

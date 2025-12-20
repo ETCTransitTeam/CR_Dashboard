@@ -1748,29 +1748,36 @@ def process_survey_data(df):
 
 def process_surveyor_data_transit_ls6(df, elvis_df):
     """Process data for surveyor-level report"""
-    # Clean and filter data
-    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
-    filtered_df = df[df['INTERV_INIT'] != "999"]
-    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1']
+    # Clean and filter elvis data (use elvis_df for all calculations)
+    elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
+    filtered_elvis = elvis_df[
+        (elvis_df['INTERV_INIT'] != "999") & 
+        (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
+    ].copy()
     
-    # Base counts
+    # Get all IDs from filtered_elvis
+    elvis_ids = set(filtered_elvis['id'].unique())
+    
+    # Filter the original df (kingelvis) to only include IDs from elvis_df
+    # Make sure df has INTERV_INIT column for grouping
+    df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    filtered_df = df[df['id'].isin(elvis_ids)].copy()
+    
+    # Base counts from elvis_df
     record_counts = (
-        valid_surveys_df
+        filtered_elvis
         .groupby('INTERV_INIT')['id']
         .count()
         .reset_index()
         .rename(columns={'id': '# of Records'})
     )
     
-    interv_list = sorted(valid_surveys_df['INTERV_INIT'].unique())
+    interv_list = sorted(filtered_elvis['INTERV_INIT'].unique())
     summary_df = pd.DataFrame({'INTERV_INIT': interv_list}).merge(record_counts, how='left').fillna(0)
     
-    # Supervisor Deletes
+    # Supervisor Deletes from elvis_df
     delete_counts = (
-        valid_surveys_df[
-            (valid_surveys_df['ELVIS_STATUS'] == 'Delete') & 
-            (valid_surveys_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
-        ]
+        filtered_elvis[filtered_elvis['ElvisStatus'] == 'Delete']
         .groupby('INTERV_INIT')['id']
         .count()
         .reset_index()
@@ -1778,9 +1785,9 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     )
     summary_df = summary_df.merge(delete_counts, how='left').fillna(0)
     
-    # Records Remove
+    # Records Remove - check in df (kingelvis)
     remove_counts = (
-        valid_surveys_df[valid_surveys_df['Final_Usage'] == 'Remove']
+        filtered_df[filtered_df['Final_Usage'] == 'Remove']
         .groupby('INTERV_INIT')['id']
         .count()
         .reset_index()
@@ -1788,10 +1795,9 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     )
     summary_df = summary_df.merge(remove_counts, how='left').fillna(0)
     
-    # Records Reviewed/Not Reviewed
-    reviewed_df = valid_surveys_df[valid_surveys_df['Final_Usage'].notna()]
+    # Records Reviewed - check in df (kingelvis)
     reviewed_counts = (
-        reviewed_df
+        filtered_df[filtered_df['Final_Usage'].notna()]
         .groupby('INTERV_INIT')['id']
         .count()
         .reset_index()
@@ -1799,37 +1805,24 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     )
     summary_df = summary_df.merge(reviewed_counts, how='left').fillna(0)
     
+    # Records Not Reviewed - check in df (kingelvis)
     not_reviewed_counts = (
-        valid_surveys_df[valid_surveys_df['Final_Usage'].isna()]
+        filtered_df[filtered_df['Final_Usage'].isna()]
         .groupby('INTERV_INIT')['id']
         .count()
         .reset_index()
         .rename(columns={'id': '# of Records Not Reviewed'})
     )
     summary_df = summary_df.merge(not_reviewed_counts, how='left').fillna(0)
-    # Process elvis data for additional metrics
-    elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
-    address_filtered = elvis_df[
-        (elvis_df['INTERV_INIT'] != "999") &
-        (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
-    ].copy()
-    # Address completeness - Check what address data exists in elvis_df
+    
+    # Address completeness (using elvis_df)
     address_fields = [
         'HOME_ADDRESS_LAT', 'HOME_ADDRESS_LONG', 'HOME_ADDRESS_PLACE',
         'HOME_ADDRESS_ADDR', 'HOME_ADDRESS_CITY', 'HOME_ADDRESS_STATE', 'HOME_ADDRESS_ZIP'
     ]
-
-    # Check which address fields actually have data in elvis_df
-    existing_address_fields = [col for col in address_fields if col in address_filtered.columns]
-
-    # Check if these fields have any non-null and non-dash data
-    for col in existing_address_fields:
-        # Check for both NaN/None and dash values
-        non_null_count = address_filtered[col].notna().sum()
-        non_dash_count = (~address_filtered[col].astype(str).str.strip().isin(['-', ''])).sum()
-        actual_values = address_filtered[col].dropna().astype(str).str.strip().unique()
-        
-
+    
+    existing_address_fields = [col for col in address_fields if col in filtered_elvis.columns]
+    
     if existing_address_fields:
         # Check for incomplete addresses (either NaN/None or dash values)
         def is_incomplete_address(row):
@@ -1839,9 +1832,9 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
                     return True
             return False
         
-        address_filtered['Incomplete_Address'] = address_filtered.apply(is_incomplete_address, axis=1)
+        filtered_elvis['Incomplete_Address'] = filtered_elvis.apply(is_incomplete_address, axis=1)
         
-        address_group = address_filtered.groupby('INTERV_INIT').agg(
+        address_group = filtered_elvis.groupby('INTERV_INIT').agg(
             total_records=('id', 'count'),
             incomplete_count=('Incomplete_Address', 'sum')
         ).reset_index()
@@ -1854,27 +1847,26 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
             address_group[['INTERV_INIT', '% of Incomplete Home Address']], 
             how='left'
         ).fillna('0.0%')
-        
     else:
         summary_df['% of Incomplete Home Address'] = 'N/A'
     
-    # Survey times
+    # Survey times (using elvis_df)
     time_cols = ['HOMEADD_TIME', 'NOTE_TIME', 'REVIEWSCR_TIME']
     for col in time_cols:
-        address_filtered[col] = pd.to_datetime(address_filtered[col], errors='coerce')
+        filtered_elvis[col] = pd.to_datetime(filtered_elvis[col], errors='coerce')
     
-    address_filtered['SurveyTime (All)'] = (
-        address_filtered['NOTE_TIME'] - address_filtered['HOMEADD_TIME']
+    filtered_elvis['SurveyTime (All)'] = (
+        filtered_elvis['NOTE_TIME'] - filtered_elvis['HOMEADD_TIME']
     ).dt.total_seconds()
-    address_filtered['SurveyTime (TripLogic)'] = (
-        address_filtered['REVIEWSCR_TIME'] - address_filtered['HOMEADD_TIME']
+    filtered_elvis['SurveyTime (TripLogic)'] = (
+        filtered_elvis['REVIEWSCR_TIME'] - filtered_elvis['HOMEADD_TIME']
     ).dt.total_seconds()
-    address_filtered['SurveyTime (DemoLogic)'] = (
-        address_filtered['NOTE_TIME'] - address_filtered['REVIEWSCR_TIME']
+    filtered_elvis['SurveyTime (DemoLogic)'] = (
+        filtered_elvis['NOTE_TIME'] - filtered_elvis['REVIEWSCR_TIME']
     ).dt.total_seconds()
     
     # Format times
-    survey_time_group = address_filtered.groupby('INTERV_INIT').agg({
+    survey_time_group = filtered_elvis.groupby('INTERV_INIT').agg({
         'SurveyTime (All)': 'mean',
         'SurveyTime (TripLogic)': 'mean',
         'SurveyTime (DemoLogic)': 'mean'
@@ -1888,33 +1880,45 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     
     summary_df = summary_df.merge(survey_time_group, how='left').fillna("00:00:00")
     
-    # Other metrics (0 transfers, access walk, etc.)
+    # Other metrics (using elvis_df)
     metrics = [
         ('0 Transfers', 
-         (address_filtered['PREV_TRANSFERS'] == '(0) None') & 
-         (address_filtered['NEXT_TRANSFERS'] == '(0) None')),
-        ('Access Walk', address_filtered['VAL_ACCESS_WALK'].astype(str) == '1'),
-        ('Egress Walk', address_filtered['VAL_EGRESS_WALK'].astype(str) == '1'),
-        ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
-        ('No Income', 
-         (address_filtered['INCOMECode'].isna()) | 
-         (address_filtered['INCOMECode'].astype(str) == '14')),
-        ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
+         (filtered_elvis['PREV_TRANSFERS'] == '(0) None') & 
+         (filtered_elvis['NEXT_TRANSFERS'] == '(0) None')),
+        ('Access Walk', filtered_elvis['VAL_ACCESS_WALK'].astype(str) == '1'),
+        ('Egress Walk', filtered_elvis['VAL_EGRESS_WALK'].astype(str) == '1'),
+        ('LowIncome',
+            filtered_elvis['INCOMECode']
+                .astype(str).str.strip().str.replace('.0', '', regex=False)
+                .isin(['1', '2', '3', '4'])
+        ),
+
+        ('No Income',
+            filtered_elvis['INCOMECode'].isna() |
+            filtered_elvis['INCOMECode']
+                .astype(str).str.strip().str.replace('.0', '', regex=False)
+                .isin(['10'])
+        ),
+        ('Hispanic', filtered_elvis['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
+        ('Black', filtered_elvis['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
+        ('White', filtered_elvis['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    
+    # First get total records per interviewer
+    total_records_group = filtered_elvis.groupby('INTERV_INIT')['id'].count().reset_index()
+    total_records_group = total_records_group.rename(columns={'id': 'total_records'})
     
     for name, condition in metrics:
         metric_group = (
-            address_filtered[condition]
+            filtered_elvis[condition]
             .groupby('INTERV_INIT')['id']
             .count()
             .reset_index()
             .rename(columns={'id': f'{name.lower()}_count'})
         )
         
-        metric_percent = address_group[['INTERV_INIT', 'total_records']].merge(
-            metric_group, how='left'
+        metric_percent = total_records_group.merge(
+            metric_group, on='INTERV_INIT', how='left'
         ).fillna(0)
         
         metric_percent[f'% of {name}'] = (
@@ -1923,18 +1927,23 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
         
         summary_df = summary_df.merge(
             metric_percent[['INTERV_INIT', f'% of {name}']], 
+            on='INTERV_INIT',
             how='left'
         ).fillna('0.0%')
     
-    # Contest metrics (keeping only contest-related metrics)
+    # Contest metrics (using elvis_df)
     contest_filtered = elvis_df[
         (elvis_df['INTERV_INIT'] != "999") & 
         (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
     ].copy()
     
     contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper() == '1'
-    )
+            contest_filtered['REGISTER_TO_WIN_YNCODE']
+                .astype(str)
+                .str.strip()
+                .str.replace('.0', '', regex=False)
+                .eq('1')
+        )
     
     contest_group = contest_filtered.groupby('INTERV_INIT').agg(
         total_records=('id', 'count'),
@@ -2605,37 +2614,41 @@ def process_route_data(df, elvis_df):
 def process_route_data_transit_ls6(df, elvis_df):
     """Process data for route-level report"""
     print("Processing route-level data...")
+    
+    # Clean and filter elvis data (use elvis_df for all calculations)
     elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
-    elvis_df = elvis_df[
+    filtered_elvis = elvis_df[
         (elvis_df['INTERV_INIT'] != "999") &
         (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
     ].copy()
+    
     # Clean route codes (remove _00, _01 suffixes)
-    df['ROUTE_ROOT'] = clean_route_code(df['ROUTE_SURVEYEDCode'])
+    filtered_elvis['ROUTE_ROOT'] = clean_route_code(filtered_elvis['ROUTE_SURVEYEDCode'])
+    
+    # Get all IDs from filtered_elvis
+    elvis_ids = set(filtered_elvis['id'].unique())
+    
+    # Filter the original df (kingelvis) to only include IDs from elvis_df
+    # Make sure df has INTERV_INIT and ROUTE_ROOT columns for grouping
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
+    df['ROUTE_ROOT'] = clean_route_code(df['ROUTE_SURVEYEDCode'])
+    filtered_df = df[df['id'].isin(elvis_ids)].copy()
     
-    # Filter data
-    filtered_df = df[df['INTERV_INIT'] != "999"]
-    valid_surveys_df = filtered_df[filtered_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1']
-    
-    # Base counts
+    # Base counts from elvis_df
     record_counts = (
-        valid_surveys_df
+        filtered_elvis
         .groupby('ROUTE_ROOT')['id']
         .count()
         .reset_index()
         .rename(columns={'id': '# of Records'})
     )
     
-    route_list = sorted(valid_surveys_df['ROUTE_ROOT'].unique())
+    route_list = sorted(filtered_elvis['ROUTE_ROOT'].unique())
     route_report_df = pd.DataFrame({'ROUTE_ROOT': route_list}).merge(record_counts, how='left').fillna(0)
     
-    # Supervisor Deletes
+    # Supervisor Deletes from elvis_df
     delete_counts = (
-        valid_surveys_df[
-            (valid_surveys_df['ELVIS_STATUS'] == 'Delete') & 
-            (valid_surveys_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
-        ]
+        filtered_elvis[filtered_elvis['ElvisStatus'] == 'Delete']
         .groupby('ROUTE_ROOT')['id']
         .count()
         .reset_index()
@@ -2643,9 +2656,9 @@ def process_route_data_transit_ls6(df, elvis_df):
     )
     route_report_df = route_report_df.merge(delete_counts, how='left').fillna(0)
     
-    # Records Remove
+    # Records Remove - check in df (kingelvis)
     remove_counts = (
-        valid_surveys_df[valid_surveys_df['Final_Usage'] == 'Remove']
+        filtered_df[filtered_df['Final_Usage'] == 'Remove']
         .groupby('ROUTE_ROOT')['id']
         .count()
         .reset_index()
@@ -2653,10 +2666,9 @@ def process_route_data_transit_ls6(df, elvis_df):
     )
     route_report_df = route_report_df.merge(remove_counts, how='left').fillna(0)
     
-    # Records Reviewed/Not Reviewed
-    reviewed_df = valid_surveys_df[valid_surveys_df['Final_Usage'].notna()]
+    # Records Reviewed - check in df (kingelvis)
     reviewed_counts = (
-        reviewed_df
+        filtered_df[filtered_df['Final_Usage'].notna()]
         .groupby('ROUTE_ROOT')['id']
         .count()
         .reset_index()
@@ -2664,8 +2676,9 @@ def process_route_data_transit_ls6(df, elvis_df):
     )
     route_report_df = route_report_df.merge(reviewed_counts, how='left').fillna(0)
     
+    # Records Not Reviewed - check in df (kingelvis)
     not_reviewed_counts = (
-        valid_surveys_df[valid_surveys_df['Final_Usage'].isna()]
+        filtered_df[filtered_df['Final_Usage'].isna()]
         .groupby('ROUTE_ROOT')['id']
         .count()
         .reset_index()
@@ -2673,28 +2686,13 @@ def process_route_data_transit_ls6(df, elvis_df):
     )
     route_report_df = route_report_df.merge(not_reviewed_counts, how='left').fillna(0)
     
-    # Process elvis data for additional metrics
-    elvis_df['ROUTE_ROOT'] = clean_route_code(elvis_df['ROUTE_SURVEYEDCode'])
-    elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
-    
-    address_filtered = elvis_df[
-        (elvis_df['INTERV_INIT'] != "999") & 
-        (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
-    ].copy()
-    
-    # Address completeness - with dash checking
+    # Address completeness (using elvis_df)
     address_fields = [
         'HOME_ADDRESS_LAT', 'HOME_ADDRESS_LONG', 'HOME_ADDRESS_PLACE',
         'HOME_ADDRESS_ADDR', 'HOME_ADDRESS_CITY', 'HOME_ADDRESS_STATE', 'HOME_ADDRESS_ZIP'
     ]
     
-    # Check which address fields actually have data in elvis_df
-    existing_address_fields = [col for col in address_fields if col in address_filtered.columns]
-    
-    # Check if these fields have any non-null and non-dash data
-    for col in existing_address_fields:
-        non_null_count = address_filtered[col].notna().sum()
-        non_dash_count = (~address_filtered[col].astype(str).str.strip().isin(['-', ''])).sum()
+    existing_address_fields = [col for col in address_fields if col in filtered_elvis.columns]
     
     if existing_address_fields:
         # Check for incomplete addresses (either NaN/None or dash values)
@@ -2705,9 +2703,9 @@ def process_route_data_transit_ls6(df, elvis_df):
                     return True
             return False
         
-        address_filtered['Incomplete_Address'] = address_filtered.apply(is_incomplete_address, axis=1)
+        filtered_elvis['Incomplete_Address'] = filtered_elvis.apply(is_incomplete_address, axis=1)
         
-        address_group = address_filtered.groupby('ROUTE_ROOT').agg(
+        address_group = filtered_elvis.groupby('ROUTE_ROOT').agg(
             total_records=('id', 'count'),
             incomplete_count=('Incomplete_Address', 'sum')
         ).reset_index()
@@ -2723,38 +2721,38 @@ def process_route_data_transit_ls6(df, elvis_df):
     else:
         route_report_df['% of Incomplete Home Address'] = 'N/A'
     
-    # Survey times - make sure we're only processing valid datetime columns
+    # Survey times (using elvis_df)
     time_cols = ['HOMEADD_TIME', 'NOTE_TIME', 'REVIEWSCR_TIME']
-    existing_time_cols = [col for col in time_cols if col in address_filtered.columns]
+    existing_time_cols = [col for col in time_cols if col in filtered_elvis.columns]
 
     if len(existing_time_cols) >= 2:
         for col in existing_time_cols:
-            address_filtered[col] = pd.to_datetime(address_filtered[col], errors='coerce')
+            filtered_elvis[col] = pd.to_datetime(filtered_elvis[col], errors='coerce')
         
         # Reset time columns to ensure we start fresh
         time_columns_to_calc = []
         
         if 'HOMEADD_TIME' in existing_time_cols and 'NOTE_TIME' in existing_time_cols:
-            address_filtered['SurveyTime (All)'] = (
-                address_filtered['NOTE_TIME'] - address_filtered['HOMEADD_TIME']
+            filtered_elvis['SurveyTime (All)'] = (
+                filtered_elvis['NOTE_TIME'] - filtered_elvis['HOMEADD_TIME']
             ).dt.total_seconds()
             time_columns_to_calc.append('SurveyTime (All)')
         
         if 'HOMEADD_TIME' in existing_time_cols and 'REVIEWSCR_TIME' in existing_time_cols:
-            address_filtered['SurveyTime (TripLogic)'] = (
-                address_filtered['REVIEWSCR_TIME'] - address_filtered['HOMEADD_TIME']
+            filtered_elvis['SurveyTime (TripLogic)'] = (
+                filtered_elvis['REVIEWSCR_TIME'] - filtered_elvis['HOMEADD_TIME']
             ).dt.total_seconds()
             time_columns_to_calc.append('SurveyTime (TripLogic)')
         
         if 'REVIEWSCR_TIME' in existing_time_cols and 'NOTE_TIME' in existing_time_cols:
-            address_filtered['SurveyTime (DemoLogic)'] = (
-                address_filtered['NOTE_TIME'] - address_filtered['REVIEWSCR_TIME']
+            filtered_elvis['SurveyTime (DemoLogic)'] = (
+                filtered_elvis['NOTE_TIME'] - filtered_elvis['REVIEWSCR_TIME']
             ).dt.total_seconds()
             time_columns_to_calc.append('SurveyTime (DemoLogic)')
         
         # Format times - only for columns we actually calculated
         if time_columns_to_calc:
-            survey_time_group = address_filtered.groupby('ROUTE_ROOT').agg({
+            survey_time_group = filtered_elvis.groupby('ROUTE_ROOT').agg({
                 col: 'mean' for col in time_columns_to_calc
             }).reset_index()
             
@@ -2771,37 +2769,44 @@ def process_route_data_transit_ls6(df, elvis_df):
         if col not in route_report_df.columns:
             route_report_df[col] = "00:00:00"
     
-    # Other metrics with proper column checking
+    # Other metrics (using elvis_df)
     metrics = []
     
-    # Check transfer columns in elvis_df
-    if 'PREV_TRANSFERSCode' in address_filtered.columns and 'NEXT_TRANSFERSCode' in address_filtered.columns:
-        # Check what values actually exist in these columns
-        prev_transfer_values = address_filtered['PREV_TRANSFERSCode'].dropna().astype(str).str.strip().unique()
-        next_transfer_values = address_filtered['NEXT_TRANSFERSCode'].dropna().astype(str).str.strip().unique()
-        
-        # Check for 0 transfers - handle both numeric and text formats
+    # Check transfer columns in filtered_elvis
+    if 'PREV_TRANSFERSCode' in filtered_elvis.columns and 'NEXT_TRANSFERSCode' in filtered_elvis.columns:
         metrics.append(('0 Transfers', 
-             (address_filtered['PREV_TRANSFERSCode'].astype(str).str.strip().isin(['0', '0.0', '(0) None', '0) None', 'None'])) & 
-             (address_filtered['NEXT_TRANSFERSCode'].astype(str).str.strip().isin(['0', '0.0', '(0) None', '0) None', 'None']))))
-    else:
-        print("Transfer columns NOT found in elvis_df")
+             (filtered_elvis['PREV_TRANSFERSCode'].astype(str).str.strip().isin(['0', '0.0', '(0) None', '0) None', 'None'])) & 
+             (filtered_elvis['NEXT_TRANSFERSCode'].astype(str).str.strip().isin(['0', '0.0', '(0) None', '0) None', 'None']))))
     
-    # Check walk columns in elvis_df
-    if 'VAL_ACCESS_WALK' in address_filtered.columns:
-        metrics.append(('Access Walk', address_filtered['VAL_ACCESS_WALK'].astype(str) == '1'))
+    # Check walk columns in filtered_elvis
+    if 'VAL_ACCESS_WALK' in filtered_elvis.columns:
+        metrics.append(('Access Walk', filtered_elvis['VAL_ACCESS_WALK'].astype(str) == '1'))
     
-    if 'VAL_EGRESS_WALK' in address_filtered.columns:
-        metrics.append(('Egress Walk', address_filtered['VAL_EGRESS_WALK'].astype(str) == '1'))
+    if 'VAL_EGRESS_WALK' in filtered_elvis.columns:
+        metrics.append(('Egress Walk', filtered_elvis['VAL_EGRESS_WALK'].astype(str) == '1'))
     
-    # Check income columns in elvis_df
-    if 'INCOMECode' in address_filtered.columns:
-        metrics.append(('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])))
-        metrics.append(('No Income', 
-             (address_filtered['INCOMECode'].isna()) | 
-             (address_filtered['INCOMECode'].astype(str) == '14')))
+    # Check income columns in filtered_elvis
+    if 'INCOMECode' in filtered_elvis.columns:
+        filtered_elvis['INCOMECode_clean'] = (
+            filtered_elvis['INCOMECode']
+            .astype(str)
+            .str.strip()
+            .str.replace('.0', '', regex=False)
+        )
+
+        metrics.append((
+            'LowIncome',
+            filtered_elvis['INCOMECode_clean'].isin(['1', '2', '3', '4'])
+        ))
+
+        metrics.append((
+            'No Income',
+            filtered_elvis['INCOMECode_clean'].isin(['10']) |
+            filtered_elvis['INCOMECode'].isna()
+        ))
+
     
-    # Check race columns in elvis_df
+    # Check race columns in filtered_elvis
     race_metrics = [
         ('Hispanic', 'RACE_6'),
         ('Black', 'RACE_5'), 
@@ -2809,25 +2814,25 @@ def process_route_data_transit_ls6(df, elvis_df):
     ]
     
     for name, race_col in race_metrics:
-        if race_col in address_filtered.columns:
-            metrics.append((name, address_filtered[race_col].astype(str).str.strip().str.upper() == 'YES'))
+        if race_col in filtered_elvis.columns:
+            metrics.append((name, filtered_elvis[race_col].astype(str).str.strip().str.upper() == 'YES'))
     
-    address_group = address_filtered.groupby('ROUTE_ROOT').agg(
-        total_records=('id', 'count')
-    ).reset_index()
+    # First get total records per route
+    total_records_group = filtered_elvis.groupby('ROUTE_ROOT')['id'].count().reset_index()
+    total_records_group = total_records_group.rename(columns={'id': 'total_records'})
     
     for name, condition in metrics:
         try:
             metric_group = (
-                address_filtered[condition]
+                filtered_elvis[condition]
                 .groupby('ROUTE_ROOT')['id']
                 .count()
                 .reset_index()
                 .rename(columns={'id': f'{name.lower()}_count'})
             )
             
-            metric_percent = address_group[['ROUTE_ROOT', 'total_records']].merge(
-                metric_group, how='left'
+            metric_percent = total_records_group.merge(
+                metric_group, on='ROUTE_ROOT', how='left'
             ).fillna(0)
             
             metric_percent[f'% of {name}'] = (
@@ -2836,21 +2841,26 @@ def process_route_data_transit_ls6(df, elvis_df):
             
             route_report_df = route_report_df.merge(
                 metric_percent[['ROUTE_ROOT', f'% of {name}']], 
+                on='ROUTE_ROOT',
                 how='left'
             ).fillna('0.0%')
             
         except Exception as e:
             route_report_df[f'% of {name}'] = 'Error'
     
-    # Contest metrics with proper checking
+    # Contest metrics (using elvis_df)
     contest_columns = ['REGISTER_TO_WIN_YNCODE', 'REG_2_WIN_CONTACT_NAME', 'REG_2_WIN_CONTACT_PHONE']
-    contest_columns_exist = all(col in elvis_df.columns for col in contest_columns)
+    contest_columns_exist = all(col in filtered_elvis.columns for col in contest_columns)
     
     if contest_columns_exist:
-        contest_filtered = address_filtered.copy()
+        contest_filtered = filtered_elvis.copy()
         # Check for "YES" values (considering case and whitespace)
         contest_filtered['contest_yes'] = (
-            contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper().isin(['YES', '1', 'Y'])
+            contest_filtered['REGISTER_TO_WIN_YNCODE']
+                .astype(str)
+                .str.strip()
+                .str.replace('.0', '', regex=False)
+                .eq('1')
         )
         
         contest_group = contest_filtered.groupby('ROUTE_ROOT').agg(
@@ -2864,6 +2874,7 @@ def process_route_data_transit_ls6(df, elvis_df):
         
         route_report_df = route_report_df.merge(
             contest_group[['ROUTE_ROOT', '% of Contest - Yes']], 
+            on='ROUTE_ROOT',
             how='left'
         ).fillna('0.0%')
         
@@ -2887,6 +2898,7 @@ def process_route_data_transit_ls6(df, elvis_df):
         
         route_report_df = route_report_df.merge(
             contest_valid_group[['ROUTE_ROOT', '% of Contest - (Yes & Good Info)/Overall # of Records']],
+            on='ROUTE_ROOT',
             how='left'
         ).fillna('0.0%')
         
@@ -3072,7 +3084,7 @@ def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
         )
     
     summary_df = summary_df.merge(survey_time_group, how='left').fillna("00:00:00")
-    
+    print("columns address filtered:", address_filtered.columns.tolist())
     # Other metrics (0 transfers, access walk, etc.)
     metrics = [
         ('0 Transfers', 
@@ -3080,10 +3092,18 @@ def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
          (address_filtered['NEXT_TRANSFERSCode'] == '(0) None')),
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
-        ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
-        ('No Income', 
-         (address_filtered['INCOMECode'].isna()) | 
-         (address_filtered['INCOMECode'].astype(str) == '14')),
+        ('LowIncome',
+            address_filtered['INCOMECode']
+                .astype(str).str.strip().str.replace('.0', '', regex=False)
+                .isin(['1', '2', '3', '4'])
+        ),
+
+        ('No Income',
+            address_filtered['INCOMECode'].isna() |
+            address_filtered['INCOMECode']
+                .astype(str).str.strip().str.replace('.0', '', regex=False)
+                .isin(['10'])
+        ),
         ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
         ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
         ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
@@ -3114,7 +3134,11 @@ def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
     # Contest metrics only (removed follow-up section)
     contest_filtered = address_filtered.copy()
     contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper() == 'YES'
+        contest_filtered['REGISTER_TO_WIN_YNCODE']
+            .astype(str)
+            .str.strip()
+            .str.replace('.0', '', regex=False)
+            .eq('1')
     )
     
     contest_group = contest_filtered.groupby('Date_Surveyor').agg(
@@ -3331,10 +3355,18 @@ def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route):
          (address_filtered['NEXT_TRANSFERSCode'] == '(0) None')),
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
-        ('LowIncome', address_filtered['INCOMECode'].astype(str).isin(['1', '2', '3', '4'])),
-        ('No Income', 
-         (address_filtered['INCOMECode'].isna()) | 
-         (address_filtered['INCOMECode'].astype(str) == '14')),
+        ('LowIncome',
+            address_filtered['INCOMECode']
+                .astype(str).str.strip().str.replace('.0', '', regex=False)
+                .isin(['1', '2', '3', '4'])
+        ),
+
+        ('No Income',
+            address_filtered['INCOMECode'].isna() |
+            address_filtered['INCOMECode']
+                .astype(str).str.strip().str.replace('.0', '', regex=False)
+                .isin(['10'])
+        ),
         ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
         ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
         ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
@@ -3370,7 +3402,11 @@ def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route):
     contest_filtered['Date_Route'] = clean_route_name(contest_filtered['ROUTE_SURVEYED'])
     
     contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_YNCODE'].astype(str).str.strip().str.upper() == 'YES'
+        contest_filtered['REGISTER_TO_WIN_YNCODE']
+            .astype(str)
+            .str.strip()
+            .str.replace('.0', '', regex=False)
+            .eq('1')
     )
     
     contest_group = contest_filtered.groupby('Date_Route').agg(
