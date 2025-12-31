@@ -2415,7 +2415,7 @@ else:
                     
                     # Now use survey_df instead of baby_elvis_df_merged
                     # Get the column names using your existing function
-                    trip_oppo_dir_column = check_all_characters_present(survey_df, ['tripinoppodir'])
+                    trip_oppo_dir_column = check_all_characters_present(survey_df, ['tripinoppodircode'])
                     elvis_status_code_column = check_all_characters_present(survey_df, ['elvisstatuscode'])
                     reverse_trips_column = check_all_characters_present(survey_df, ['reversetrips'])
                     route_survey_column = check_all_characters_present(survey_df, ['routesurveyedcode'])
