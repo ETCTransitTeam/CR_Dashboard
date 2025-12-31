@@ -1893,7 +1893,7 @@ else:
             st.title("Reverse Routes Comparison")
             
             # Create tabs for different views
-            tab1, tab2 = st.tabs(["Reverse Routes", "Route Shortages"])
+            tab1, tab2, tab3 = st.tabs(["Reverse Routes", "Route Shortages", "Clonable IDs by Route"])
             
             with tab1:
                 # Use the pre-fetched dataframes
@@ -2380,6 +2380,448 @@ else:
                     - Check the "Reverse Routes" tab for specific records that can be cloned
                     """)
             
+            with tab3:
+                st.header("Clonable IDs by Route")
+                st.markdown("**List of IDs that can be cloned, grouped by route**")
+                
+                try:
+                    # Import the fetch_data function if not already imported
+                    from automated_refresh_flow_new import PROJECTS, fetch_data
+                    
+                    project_config = PROJECTS[st.session_state["selected_project"]]
+                    elvis_config = project_config['databases']["elvis"]
+                    table_name = elvis_config['table']
+                    database_name = elvis_config["database"]
+                    
+                    with st.spinner("🔄 Loading survey data for clonable IDs analysis..."):
+                        # Load data directly from the database
+                        csv_buffer = fetch_data(database_name, table_name)
+                        
+                        if not csv_buffer:
+                            st.error("❌ Failed to fetch data from Elvis table")
+                            return
+                        
+                        # Read the data
+                        csv_buffer.seek(0)
+                        survey_df = pd.read_csv(csv_buffer, low_memory=False)
+                        
+                        # Safely drop junk header row if present
+                        if not survey_df.empty and survey_df.iloc[0].isnull().all():
+                            survey_df = survey_df.drop(index=0)
+                        
+                        survey_df = survey_df.reset_index(drop=True)
+                        
+                        st.success(f"✅ Loaded {len(survey_df)} records for analysis")
+                    
+                    # Now use survey_df instead of baby_elvis_df_merged
+                    # Get the column names using your existing function
+                    trip_oppo_dir_column = check_all_characters_present(survey_df, ['tripinoppodir'])
+                    elvis_status_code_column = check_all_characters_present(survey_df, ['elvisstatuscode'])
+                    reverse_trips_column = check_all_characters_present(survey_df, ['reversetrips'])
+                    route_survey_column = check_all_characters_present(survey_df, ['routesurveyedcode'])
+                    route_survey_name_column = check_all_characters_present(survey_df, ['routesurveyed'])
+                    
+                    # NEW: Get additional column names for the new filters
+                    interv_init_column = check_all_characters_present(survey_df, ['intervinit', 'interv_init', 'interviewer'])
+                    have_5_min_column = check_all_characters_present(survey_df, ['have5minforsurvecode', 'have_5_min_for_survecode', 'participationcode'])
+                    
+                    # Debug: Show available columns (optional)
+                    # st.write("Available columns:", survey_df.columns.tolist()[:20])
+                    
+                    # Ensure all required columns exist
+                    required_columns = []
+                    column_info = []
+                    
+                    if trip_oppo_dir_column:
+                        required_columns.append(trip_oppo_dir_column[0])
+                        column_info.append(f"✅ Using column '{trip_oppo_dir_column[0]}' for TripInOppoDir")
+                    
+                    if elvis_status_code_column:
+                        required_columns.append(elvis_status_code_column[0])
+                        column_info.append(f"✅ Using column '{elvis_status_code_column[0]}' for ElvisStatus")
+                    
+                    if reverse_trips_column:
+                        required_columns.append(reverse_trips_column[0])
+                        column_info.append(f"✅ Using column '{reverse_trips_column[0]}' for ReverseTrips")
+                    
+                    if route_survey_column:
+                        required_columns.append(route_survey_column[0])
+                        column_info.append(f"✅ Using column '{route_survey_column[0]}' for Route Surveyed Code")
+                    
+                    if interv_init_column:
+                        column_info.append(f"✅ Using column '{interv_init_column[0]}' for Interviewer")
+                    else:
+                        column_info.append("⚠️ Interviewer column not found - skipping interviewer filter")
+                    
+                    if have_5_min_column:
+                        column_info.append(f"✅ Using column '{have_5_min_column[0]}' for Participation")
+                    else:
+                        column_info.append("⚠️ Participation column not found - skipping participation filter")
+                    
+                    if 'id' not in survey_df.columns:
+                        # Try to find ID column with different names
+                        id_columns = check_all_characters_present(survey_df, ['id', 'recordid', 'record_id', 'respondent_id'])
+                        if id_columns:
+                            column_info.append(f"✅ Using column '{id_columns[0]}' for ID")
+                            survey_df = survey_df.rename(columns={id_columns[0]: 'id'})
+                            required_columns.append('id')
+                        else:
+                            st.error("❌ ID column not found. Please check your data.")
+                            return
+                    else:
+                        required_columns.append('id')
+                        column_info.append("✅ Using column 'id' for Record ID")
+                    
+                    # Show column mapping info
+                    with st.expander("📋 Column Mapping Information"):
+                        for info in column_info:
+                            st.write(info)
+                    
+                    missing_cols = [col for col in required_columns if col not in survey_df.columns]
+                    if missing_cols:
+                        st.error(f"❌ Missing required columns: {missing_cols}")
+                        st.write("Available columns:")
+                        st.write(survey_df.columns.tolist())
+                        return
+                    
+                    # Display sample of the data
+                    with st.expander("🔍 View sample data (first 5 records)"):
+                        sample_cols = ['id']
+                        if trip_oppo_dir_column:
+                            sample_cols.append(trip_oppo_dir_column[0])
+                        if elvis_status_code_column:
+                            sample_cols.append(elvis_status_code_column[0])
+                        if reverse_trips_column:
+                            sample_cols.append(reverse_trips_column[0])
+                        if route_survey_column:
+                            sample_cols.append(route_survey_column[0])
+                        if interv_init_column:
+                            sample_cols.append(interv_init_column[0])
+                        if have_5_min_column:
+                            sample_cols.append(have_5_min_column[0])
+                        
+                        st.dataframe(survey_df[sample_cols].head(), use_container_width=True)
+                    
+                    # Apply the filtering logic
+                    st.subheader("Filtering Criteria")
+                    st.markdown("""
+                    **Filters applied:**
+                    1. ✅ **TripInOppoDirCode** = 1 or 'Yes' (participant willing for reverse direction)
+                    2. ✅ **ElvisStatusCode** ≠ 4 (not rejected/closed)
+                    3. ✅ **If ElvisStatusCode** = 6 → **ReverseTrips** must be empty (not already cloned)
+                    4. ✅ **Interviewer** ≠ 999 (not system/test records)
+                    5. ✅ **Have5MinForSurveCode** = 1 (participant agreed to survey)
+                    """)
+                    
+                    # Start with all records as eligible
+                    total_records = len(survey_df)
+                    st.info(f"Total records loaded: {total_records:,}")
+                    
+                    # Apply filters step by step
+                    current_mask = pd.Series(True, index=survey_df.index)
+                    
+                    # NEW FILTER 1: Interviewer not equal to 999
+                    if interv_init_column:
+                        interviewer_mask = (
+                            survey_df[interv_init_column[0]].astype(str) != '999'
+                        )
+                        current_mask = current_mask & interviewer_mask
+                        excluded_interv = (~interviewer_mask).sum()
+                    else:
+                        st.warning("⚠️ Interviewer column not found - skipping interviewer filter")
+                    
+                    # NEW FILTER 2: Have5MinForSurveCode = 1 (participant agreed to survey)
+                    if have_5_min_column:
+                        participation_mask = (
+                            survey_df[have_5_min_column[0]].astype(str) == '1'
+                        )
+                        current_mask = current_mask & participation_mask
+                        excluded_participation = (~participation_mask).sum()
+                    else:
+                        st.warning("⚠️ Participation column not found - skipping participation filter")
+                    
+                    # Condition 1: TripInOppoDirCode = 1 or 'yes' or 'Yes'
+                    if trip_oppo_dir_column:
+                        oppo_dir_mask = (
+                            survey_df[trip_oppo_dir_column[0]].astype(str).str.lower().isin(['1', 'yes'])
+                        )
+                        current_mask = current_mask & oppo_dir_mask
+                        excluded_oppo_dir = (~oppo_dir_mask).sum()
+                    else:
+                        st.warning("⚠️ TripInOppoDir column not found - skipping this condition")
+                    
+                    # Condition 2: ElvisStatusCode != 4
+                    if elvis_status_code_column:
+                        status_mask = (
+                            survey_df[elvis_status_code_column[0]].astype(str) != '4'
+                        )
+                        current_mask = current_mask & status_mask
+                        excluded_status = (~status_mask).sum()
+                    else:
+                        st.warning("⚠️ ElvisStatusCode column not found - skipping this condition")
+                    
+                    # Condition 3: If ElvisStatusCode == 6, then ReverseTrips must be empty
+                    if elvis_status_code_column and reverse_trips_column:
+                        status_6_mask = (
+                            (survey_df[elvis_status_code_column[0]].astype(str) != '6') |
+                            (
+                                (survey_df[elvis_status_code_column[0]].astype(str) == '6') &
+                                (
+                                    survey_df[reverse_trips_column[0]].isna() |
+                                    (survey_df[reverse_trips_column[0]].astype(str).str.strip() == '')
+                                )
+                            )
+                        )
+                        current_mask = current_mask & status_6_mask
+                        excluded_status_6 = (~status_6_mask).sum()
+                    else:
+                        if not elvis_status_code_column:
+                            st.warning("⚠️ ElvisStatusCode column not found - skipping ReverseTrips condition")
+                        elif not reverse_trips_column:
+                            st.warning("⚠️ ReverseTrips column not found - skipping ReverseTrips condition")
+                    
+                    # Get clonable records
+                    clonable_df = survey_df[current_mask].copy()
+                    
+                    # Show filtering summary
+                    st.subheader("📊 Filtering Summary")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Total Records", f"{total_records:,}")
+                    
+                    with col2:
+                        excluded = total_records - len(clonable_df)
+                        st.metric("Records Excluded", f"{excluded:,}")
+                    
+                    with col3:
+                        st.metric("Clonable Records", f"{len(clonable_df):,}")
+                    
+                    # Show breakdown of exclusions
+                    with st.expander("📈 Detailed Exclusion Breakdown"):
+                        if 'excluded_interv' in locals():
+                            st.write(f"• Interviewer = 999: {excluded_interv:,} records")
+                        if 'excluded_participation' in locals():
+                            st.write(f"• Non-participating (code ≠ 1): {excluded_participation:,} records")
+                        if 'excluded_oppo_dir' in locals():
+                            st.write(f"• Not willing for reverse direction: {excluded_oppo_dir:,} records")
+                        if 'excluded_status' in locals():
+                            st.write(f"• Elvis status = 4: {excluded_status:,} records")
+                        if 'excluded_status_6' in locals():
+                            st.write(f"• Already cloned (status 6 with ReverseTrips): {excluded_status_6:,} records")
+                        
+                        # Show remaining after each filter (if available)
+                        st.write("---")
+                        st.write("**Remaining after each filter:**")
+                        remaining_counts = {}
+                        
+                        # Calculate step-by-step remaining counts
+                        temp_mask = pd.Series(True, index=survey_df.index)
+                        
+                        if interv_init_column:
+                            temp_mask = temp_mask & (survey_df[interv_init_column[0]].astype(str) != '999')
+                            remaining_counts["After Interviewer filter"] = temp_mask.sum()
+                        
+                        if have_5_min_column:
+                            temp_mask = temp_mask & (survey_df[have_5_min_column[0]].astype(str) == '1')
+                            remaining_counts["After Participation filter"] = temp_mask.sum()
+                        
+                        if trip_oppo_dir_column:
+                            temp_mask = temp_mask & survey_df[trip_oppo_dir_column[0]].astype(str).str.lower().isin(['1', 'yes'])
+                            remaining_counts["After Reverse Willing filter"] = temp_mask.sum()
+                        
+                        if elvis_status_code_column:
+                            temp_mask = temp_mask & (survey_df[elvis_status_code_column[0]].astype(str) != '4')
+                            remaining_counts["After Status ≠ 4 filter"] = temp_mask.sum()
+                        
+                        if elvis_status_code_column and reverse_trips_column:
+                            status_6_mask_temp = (
+                                (survey_df[elvis_status_code_column[0]].astype(str) != '6') |
+                                (
+                                    (survey_df[elvis_status_code_column[0]].astype(str) == '6') &
+                                    (
+                                        survey_df[reverse_trips_column[0]].isna() |
+                                        (survey_df[reverse_trips_column[0]].astype(str).str.strip() == '')
+                                    )
+                                )
+                            )
+                            temp_mask = temp_mask & status_6_mask_temp
+                            remaining_counts["After Already Cloned filter"] = temp_mask.sum()
+                        
+                        for step, count in remaining_counts.items():
+                            st.write(f"• {step}: {count:,} records")
+                    
+                    if not clonable_df.empty:
+                        # Group by route and collect IDs
+                        route_groups = {}
+                        
+                        for idx, row in clonable_df.iterrows():
+                            route_code = row.get(route_survey_column[0], 'Unknown') if route_survey_column else 'Unknown'
+                            route_name = row.get(route_survey_name_column[0], 'Unknown') if route_survey_name_column else 'Unknown'
+                            record_id = row.get('id', '')
+                            
+                            if pd.notna(route_code) and pd.notna(record_id):
+                                route_key = str(route_code)
+                                if route_key not in route_groups:
+                                    route_groups[route_key] = {
+                                        'route_code': route_code,
+                                        'route_name': route_name if pd.notna(route_name) else route_code,
+                                        'ids': []
+                                    }
+                                route_groups[route_key]['ids'].append(str(record_id))
+                        
+                        # Convert to DataFrame
+                        clonable_list = []
+                        for route_data in route_groups.values():
+                            # Sort IDs for better readability
+                            try:
+                                sorted_ids = sorted(route_data['ids'], key=lambda x: int(x) if x.isdigit() else x)
+                            except:
+                                sorted_ids = sorted(route_data['ids'])
+                            
+                            # Join IDs with comma separator
+                            ids_string = ', '.join(sorted_ids)
+                            
+                            clonable_list.append({
+                                'Route Code': route_data['route_code'],
+                                'Route Name': route_data['route_name'],
+                                'Clonable IDs': ids_string,
+                                'Count': len(route_data['ids'])
+                            })
+                        
+                        # Create the final dataframe
+                        if clonable_list:
+                            clonable_summary_df = pd.DataFrame(clonable_list)
+                            
+                            # Sort by route code
+                            def sort_route_key(route):
+                                if pd.isna(route):
+                                    return (2, '')
+                                route_str = str(route)
+                                # Try to extract numeric part for sorting
+                                import re
+                                numbers = re.findall(r'\d+', route_str)
+                                if numbers:
+                                    return (0, int(numbers[0]), route_str)
+                                else:
+                                    return (1, route_str)
+                            
+                            clonable_summary_df['sort_key'] = clonable_summary_df['Route Code'].apply(sort_route_key)
+                            clonable_summary_df = clonable_summary_df.sort_values('sort_key').drop(columns=['sort_key'])
+                            
+                            # Reset index
+                            clonable_summary_df = clonable_summary_df.reset_index(drop=True)
+                            clonable_summary_df.index = clonable_summary_df.index + 1
+                            
+                            # Display statistics
+                            st.subheader("📈 Clonable IDs Summary")
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Routes with Clonable IDs", len(clonable_summary_df))
+                            
+                            with col2:
+                                total_ids = clonable_summary_df['Count'].sum()
+                                st.metric("Total Clonable IDs", total_ids)
+                            
+                            with col3:
+                                avg_per_route = total_ids / len(clonable_summary_df) if len(clonable_summary_df) > 0 else 0
+                                st.metric("Avg IDs per Route", f"{avg_per_route:.1f}")
+                            
+                            with col4:
+                                max_ids = clonable_summary_df['Count'].max() if not clonable_summary_df.empty else 0
+                                st.metric("Max IDs in a Route", max_ids)
+                            
+                            # Show top routes with most clonable IDs
+                            if not clonable_summary_df.empty:
+                                top_routes = clonable_summary_df.nlargest(5, 'Count')
+                                st.write("**Top 5 Routes with Most Clonable IDs:**")
+                                for i, (_, row) in enumerate(top_routes.iterrows(), 1):
+                                    st.write(f"{i}. **{row['Route Code']}** - {row['Count']} IDs")
+                            
+                            # Search and filter
+                            st.subheader("🔍 Search and Filter Results")
+                            
+                            # Add search functionality
+                            search_term = st.text_input("Search Routes:", "", key="clonable_search")
+                            
+                            if search_term:
+                                filtered_df = clonable_summary_df[
+                                    clonable_summary_df['Route Code'].astype(str).str.contains(search_term, case=False, na=False) |
+                                    clonable_summary_df['Route Name'].astype(str).str.contains(search_term, case=False, na=False) |
+                                    clonable_summary_df['Clonable IDs'].astype(str).str.contains(search_term, case=False, na=False)
+                                ]
+                            else:
+                                filtered_df = clonable_summary_df.copy()
+                            
+                            # Display the table
+                            st.dataframe(
+                                filtered_df[['Route Code', 'Route Name', 'Clonable IDs', 'Count']],
+                                use_container_width=True,
+                                height=600,
+                                column_config={
+                                    "Clonable IDs": st.column_config.Column(
+                                        width="large",
+                                        help="IDs that can be cloned for this route"
+                                    ),
+                                    "Count": st.column_config.NumberColumn(
+                                        format="%d",
+                                        help="Number of clonable IDs"
+                                    )
+                                }
+                            )
+                            
+                            # Download button
+                            csv_data = clonable_summary_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download Clonable IDs",
+                                data=csv_data,
+                                file_name=f"{st.session_state['selected_project'].lower()}_clonable_ids_by_route.csv",
+                                mime="text/csv",
+                                help="Download the list of clonable IDs grouped by route"
+                            )
+                            
+                            # Additional analysis
+                            with st.expander("📊 Additional Analysis"):
+                                import matplotlib.pyplot as plt
+                                # Show distribution of clonable IDs by route
+                                if len(clonable_summary_df) > 1:
+                                    st.write("**Distribution of Clonable IDs per Route:**")
+                                    fig, ax = plt.subplots(figsize=(10, 4))
+                                    ax.hist(clonable_summary_df['Count'], bins=20, edgecolor='black')
+                                    ax.set_xlabel('Number of Clonable IDs')
+                                    ax.set_ylabel('Number of Routes')
+                                    ax.set_title('Distribution of Clonable IDs per Route')
+                                    st.pyplot(fig)
+                                
+                                # Show sample of clonable records
+                                st.write("**Sample of Clonable Records (10 records):**")
+                                sample_cols = ['id']
+                                if route_survey_column:
+                                    sample_cols.append(route_survey_column[0])
+                                if route_survey_name_column:
+                                    sample_cols.append(route_survey_name_column[0])
+                                if interv_init_column:
+                                    sample_cols.append(interv_init_column[0])
+                                if have_5_min_column:
+                                    sample_cols.append(have_5_min_column[0])
+                                
+                                st.dataframe(clonable_df[sample_cols].head(10), use_container_width=True)
+                        else:
+                            st.info("No clonable IDs found based on the criteria.")
+                    else:
+                        st.info("No records meet the clonable criteria.")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error loading or processing clonable IDs: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                    
+                    # Fallback: Try using existing dataframes if direct fetch fails
+                    st.info("⚠️ Trying fallback to existing dataframes...")
+                    
+                    # You can add fallback logic here if needed
+
             # Home button at the bottom
             if st.button("Home Page"):
                 st.query_params["page"] = "main"
@@ -2839,255 +3281,282 @@ else:
             Display the location maps interface integrated with existing filter structure
             """
             st.title("🗺️ Location Maps")
-            
+
             try:
                 # Load the Elvis data for mapping
                 from automated_refresh_flow_new import PROJECTS, fetch_data
                 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
-                
+                from automated_sync_flow_utils import prepare_location_data
+
                 project_config = PROJECTS[st.session_state["selected_project"]]
-                elvis_config = project_config['databases']["elvis"]
-                table_name = elvis_config['table']
+                elvis_config = project_config["databases"]["elvis"]
+                table_name = elvis_config["table"]
                 database_name = elvis_config["database"]
-                
+
                 with st.spinner("🔄 Loading location data..."):
-                    # Fetch the Elvis data
                     csv_buffer = fetch_data(database_name, table_name)
-                    
-                    if csv_buffer:
-                        # Convert CSV buffer to DataFrame
-                        csv_buffer.seek(0)  # Reset buffer position
-                        elvis_df = pd.read_csv(csv_buffer, low_memory=False)
-                        elvis_df = elvis_df.drop(index=0).reset_index(drop=True)
-                        
-                        # Apply column renaming
-                        try:
-                            elvis_df.columns = elvis_df.columns.str.strip()
-                            # Apply the header mapping
-                            elvis_df = elvis_df.rename(columns=KCATA_HEADER_MAPPING)
-                            st.success("✅ Data loaded and columns renamed successfully!")
-                        except Exception as e:
-                            st.warning(f"Column renaming failed: {str(e)}. Using original column names.")
-                        
-                        # Prepare location data using the utility function
-                        from automated_sync_flow_utils import prepare_location_data
-                        location_df, unique_routes = prepare_location_data(elvis_df)
-                        
-                        if location_df.empty:
-                            st.warning("No location data available after filtering.")
-                            if st.button("🔙 Home Page", key="location_maps_empty_home"):
-                                st.query_params["page"] = "main"
-                                st.rerun()
-                            return
-                        
-                        # Apply search filter (consistent with other pages)
-                        filtered_locations = filter_dataframe(location_df, search_query)
-                        
-                        # Display statistics (consistent with other pages)
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("📍 Total Points", len(filtered_locations))
-                        with col2:
-                            st.metric("🛣️ Unique Routes", filtered_locations['route_code'].nunique())
-                        with col3:
-                            st.metric("📊 Location Types", filtered_locations['location_type'].nunique())
-                        with col4:
-                            st.metric("👥 Survey Records", filtered_locations['id'].nunique())
-                        
-                        # Initialize session state for filters
-                        if 'location_routes' not in st.session_state:
-                            st.session_state.location_routes = []
-                        if 'location_types' not in st.session_state:
-                            st.session_state.location_types = sorted(location_df['location_type'].unique().tolist())
-                        
-                        # Create filters section (similar to reverse_routes_page structure)
-                        st.subheader("📍 Map Filters")
-                        
-                        # Initialize filter variables
-                        route_options = sorted(unique_routes['ROUTE_SURVEYEDCode'].unique().tolist())
-                        location_type_options = sorted(location_df['location_type'].unique().tolist())
-                        
-                        # Create filter columns (similar to reverse_routes_page)
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            # Route filter - MULTI-SELECT
-                            selected_routes = st.multiselect(
-                                "Select Routes:", 
-                                options=route_options,
-                                default=st.session_state.location_routes,
-                                key="location_routes_multiselect"
-                            )
-                        
-                        with col2:
-                            # Location type filter - MULTI-SELECT
-                            selected_location_types = st.multiselect(
-                                "Select Location Types:", 
-                                options=location_type_options,
-                                default=st.session_state.location_types,
-                                key="location_types_multiselect"
-                            )
-                        
-                        with col3:
-                            # Quick actions - Use session state to manage filter state
-                            st.write("**Quick Actions**")
-                            col3a, col3b = st.columns(2)
-                            with col3a:
-                                if st.button("Select All Routes", key="location_select_all_routes"):
-                                    st.session_state.location_routes = route_options
-                                    st.rerun()
-                            with col3b:
-                                if st.button("Clear Routes", key="location_clear_routes"):
-                                    st.session_state.location_routes = []
-                                    st.rerun()
-                        
-                        # Additional quick actions for location types
-                        col4, col5 = st.columns(2)
-                        with col4:
-                            if st.button("Select All Types", key="location_select_all_types"):
-                                st.session_state.location_types = location_type_options
-                                st.rerun()
-                        with col5:
-                            if st.button("Clear Types", key="location_clear_types"):
-                                st.session_state.location_types = []
-                                st.rerun()
-                        
-                        # Quick filter buttons for common scenarios
-                        st.write("**Quick Filters**")
-                        quick_col1, quick_col2, quick_col3 = st.columns(3)
-                        with quick_col1:
-                            if st.button("Just Alighting", key="just_alighting_btn"):
-                                st.session_state.location_types = ['Alighting']
-                                st.session_state.location_routes = []  # Show for all routes
-                                st.rerun()
-                        with quick_col2:
-                            if st.button("Just Origin", key="just_origin_btn"):
-                                st.session_state.location_types = ['Origin']
-                                st.session_state.location_routes = []  # Show for all routes
-                                st.rerun()
-                        with quick_col3:
-                            if st.button("Show All", key="show_all_btn"):
-                                st.session_state.location_routes = []
-                                st.session_state.location_types = location_type_options
-                                st.rerun()
-                        
-                        # Update session state with current selections (for persistence)
-                        st.session_state.location_routes = selected_routes
-                        st.session_state.location_types = selected_location_types
-                        
-                        # Apply route and location type filters
-                        temp_filtered = filtered_locations.copy()
-                        
-                        if selected_routes:
-                            temp_filtered = temp_filtered[temp_filtered['route_code'].isin(selected_routes)]
-                        
-                        if selected_location_types:
-                            temp_filtered = temp_filtered[temp_filtered['location_type'].isin(selected_location_types)]
-                        
-                        # Show filter summary
-                        filter_info = []
-                        if selected_routes:
-                            if len(selected_routes) <= 3:
-                                filter_info.append(f"Routes: {', '.join(selected_routes)}")
-                            else:
-                                filter_info.append(f"Routes: {len(selected_routes)} selected")
-                        if selected_location_types:
-                            if len(selected_location_types) <= 3:
-                                filter_info.append(f"Types: {', '.join(selected_location_types)}")
-                            else:
-                                filter_info.append(f"Types: {len(selected_location_types)} selected")
-                        
-                        if filter_info:
-                            st.info(f"**Active Filters:** {', '.join(filter_info)}")
-                        else:
-                            st.info("**Showing all routes and location types**")
-                        
-                        # Display the data table (consistent with other pages)
-                        st.subheader("📍 Location Data")
-                        display_columns = ['route_code', 'route_name', 'location_type', 'latitude', 'longitude', 'address', 'city']
-                        st.dataframe(temp_filtered[display_columns], use_container_width=True, hide_index=True)
-                        
-                        # Create the map
-                        st.subheader("🗺️ Interactive Map")
-                        
-                        if not temp_filtered.empty:
-                            # Convert coordinates to numeric
-                            temp_filtered['latitude'] = pd.to_numeric(temp_filtered['latitude'], errors='coerce')
-                            temp_filtered['longitude'] = pd.to_numeric(temp_filtered['longitude'], errors='coerce')
-                            
-                            # Remove invalid coordinates
-                            map_data = temp_filtered.dropna(subset=['latitude', 'longitude'])
-                            
-                            if not map_data.empty:
-                                # Color mapping
-                                color_map = {
-                                    'Home': '#1f77b4',      # blue
-                                    'Origin': '#2ca02c',    # green
-                                    'Boarding': '#ff7f0e',  # orange
-                                    'Alighting': '#d62728', # red
-                                    'Destination': '#9467bd' # purple
-                                }
-                                
-                                # Add color column
-                                map_data['color_hex'] = map_data['location_type'].map(color_map)
-                                
-                                # Display the map
-                                try:
-                                    st.map(
-                                        map_data,
-                                        latitude='latitude',
-                                        longitude='longitude',
-                                        color='color_hex',
-                                        size=100,
-                                        use_container_width=True
-                                    )
-                                except Exception as e:
-                                    st.warning(f"Map rendering issue: {str(e)}")
-                                    # Fallback
-                                    st.map(
-                                        map_data,
-                                        latitude='latitude',
-                                        longitude='longitude',
-                                        size=100,
-                                        use_container_width=True
-                                    )
-                                
-                                # Legend
-                                st.sidebar.subheader("🎨 Map Legend")
-                                for loc_type, color in color_map.items():
-                                    if loc_type in map_data['location_type'].unique():
-                                        st.sidebar.markdown(f"<span style='color:{color}'>■</span> {loc_type}", unsafe_allow_html=True)
-                                
-                                # Show map statistics
-                                st.sidebar.subheader("📊 Map Stats")
-                                st.sidebar.metric("Points on Map", len(map_data))
-                                st.sidebar.metric("Routes on Map", map_data['route_code'].nunique())
-                                
-                            else:
-                                st.warning("No valid coordinates to display on map.")
-                        else:
-                            st.warning("No data available for the selected filters.")
-                        
-                        # Download option (consistent with other pages)
-                        st.subheader("📥 Data Export")
-                        if st.button("Download Location Data as CSV", key="location_download_btn"):
-                            csv_data, file_name = create_csv(temp_filtered, "location_data.csv")
-                            download_csv(csv_data, file_name, "Download Location Data")
-                        
-                    else:
+
+                    if not csv_buffer:
                         st.error("❌ Failed to fetch location data from Elvis table")
-                        
+                        return
+
+                    csv_buffer.seek(0)
+                    elvis_df = pd.read_csv(csv_buffer, low_memory=False)
+
+                    # Safely drop junk header row if present
+                    if elvis_df.iloc[0].isnull().all():
+                        elvis_df = elvis_df.drop(index=0)
+
+                    elvis_df = elvis_df.reset_index(drop=True)
+
+                    # Apply column renaming
+                    try:
+                        elvis_df.columns = elvis_df.columns.str.strip()
+                        elvis_df = elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+                        st.success("✅ Data loaded and columns renamed successfully!")
+                    except Exception as e:
+                        st.warning(
+                            f"Column renaming failed: {str(e)}. Using original column names."
+                        )
+
+                    # Prepare location data
+                    location_df, unique_routes = prepare_location_data(elvis_df)
+
+                    if location_df.empty:
+                        st.warning("No location data available after filtering.")
+                        if st.button("🔙 Home Page", key="location_maps_empty_home"):
+                            st.query_params["page"] = "main"
+                            st.rerun()
+                        return
+
+                    # Search (consistent with other pages)
+                    search_query = st.text_input("🔍 Search", value="")
+                    filtered_locations = filter_dataframe(location_df, search_query)
+
+                    # Statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("📍 Total Points", len(filtered_locations))
+                    with col2:
+                        st.metric("🛣️ Unique Routes", filtered_locations["route_code"].nunique())
+                    with col3:
+                        st.metric(
+                            "📊 Location Types",
+                            filtered_locations["location_type"].nunique(),
+                        )
+                    with col4:
+                        st.metric("👥 Survey Records", filtered_locations["id"].nunique())
+
+                    # Initialize session state
+                    if "location_routes" not in st.session_state:
+                        st.session_state.location_routes = []
+
+                    if "location_types" not in st.session_state:
+                        st.session_state.location_types = sorted(
+                            location_df["location_type"].dropna().unique().tolist()
+                        )
+
+                    st.subheader("📍 Map Filters")
+
+                    # Filter options
+                    route_options = sorted(
+                        location_df["route_code"].dropna().unique().tolist()
+                    )
+                    location_type_options = sorted(
+                        location_df["location_type"].dropna().unique().tolist()
+                    )
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        selected_routes = st.multiselect(
+                            "Select Routes:",
+                            options=route_options,
+                            default=st.session_state.location_routes,
+                            key="location_routes_multiselect",
+                        )
+
+                    with col2:
+                        selected_location_types = st.multiselect(
+                            "Select Location Types:",
+                            options=location_type_options,
+                            default=st.session_state.location_types,
+                            key="location_types_multiselect",
+                        )
+
+                    with col3:
+                        st.write("**Quick Actions**")
+                        col3a, col3b = st.columns(2)
+                        with col3a:
+                            if st.button("Select All Routes", key="location_select_all_routes"):
+                                st.session_state.location_routes = route_options
+                                st.rerun()
+                        with col3b:
+                            if st.button("Clear Routes", key="location_clear_routes"):
+                                st.session_state.location_routes = []
+                                st.rerun()
+
+                    col4, col5 = st.columns(2)
+                    with col4:
+                        if st.button("Select All Types", key="location_select_all_types"):
+                            st.session_state.location_types = location_type_options
+                            st.rerun()
+                    with col5:
+                        if st.button("Clear Types", key="location_clear_types"):
+                            st.session_state.location_types = []
+                            st.rerun()
+
+                    st.write("**Quick Filters**")
+                    q1, q2, q3 = st.columns(3)
+                    with q1:
+                        if st.button("Just Alighting", key="just_alighting_btn"):
+                            st.session_state.location_types = ["Alighting"]
+                            st.session_state.location_routes = []
+                            st.rerun()
+                    with q2:
+                        if st.button("Just Origin", key="just_origin_btn"):
+                            st.session_state.location_types = ["Origin"]
+                            st.session_state.location_routes = []
+                            st.rerun()
+                    with q3:
+                        if st.button("Show All", key="show_all_btn"):
+                            st.session_state.location_routes = []
+                            st.session_state.location_types = location_type_options
+                            st.rerun()
+
+                    # Persist state
+                    st.session_state.location_routes = selected_routes
+                    st.session_state.location_types = selected_location_types
+
+                    # Apply filters
+                    temp_filtered = filtered_locations.copy()
+
+                    if selected_routes:
+                        temp_filtered = temp_filtered[
+                            temp_filtered["route_code"].isin(selected_routes)
+                        ]
+
+                    if selected_location_types:
+                        temp_filtered = temp_filtered[
+                            temp_filtered["location_type"].isin(selected_location_types)
+                        ]
+
+                    # Filter summary
+                    filter_info = []
+                    if selected_routes:
+                        filter_info.append(
+                            f"Routes: {len(selected_routes)} selected"
+                            if len(selected_routes) > 3
+                            else f"Routes: {', '.join(selected_routes)}"
+                        )
+                    if selected_location_types:
+                        filter_info.append(
+                            f"Types: {len(selected_location_types)} selected"
+                            if len(selected_location_types) > 3
+                            else f"Types: {', '.join(selected_location_types)}"
+                        )
+
+                    if filter_info:
+                        st.info(f"**Active Filters:** {', '.join(filter_info)}")
+                    else:
+                        st.info("**Showing all routes and location types**")
+
+                    # Data table
+                    st.subheader("📍 Location Data")
+                    display_columns = [
+                        "route_code",
+                        "route_name",
+                        "location_type",
+                        "latitude",
+                        "longitude",
+                        "address",
+                        "city",
+                    ]
+                    st.dataframe(
+                        temp_filtered[display_columns],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    # Map
+                    st.subheader("🗺️ Interactive Map")
+
+                    if temp_filtered.empty:
+                        st.warning("No data available for the selected filters.")
+                    else:
+                        temp_filtered["latitude"] = pd.to_numeric(
+                            temp_filtered["latitude"], errors="coerce"
+                        )
+                        temp_filtered["longitude"] = pd.to_numeric(
+                            temp_filtered["longitude"], errors="coerce"
+                        )
+
+                        map_data = temp_filtered.dropna(
+                            subset=["latitude", "longitude"]
+                        ).copy()
+
+                        if map_data.empty:
+                            st.warning("No valid coordinates to display on map.")
+                        else:
+                            color_map = {
+                                "Home": "#1f77b4",
+                                "Origin": "#2ca02c",
+                                "Boarding": "#ff7f0e",
+                                "Alighting": "#d62728",
+                                "Destination": "#9467bd",
+                            }
+
+                            map_data["color_hex"] = map_data["location_type"].map(color_map)
+
+                            try:
+                                st.map(
+                                    map_data,
+                                    latitude="latitude",
+                                    longitude="longitude",
+                                    color="color_hex",
+                                    size=100,
+                                    use_container_width=True,
+                                )
+                            except Exception:
+                                st.map(
+                                    map_data,
+                                    latitude="latitude",
+                                    longitude="longitude",
+                                    size=100,
+                                    use_container_width=True,
+                                )
+
+                            st.sidebar.subheader("🎨 Map Legend")
+                            for loc, col in color_map.items():
+                                if loc in map_data["location_type"].unique():
+                                    st.sidebar.markdown(
+                                        f"<span style='color:{col}'>■</span> {loc}",
+                                        unsafe_allow_html=True,
+                                    )
+
+                            st.sidebar.subheader("📊 Map Stats")
+                            st.sidebar.metric("Points on Map", len(map_data))
+                            st.sidebar.metric(
+                                "Routes on Map", map_data["route_code"].nunique()
+                            )
+
+                    # Download
+                    st.subheader("📥 Data Export")
+                    if st.button("Download Location Data as CSV", key="location_download_btn"):
+                        csv_data, file_name = create_csv(
+                            temp_filtered, "location_data.csv"
+                        )
+                        download_csv(csv_data, file_name, "Download Location Data")
+
             except Exception as e:
                 st.error(f"❌ Error loading location data: {str(e)}")
                 st.info("Please ensure the Elvis table is available and accessible.")
-                
-                # Show debug information
+
                 with st.expander("🔧 Technical Details"):
-                    st.write("Error details:", str(e))
                     import traceback
                     st.code(traceback.format_exc())
 
-            # Navigation (consistent with other pages)
+            # Navigation
             if st.button("Home Page", key="location_maps_home_btn"):
                 st.query_params["page"] = "main"
                 st.rerun()
@@ -3279,104 +3748,178 @@ else:
                         
             #             st.error(f"❌ Sync failed: {str(e)}")
             #             st.info("Please try again or contact support if the issue persists.")
+            
+            
+            
             # Button to trigger the entire script
+            # if role.upper() != "CLIENT":
+            #     if st.button("Sync"):
+            #         import gc
+            #         import time
+                    
+            #         # ===== PHASE 1: MEMORY CLEANUP BEFORE STARTING =====
+            #         gc.collect()
+                    
+            #         # Delete large dataframes to free memory
+            #         large_vars = ['wkday_raw_df', 'wkend_raw_df', 'wkday_df', 'wkend_df', 
+            #                     'wkday_dir_df', 'wkend_dir_df', 'detail_df', 'wkday_stationwise_df',
+            #                     'wkend_stationwise_df', 'dataframes']
+            #         for var_name in large_vars:
+            #             if var_name in globals():
+            #                 del globals()[var_name]
+            #         gc.collect()
+                    
+            #         # ===== PHASE 2: MINIMAL PROGRESS INDICATORS =====
+            #         keep_alive_placeholder = st.empty()
+            #         progress_bar = st.progress(0)
+            #         status_text = st.empty()
+                    
+            #         def update_progress(step, total_steps, message):
+            #             progress = step / total_steps
+            #             progress_bar.progress(progress)
+            #             status_text.text(f"🔄 {message}")
+                        
+            #             # CRITICAL: Frequent session keep-alive
+            #             keep_alive_placeholder.text(f"Step {step}/{total_steps}: {message}")
+                        
+            #             # Memory cleanup every step
+            #             gc.collect()
+                        
+            #             # Keep session alive with small delay
+            #             time.sleep(0.5)
+                    
+            #         try:
+            #             # ===== PHASE 3: EXECUTE WITH MEMORY MANAGEMENT =====
+            #             update_progress(1, 5, "Starting sync process...")
+                        
+            #             update_progress(2, 5, "Processing data (this may take 3-4 minutes)...")
+            #             result = fetch_and_process_data(
+            #                 st.session_state["selected_project"], 
+            #                 st.session_state["schema"]
+            #             )
+                        
+            #             update_progress(3, 5, "Data processed, updating cache...")
+                        
+            #             # Update cache key
+            #             if "cache_key" not in st.session_state:
+            #                 st.session_state["cache_key"] = 0
+            #             st.session_state["cache_key"] += 1
+                        
+            #             # Clear memory before loading new data
+            #             gc.collect()
+                        
+            #             update_progress(4, 5, "Loading essential data from Snowflake...")
+                        
+            #             # Load only essential dataframes
+            #             dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
+                        
+            #             # Update only critical dataframes needed for current view
+            #             essential_df_mapping = {
+            #                 'wkday_df': 'wkday_df',
+            #                 'wkday_dir_df': 'wkday_dir_df', 
+            #                 'wkday_time_df': 'wkday_time_df',
+            #                 'wkend_df': 'wkend_df',
+            #                 'wkend_dir_df': 'wkend_dir_df',
+            #                 'wkend_time_df': 'wkend_time_df',
+            #                 'detail_df': 'detail_df'
+            #             }
+                        
+            #             for df_key, global_var in essential_df_mapping.items():
+            #                 if df_key in dataframes:
+            #                     globals()[global_var] = dataframes[df_key]
+                        
+            #             update_progress(5, 5, "Finalizing...")
+                        
+            #             # ===== PHASE 4: CLEANUP AND SUCCESS =====
+            #             progress_bar.empty()
+            #             status_text.empty()
+            #             keep_alive_placeholder.empty()
+                        
+            #             st.success("✅ Data synced successfully!")
+                        
+            #             # Small delay then rerun
+            #             time.sleep(2)
+            #             st.rerun()
+                        
+            #         except Exception as e:
+            #             # Cleanup on error
+            #             progress_bar.empty()
+            #             status_text.empty()
+            #             keep_alive_placeholder.empty()
+            #             gc.collect()
+                        
+            #             st.error(f"❌ Sync failed: {str(e)}")
+            if "sync_in_progress" not in st.session_state:
+                st.session_state["sync_in_progress"] = False
+
             if role.upper() != "CLIENT":
-                if st.button("Sync"):
-                    import gc
-                    import time
-                    
-                    # ===== PHASE 1: MEMORY CLEANUP BEFORE STARTING =====
+
+                clicked = st.button(
+                    "Sync",
+                    disabled=st.session_state["sync_in_progress"]
+                )
+
+                if st.session_state["sync_in_progress"]:
+                    st.caption("🔄 Sync is running. Please wait…")
+
+                if clicked and not st.session_state["sync_in_progress"]:
+                    st.session_state["sync_in_progress"] = True
+                    st.session_state["run_sync"] = True
+                    st.rerun()
+
+            if st.session_state.get("run_sync", False):
+
+                import gc
+                import time
+
+                try:
                     gc.collect()
-                    
-                    # Delete large dataframes to free memory
-                    large_vars = ['wkday_raw_df', 'wkend_raw_df', 'wkday_df', 'wkend_df', 
-                                'wkday_dir_df', 'wkend_dir_df', 'detail_df', 'wkday_stationwise_df',
-                                'wkend_stationwise_df', 'dataframes']
-                    for var_name in large_vars:
-                        if var_name in globals():
-                            del globals()[var_name]
-                    gc.collect()
-                    
-                    # ===== PHASE 2: MINIMAL PROGRESS INDICATORS =====
-                    keep_alive_placeholder = st.empty()
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    def update_progress(step, total_steps, message):
-                        progress = step / total_steps
-                        progress_bar.progress(progress)
-                        status_text.text(f"🔄 {message}")
-                        
-                        # CRITICAL: Frequent session keep-alive
-                        keep_alive_placeholder.text(f"Step {step}/{total_steps}: {message}")
-                        
-                        # Memory cleanup every step
-                        gc.collect()
-                        
-                        # Keep session alive with small delay
-                        time.sleep(0.5)
-                    
-                    try:
-                        # ===== PHASE 3: EXECUTE WITH MEMORY MANAGEMENT =====
-                        update_progress(1, 5, "Starting sync process...")
-                        
-                        update_progress(2, 5, "Processing data (this may take 3-4 minutes)...")
-                        result = fetch_and_process_data(
-                            st.session_state["selected_project"], 
-                            st.session_state["schema"]
-                        )
-                        
-                        update_progress(3, 5, "Data processed, updating cache...")
-                        
-                        # Update cache key
-                        if "cache_key" not in st.session_state:
-                            st.session_state["cache_key"] = 0
-                        st.session_state["cache_key"] += 1
-                        
-                        # Clear memory before loading new data
-                        gc.collect()
-                        
-                        update_progress(4, 5, "Loading essential data from Snowflake...")
-                        
-                        # Load only essential dataframes
-                        dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
-                        
-                        # Update only critical dataframes needed for current view
-                        essential_df_mapping = {
-                            'wkday_df': 'wkday_df',
-                            'wkday_dir_df': 'wkday_dir_df', 
-                            'wkday_time_df': 'wkday_time_df',
-                            'wkend_df': 'wkend_df',
-                            'wkend_dir_df': 'wkend_dir_df',
-                            'wkend_time_df': 'wkend_time_df',
-                            'detail_df': 'detail_df'
-                        }
-                        
-                        for df_key, global_var in essential_df_mapping.items():
-                            if df_key in dataframes:
-                                globals()[global_var] = dataframes[df_key]
-                        
-                        update_progress(5, 5, "Finalizing...")
-                        
-                        # ===== PHASE 4: CLEANUP AND SUCCESS =====
-                        progress_bar.empty()
-                        status_text.empty()
-                        keep_alive_placeholder.empty()
-                        
-                        st.success("✅ Data synced successfully!")
-                        
-                        # Small delay then rerun
-                        time.sleep(2)
-                        st.rerun()
-                        
-                    except Exception as e:
-                        # Cleanup on error
-                        progress_bar.empty()
-                        status_text.empty()
-                        keep_alive_placeholder.empty()
-                        gc.collect()
-                        
-                        st.error(f"❌ Sync failed: {str(e)}")
+
+                    fetch_and_process_data(
+                        st.session_state["selected_project"],
+                        st.session_state["schema"]
+                    )
+
+                    st.session_state["cache_key"] = st.session_state.get("cache_key", 0) + 1
+
+                    dataframes = fetch_dataframes_from_snowflake(
+                        st.session_state["cache_key"]
+                    )
+
+                    essential_df_mapping = {
+                        'wkday_df': 'wkday_df',
+                        'wkday_dir_df': 'wkday_dir_df',
+                        'wkday_time_df': 'wkday_time_df',
+                        'wkend_df': 'wkend_df',
+                        'wkend_dir_df': 'wkend_dir_df',
+                        'wkend_time_df': 'wkend_time_df',
+                        'detail_df': 'detail_df'
+                    }
+
+                    for df_key, global_var in essential_df_mapping.items():
+                        if df_key in dataframes:
+                            globals()[global_var] = dataframes[df_key]
+
+                    st.success("✅ Data synced successfully!")
+
+                except Exception as e:
+                    st.error(f"❌ Sync failed: {str(e)}")
+
+                finally:
+                    # Unlock
+                    st.session_state["sync_in_progress"] = False
+                    st.session_state["run_sync"] = False
+
+                    # Trigger ONE clean rerun
+                    st.session_state["sync_completed"] = True
+
+
+            if st.session_state.get("sync_completed", False):
+                # Clear flag BEFORE rerun to avoid loop
+                st.session_state["sync_completed"] = False
+                st.rerun()
+
+
 
 
         # Button Section
