@@ -15,6 +15,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import time
 
+import boto3
+from io import BytesIO
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -32,6 +34,22 @@ private_key_bytes = private_key.private_bytes(
     format=serialization.PrivateFormat.PKCS8,
     encryption_algorithm=serialization.NoEncryption(),
 )
+
+# Helper function to read Excel from S3
+def read_excel_from_s3(bucket_name, file_key, sheet_name):
+    """Read Excel file from S3"""
+    try:
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=os.getenv('aws_access_key_id'),
+            aws_secret_access_key=os.getenv('aws_secret_access_key')
+        )
+        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        excel_data = response['Body'].read()
+        return pd.read_excel(BytesIO(excel_data), sheet_name=sheet_name)
+    except Exception as e:
+        print(f"Error reading Excel from S3: {e}")
+        return pd.DataFrame()
 
 # Ensure session state exists
 if "logged_in" not in st.session_state:
@@ -103,6 +121,350 @@ else:
                     )
             return conn
 
+
+
+        def get_database_records_metrics():
+            """
+            Calculate and return metrics for Elvis, BabyElvis/Main, and KingElvis databases
+            following dashboard logic and client-approved breakdown.
+            """
+            from automated_refresh_flow_new import PROJECTS, fetch_data
+            from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
+
+            metrics = {
+                "project": None,
+
+                # Raw DB totals
+                "elvis_total": 0,
+                "babyelvis_db_total": 0,
+
+                # Used after DB filters
+                "elvis_used": 0,
+                "babyelvis_db_used": 0,
+
+                # Aggregated DB metrics
+                "db_total_records": 0,
+                "db_used_records": 0,
+
+                # Removal metrics (NEW)
+                "removed_by_status_delete": 0,   # elvisstatuscode = 4
+                "removed_by_review": 0,          # KingElvis Final_Usage
+
+                # KingElvis
+                "kingelvis_db_total": 0,
+                "kingelvis_db_used": 0,
+
+                # Final pipeline numbers
+                "merged_records": 0,
+                "filtered_records": 0,
+
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
+            try:
+                project = st.session_state.get("selected_project")
+                if not project:
+                    return metrics
+
+                metrics["project"] = project
+                project_config = PROJECTS[project]
+
+                # ------------------------
+                # Fetch Elvis DB
+                # ------------------------
+                elvis_df = None
+                if "elvis" in project_config["databases"]:
+                    elvis_conf = project_config["databases"]["elvis"]
+                    csv_buffer = fetch_data(elvis_conf["database"], elvis_conf["table"])
+                    if csv_buffer:
+                        elvis_df = pd.read_csv(csv_buffer, low_memory=False)
+                        elvis_df.columns = elvis_df.columns.str.strip()
+                        elvis_df = elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+                        metrics["elvis_total"] = len(elvis_df)
+
+                        have5_col = check_all_characters_present(elvis_df, ["have5minforsurvecode"])
+                        status_col = check_all_characters_present(elvis_df, ["elvisstatuscode"])
+
+                        have5_col = have5_col[0] if have5_col else None
+                        status_col = status_col[0] if status_col else None
+
+                        if have5_col:
+                            elvis_df = elvis_df[elvis_df[have5_col].astype(str) == "1"]
+
+                        if "INTERV_INIT" in elvis_df.columns:
+                            elvis_df = elvis_df[elvis_df["INTERV_INIT"].astype(str) != "999"]
+
+                        if status_col:
+                            status_4_mask = elvis_df[status_col].astype(str).str.lower() == "4"
+                            metrics["removed_by_status_delete"] += status_4_mask.sum()
+                            elvis_df = elvis_df[~status_4_mask]
+
+                        if "id" in elvis_df.columns:
+                            elvis_df = elvis_df.drop_duplicates(subset=["id"])
+
+                        metrics["elvis_used"] = len(elvis_df)
+
+                # ------------------------
+                # Fetch BabyElvis / Main DB
+                # ------------------------
+                baby_df = None
+                db_key = "baby_elvis" if "baby_elvis" in project_config["databases"] else "main"
+
+                if db_key in project_config["databases"]:
+                    conf = project_config["databases"][db_key]
+                    csv_buffer = fetch_data(conf["database"], conf["table"])
+                    if csv_buffer:
+                        baby_df = pd.read_csv(csv_buffer, low_memory=False)
+
+                if baby_df is not None:
+                    baby_df.columns = baby_df.columns.str.strip()
+                    baby_df = baby_df.rename(columns=KCATA_HEADER_MAPPING)
+                    metrics["babyelvis_db_total"] = len(baby_df)
+
+                    have5_col = check_all_characters_present(baby_df, ["have5minforsurvecode"])
+                    status_col = check_all_characters_present(baby_df, ["elvisstatuscode"])
+
+                    have5_col = have5_col[0] if have5_col else None
+                    status_col = status_col[0] if status_col else None
+
+                    if have5_col:
+                        baby_df = baby_df[baby_df[have5_col].astype(str) == "1"]
+
+                    if "INTERV_INIT" in baby_df.columns:
+                        baby_df = baby_df[baby_df["INTERV_INIT"].astype(str) != "999"]
+
+                    if status_col:
+                        status_4_mask = baby_df[status_col].astype(str).str.lower() == "4"
+                        metrics["removed_by_status_delete"] += status_4_mask.sum()
+                        baby_df = baby_df[~status_4_mask]
+
+                    if "id" in baby_df.columns:
+                        baby_df = baby_df.drop_duplicates(subset=["id"])
+
+                    metrics["babyelvis_db_used"] = len(baby_df)
+
+                # ------------------------
+                # Aggregate DB metrics
+                # ------------------------
+                metrics["db_total_records"] = (
+                    metrics["elvis_total"] + metrics["babyelvis_db_total"]
+                )
+                metrics["db_used_records"] = (
+                    metrics["elvis_used"] + metrics["babyelvis_db_used"]
+                )
+
+                # ------------------------
+                # Fetch KingElvis Sheet
+                # ------------------------
+                ke_df = None
+                bucket_name = os.getenv("bucket_name")
+                try:
+                    ke_df = read_excel_from_s3(bucket_name, project_config["files"]["kingelvis"], "Elvis_Review")
+                except Exception:
+                    try:
+                        ke_df = read_excel_from_s3(bucket_name, project_config["files"]["kingelvis"], "Sheet1")
+                    except Exception:
+                        ke_df = None
+
+                if ke_df is not None:
+                    metrics["kingelvis_db_total"] = len(ke_df)
+
+                    if "Final_Usage" in ke_df.columns:
+                        fu = ke_df["Final_Usage"].astype(str).str.strip().str.lower()
+                        removed_mask = fu.isin(["remove", "no data"])
+                        metrics["removed_by_review"] = removed_mask.sum()
+                        metrics["kingelvis_db_used"] = len(ke_df[~removed_mask])
+                    else:
+                        metrics["kingelvis_db_used"] = metrics["kingelvis_db_total"]
+
+                # ------------------------
+                # Merge Elvis + BabyElvis
+                # ------------------------
+                merged_df = None
+                if elvis_df is not None and baby_df is not None:
+                    missing_ids = set(baby_df["id"]) - set(elvis_df["id"])
+                    baby_new = baby_df[baby_df["id"].isin(missing_ids)]
+                    merged_df = (
+                        pd.concat([elvis_df, baby_new], ignore_index=True)
+                        .drop_duplicates(subset=["id"])
+                        .reset_index(drop=True)
+                    )
+                elif elvis_df is not None:
+                    merged_df = elvis_df.copy()
+                elif baby_df is not None:
+                    merged_df = baby_df.copy()
+
+                metrics["merged_records"] = len(merged_df) if merged_df is not None else 0
+
+                # ------------------------
+                # Apply KingElvis filtering (FINAL DASHBOARD NUMBER)
+                # ------------------------
+                filtered_df = merged_df.copy() if merged_df is not None else None
+
+                if filtered_df is not None and ke_df is not None and "Final_Usage" in ke_df.columns:
+
+                    exclude_mask = ke_df["Final_Usage"].astype(str).str.strip().str.lower().isin(
+                        ["remove", "no data"]
+                    )
+
+                    exclude_ids_df = ke_df[exclude_mask]
+
+                    id_col = "elvis_id" if "elvis_id" in ke_df.columns else "id"
+                    exclude_ids = exclude_ids_df[id_col].dropna().unique()
+
+                    # ---- AUDIT COUNTS ----
+                    total_before = len(filtered_df)
+                    excluded_count = filtered_df["id"].isin(exclude_ids).sum()
+                    included_count = total_before - excluded_count
+
+                    print(f"[KingElvis Filter] Total before filter : {total_before}")
+                    print(f"[KingElvis Filter] Excluded IDs       : {excluded_count}")
+                    print(f"[KingElvis Filter] Included IDs       : {included_count}")
+
+                    # ---- APPLY FILTER ----
+                    filtered_df = filtered_df[~filtered_df["id"].isin(exclude_ids)]
+
+                metrics["filtered_records"] = (
+                    len(filtered_df) if filtered_df is not None else metrics["merged_records"]
+                )
+
+                return metrics
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"Error calculating metrics: {e}")
+                return metrics
+
+        def show_database_metrics_popup():
+            """
+            Display database metrics with summary cards and expandable detailed table
+            (client-approved minimal cards + detailed expander)
+            """
+            metrics = get_database_records_metrics()
+
+            if not metrics:
+                st.error("Unable to calculate database metrics")
+                return
+
+            # ---------- CSS ----------
+            st.markdown("""
+            <style>
+            .metric-card {
+                background: #f9fafb;
+                border-radius: 10px;
+                padding: 16px;
+                margin-bottom: 10px;
+                border-left: 4px solid #4f46e5;
+                height: 100%;
+            }
+
+            .metric-title {
+                font-size: 0.9rem;
+                font-weight: 600;
+                color: #374151;
+                margin-bottom: 6px;
+            }
+
+            .metric-value {
+                font-size: 1.6rem;
+                font-weight: 700;
+                color: #111827;
+                line-height: 1.2;
+            }
+
+            .section-title {
+                font-size: 1rem;
+                font-weight: 600;
+                margin: 18px 0 10px 0;
+                color: #111827;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # ---------- TOP SUMMARY CARDS (NUMBERS ONLY) ----------
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">All DB Records</div>
+                    <div class="metric-value">{metrics['db_total_records']:,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col2:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-title">Complete / Used Surveys</div>
+                    <div class="metric-value">{metrics['db_used_records']:,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with col3:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color:#dc2626;">
+                    <div class="metric-title">Final Dashboard Records</div>
+                    <div class="metric-value">{metrics['filtered_records']:,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # ---------- DETAILED METRICS EXPANDER ----------
+            with st.expander("Detailed Metrics Breakdown", expanded=True):
+
+                detailed_rows = [
+                    {
+                        "Category": "All Total Records",
+                        "Count": metrics["db_total_records"],
+                        "Details": "Raw combined records from Elvis DB and BabyElvis/Main DB before applying any filters."
+                    },
+                    {
+                        "Category": "Complete / Used Surveys",
+                        "Count": metrics["db_used_records"],
+                        "Details": (
+                            "Records remaining after DB-level filters: "
+                            "time availability, INTERV_INIT != 999, "
+                            "status != Delete (4), and deduplication."
+                        )
+                    },
+                    {
+                        "Category": "Removed by Status = Delete",
+                        "Count": metrics["removed_by_status_delete"],
+                        "Details": "Records removed from DBs where elvisstatuscode = 4."
+                    },
+                    {
+                        "Category": "Removed by Review",
+                        "Count": metrics["removed_by_review"],
+                        "Details": (
+                            "Records removed based on ReviewTeam sheet "
+                            "(Final_Usage = remove / no data)."
+                        )
+                    },
+                    {
+                        "Category": "Merged Records",
+                        "Count": metrics["merged_records"],
+                        "Details": "Union of Elvis and BabyElvis records after DB filters and deduplication."
+                    },
+                    {
+                        "Category": "Final Dashboard Records",
+                        "Count": metrics["filtered_records"],
+                        "Details": (
+                            "Final authoritative dataset used by the dashboard "
+                            "after applying ReviewTeam exclusions."
+                        )
+                    },
+                ]
+
+                detailed_df = pd.DataFrame(detailed_rows)
+                st.dataframe(detailed_df, use_container_width=True)
+
+            # ---------- FOOTER ----------
+            st.markdown(f"""
+            <div style="text-align:center; font-size:0.75rem; color:#6b7280; margin-top:14px;">
+                Last updated: {metrics['timestamp']}
+            </div>
+            """, unsafe_allow_html=True)
+
         def export_elvis_data():
             """
             Connect to the database and download Elvis table as CSV directly
@@ -138,12 +500,9 @@ else:
             except Exception as e:
                 st.error(f"❌ Error exporting Elvis data: {str(e)}")
 
-
-
         pinned_column='ROUTE_SURVEYEDCode'
 
-
-         # @st.cache(allow_output_mutation=True)  # Use st.cache in Streamlit 1.6.0
+        # @st.cache(allow_output_mutation=True)  # Use st.cache in Streamlit 1.6.0
         def fetch_dataframes_from_snowflake(cache_key):
             """
             Fetches data from Snowflake tables and returns them as a dictionary of DataFrames.
@@ -881,14 +1240,14 @@ else:
                     "🕒  Time Of Day Details"
                 ]
 
-                if 'actransit' in selected_project or 'salem' in selected_project:
+                if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                     menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
                     "🗺️  Location Maps","👥  Demographic Review"])
 
-                if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project and 'rail' not in selected_schema.lower()):
+                if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in selected_schema.lower()):
                     menu_items.append("↺   Clone Records")
 
-                if any(p in selected_project for p in ['stl', 'kcata', 'actransit', 'salem']):
+                if any(p in selected_project for p in ['lacmta_feeder', 'kcata', 'actransit', 'salem']):
                     menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
 
                 if 'rail' in selected_schema.lower():
@@ -930,7 +1289,7 @@ else:
             formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
 
             # Get most recent "Completed" date
-            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
+            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                 if 'LocalTime' in wkday_raw_df.columns and 'LocalTime' in wkend_raw_df.columns:
                     completed_dates = pd.concat([wkday_raw_df['LocalTime'], wkend_raw_df['LocalTime']])
                 else:
@@ -1178,47 +1537,105 @@ else:
 
 
             # Display buttons and dataframes in the second column (col2)
+            # with col2:
+
+            #     st.subheader("Time Range Data")
+            #     # Convert relevant columns in both dataframes to numeric values, handling errors
+            #     data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].apply(pd.to_numeric, errors='coerce')
+            #     data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].apply(pd.to_numeric, errors='coerce')
+
+            #     # Fill any NaN values with 0 (or handle them differently if needed)
+            #     data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].fillna(0)
+            #     data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].fillna(0)
+
+            #     # Calculate the sums for expected and collected totals
+            #     expected_totals = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
+            #     collected_totals = data2[['1', '2', '3', '4', '5']].sum()
+
+            #     # Calculate the difference, ensuring no negative values
+            #     difference = np.maximum(expected_totals.values - collected_totals.values, 0)
+            #     result_df = pd.DataFrame({
+            #         'Time Period':  [ '1', '2', '3', '4', '5'],
+            #         'Collected Totals': collected_totals.values.astype(int),
+            #         'Expected Totals': expected_totals.values.astype(int),
+            #         'Remaining': difference.astype(int),
+            #     })
+
+
+
+            #     filtered_df2 = filter_dataframe(data2, search_query)
+            #     # render_aggrid(filtered_df2, height=500, pinned_column='Display_Text', key='grid2')
+            #     render_styled_dataframe(filtered_df2, height=500, key='grid2')
+            #     # st.dataframe(filtered_df2, use_container_width=True, hide_index=True)
+
+            #     filtered_df4 = filter_dataframe(result_df, search_query)
+            
+            #     # Render AgGrid
+            #     st.subheader("Time Period OverAll Data")
+            #     render_styled_dataframe(filtered_df4, height=400, key='grid4')
             with col2:
-
                 st.subheader("Time Range Data")
-                # Convert relevant columns in both dataframes to numeric values, handling errors
-                data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].apply(pd.to_numeric, errors='coerce')
-                data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].apply(pd.to_numeric, errors='coerce')
 
-                # Fill any NaN values with 0 (or handle them differently if needed)
-                data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].fillna(0)
-                data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].fillna(0)
+                # -------------------------------
+                # Dynamically detect time-period columns
+                # -------------------------------
+                expected_cols = [col for col in data1.columns if col.endswith("Goal")]
+                collected_cols = [col for col in data2.columns if col.isdigit()]
 
-                # Calculate the sums for expected and collected totals
-                expected_totals = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
-                collected_totals = data2[['1', '2', '3', '4', '5']].sum()
+                # Sort columns numerically to keep correct order
+                expected_cols = sorted(
+                    expected_cols,
+                    key=lambda x: int(x.split("(")[1].split(")")[0])
+                )
+                collected_cols = sorted(collected_cols, key=lambda x: int(x))
 
-                # Calculate the difference, ensuring no negative values
-                difference = np.maximum(expected_totals.values - collected_totals.values, 0)
+                # -------------------------------
+                # Convert to numeric safely
+                # -------------------------------
+                data1[expected_cols] = data1[expected_cols].apply(
+                    pd.to_numeric, errors='coerce'
+                )
+                data2[collected_cols] = data2[collected_cols].apply(
+                    pd.to_numeric, errors='coerce'
+                )
+
+                # Fill NaNs
+                data1[expected_cols] = data1[expected_cols].fillna(0)
+                data2[collected_cols] = data2[collected_cols].fillna(0)
+
+                # -------------------------------
+                # Calculate totals
+                # -------------------------------
+                expected_totals = data1[expected_cols].sum()
+                collected_totals = data2[collected_cols].sum()
+
+                # Ensure no negative remaining values
+                difference = np.maximum(
+                    expected_totals.values - collected_totals.values, 0
+                )
+
+                # -------------------------------
+                # Build result dataframe dynamically
+                # -------------------------------
+                time_periods = [str(i + 1) for i in range(len(expected_cols))]
+
                 result_df = pd.DataFrame({
-                    'Time Period':  [ '1', '2', '3', '4', '5'],
+                    'Time Period': time_periods,
                     'Collected Totals': collected_totals.values.astype(int),
                     'Expected Totals': expected_totals.values.astype(int),
                     'Remaining': difference.astype(int),
                 })
 
-
-
+                # -------------------------------
+                # Render dataframes (unchanged behavior)
+                # -------------------------------
                 filtered_df2 = filter_dataframe(data2, search_query)
-                # render_aggrid(filtered_df2, height=500, pinned_column='Display_Text', key='grid2')
                 render_styled_dataframe(filtered_df2, height=500, key='grid2')
-                # st.dataframe(filtered_df2, use_container_width=True, hide_index=True)
 
                 filtered_df4 = filter_dataframe(result_df, search_query)
-            
-                # Render AgGrid
+
                 st.subheader("Time Period OverAll Data")
                 render_styled_dataframe(filtered_df4, height=400, key='grid4')
-                # render_aggrid(filtered_df4,400,'Time Period',4)
-                # st.dataframe(filtered_df4, use_container_width=True, hide_index=True)
-
-                # csv4, file_name4 = create_csv(filtered_df4, "time_period_overall_data.csv")
-                # download_csv(csv4, file_name4, "Download Time Period Overall Data")
 
 
         def weekday_page():
@@ -1233,7 +1650,7 @@ else:
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-            elif 'stl' in selected_project:
+            elif 'lacmta_feeder' in selected_project:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
@@ -1298,7 +1715,7 @@ else:
                 else: 
                     wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
                 # wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Day' ,'Route Level Goal', '# of Surveys', 'Remaining']
-            elif 'stl' in selected_project:
+            elif 'lacmta_feeder' in selected_project:
                 wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
@@ -1406,7 +1823,7 @@ else:
                 st.rerun()
 
         def daily_totals_page():
-            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
+            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                 st.title("📊 Daily Totals - Interviewer and Route Level")
                 # Load Snowflake-extracted DataFrames
                 by_interv_totals_df = dataframes['by_interv_totals_df']
@@ -3853,11 +4270,23 @@ else:
                 st.session_state["sync_in_progress"] = False
 
             if role.upper() != "CLIENT":
-
+                # col1, col2, col3 = st.columns([1, 1, 6])
+                # with col1:
                 clicked = st.button(
                     "Sync",
                     disabled=st.session_state["sync_in_progress"]
                 )
+                
+
+
+
+
+
+
+                # if show_metrics:
+                #     st.markdown("---")
+                #     st.subheader("📊 Database Records Overview")
+                #     show_database_metrics_popup()
 
                 if st.session_state["sync_in_progress"]:
                     st.caption("🔄 Sync is running. Please wait…")
@@ -3928,29 +4357,64 @@ else:
                 if st.button("Export Elvis Data"):
                     export_elvis_data()
 
-            with header_col3:
-                if role.upper() != "CLIENT":
-                    if current_page == "weekend":
-                        csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
-                        st.download_button(
-                            "Download Weekend Raw Data",
-                            data=csv_weekend_raw,
-                            file_name=week_end_raw_file_name,
-                            mime="text/csv",
-                            key="download_weekend"
-                        )
-                    else:
-                        csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
-                        st.download_button(
-                            "Download Weekday Raw Data",
-                            data=csv_weekday_raw,
-                            file_name=week_day_raw_file_name,
-                            mime="text/csv",
-                            key="download_weekday"
-                        )
+        with header_col3:
+            if role.upper() != "CLIENT":
+                if current_page == "weekend":
+                    csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
+                    st.download_button(
+                        "Download Weekend Raw Data",
+                        data=csv_weekend_raw,
+                        file_name=week_end_raw_file_name,
+                        mime="text/csv",
+                        key="download_weekend"
+                    )
+                else:
+                    csv_weekday_raw, week_day_raw_file_name = create_csv(wkday_raw_df, "wkday_raw_data.csv")
+                    st.download_button(
+                        "Download Weekday Raw Data",
+                        data=csv_weekday_raw,
+                        file_name=week_day_raw_file_name,
+                        mime="text/csv",
+                        key="download_weekday"
+                    )
 
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
         # === End of Unified Button Row ===
+        
+        # ---- Validation Section Box ----
+        with st.container(key="validation_section"):
+            st.html("""
+            <style>
+            div.st-key-toggle_right {
+                display: flex;
+                justify-content: flex-end;
+            }
+            </style>
+            """)
+
+            with st.container(border=True):
+                bar_left, bar_right = st.columns([10, 2], vertical_alignment="center")
+
+                with bar_left:
+                    st.markdown(
+                        "### Dashboard Validation "
+                        "<span style='font-size:0.85rem; color:#6b7280;'>"
+                        "— enable to view DB metrics"
+                        "</span>",
+                        unsafe_allow_html=True,
+                    )
+
+                with bar_right:
+                    with st.container(key="toggle_right"):
+                        show_metrics = st.toggle("Enable", value=False, label_visibility="collapsed")
+
+                if show_metrics:
+                    show_database_metrics_popup()
+
+
+
 
 
             
@@ -4014,16 +4478,16 @@ else:
             elif current_page=='timedetails':
                 time_details(detail_df)
             elif current_page == "dailytotals":
-                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
+                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                     daily_totals_page()
             elif current_page == "low_response_questions_tab":
-                if 'actransit' in selected_project or 'salem' in selected_project:  # Add this new route
+                if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:  # Add this new route
                     low_response_questions_page()
             elif current_page == "refusal":  # ADD THIS NEW PAGE FOR REFUSAL ANALYSIS
-                if 'actransit' in selected_project or 'salem' in selected_project:
+                if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                     show_refusal_analysis(refusal_analysis_df, refusal_race_df)
             elif current_page == "surveyreport":
-                if any(x in selected_project for x in ['stl', 'kcata', 'actransit', 'salem']):
+                if any(x in selected_project for x in ['stl', 'kcata', 'actransit', 'salem', 'lacmta_feeder']):
 
                     surveyor_last_row = surveyor_report_trends_df.iloc[-1].to_dict()
                     route_last_row = route_report_trends_df.iloc[-1].to_dict()
@@ -4072,15 +4536,15 @@ else:
                         )
 
             elif current_page == "route_comparison":
-                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project and 'rail' not in selected_schema.lower():
+                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in selected_schema.lower():
                     route_comparison_page()
             elif current_page == "reverse_routes":
-                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project and 'rail' not in selected_schema.lower():
+                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in selected_schema.lower():
                     reverse_routes_page()
             elif current_page == "location_maps":  # Add this line
                 location_maps_page()
             elif current_page == "demographic":
-                if 'actransit' in selected_project or 'salem' in selected_project:
+                if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                    demographic_review_page(demographic_review_df)
 
             else:
@@ -4089,7 +4553,7 @@ else:
                                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                     wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                elif 'stl' in selected_project:
+                elif 'lacmta_feeder' in selected_project:
                     wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                             '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                             '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']

@@ -182,6 +182,24 @@ PROJECTS = {
             'kingelvis':'SALEM_OR_2025_KINGElvis.xlsx'
         }
     }
+    ,
+    "LACMTA_FEEDER": {
+        "databases": {
+                    "elvis": {
+                        "database": os.getenv("LACMTA_FEEDER_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("LACMTA_FEEDER_ELVIS_TABLE_NAME")
+                    },
+                    "main": {
+                        "database": os.getenv("LACMTA_FEEDER_BABY_ELVIS_DATABASE_NAME"),
+                        "table": os.getenv("LACMTA_FEEDER_BABY_ELVIS_TABLE_NAME")
+                    }
+                },
+        "files": {
+            "details": "details_lacmta-feeder_733524_od_excel.xlsx",
+            "cr": "LACMTA_FEEDER_CR.xlsx",
+            'kingelvis':'LACMTA_FEEDER_2025_KINGElvis.xlsx'
+        }
+    }
 }
 
 
@@ -373,7 +391,7 @@ def fetch_and_process_data(project,schema):
     # -----------------------
     # Step 2: Apply header mapping to merged dataframe
     # -----------------------
-    if merged_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
+    if merged_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
         merged_df.columns = merged_df.columns.str.strip()
         merged_df = merged_df.rename(columns=KCATA_HEADER_MAPPING)
         # Remove first row if it exists (as in original code)
@@ -386,7 +404,7 @@ def fetch_and_process_data(project,schema):
     baby_elvis_df = merged_df.copy() if merged_df is not None else None
     
     # Apply header mapping to baby_elvis_df if needed (but NO cleaning)
-    if baby_elvis_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
+    if baby_elvis_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
         baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
         baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
         baby_elvis_df = baby_elvis_df.drop(index=0).reset_index(drop=True)
@@ -522,6 +540,21 @@ def fetch_and_process_data(project,schema):
 
         print("Files read for SALEM from S3")
 
+    elif project=='LACMTA_FEEDER':
+        ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
+
+        detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        stops_df = detail_df_stops.copy()
+        detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
+
+        wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-Overall')
+        wkend_route_df = read_excel_from_s3(bucket_name,project_config["files"]["cr"], 'WkEND-RouteTotal')
+
+        wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-Overall')
+        wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
+
+        print("Files read for SALEM from S3")
+
     elif project=='KCATA RAIL':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
 
@@ -567,36 +600,6 @@ def fetch_and_process_data(project,schema):
         wkday_overall_df[[0,1,2,3,4,5]]=wkday_overall_df[[0,1,2,3,4,5]].fillna(0)
         wkend_overall_df[[0,1,2,3,4,5]]=wkend_overall_df[[0,1,2,3,4,5]].fillna(0)
 
-    # ke_df=ke_df[ke_df['INTERV_INIT']!='999']
-    # ke_df=ke_df[ke_df['INTERV_INIT']!=999]
-    # ke_df=ke_df[ke_df['1st Cleaner']!='No 5 MIN']
-    # ke_df=ke_df[ke_df['1st Cleaner']!='Test']
-    # ke_df=ke_df[ke_df['1st Cleaner']!='Test/No 5 MIN']
-    # detail_df_stops = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'STOPS')
-    # detail_df_xfers = read_excel_from_s3(bucket_name, 'details_TUCSON_AZ_od_excel.xlsx', 'XFERS')
-
-    # wkend_overall_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkEND-Overall')
-    # wkend_route_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkEND-RouteTotal')
-
-    # wkday_overall_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-Overall')
-    # wkday_route_df = read_excel_from_s3(bucket_name, 'TUCSON_AZ_CR.xlsx', 'WkDAY-RouteTotal')
-
-    # have5min_column_check=['have5minforsurvecode']
-    # have5min_column=check_all_characters_present(df,have5min_column_check)
-    # Ensure consistent types
-    # df[have5min_column[0]] = df[have5min_column[0]].astype(str)
-    # df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
-    # df=df[df[have5min_column[0]]=='1']
-    # df=df[df['INTERV_INIT']!='999']
-    # df=df[df['INTERV_INIT']!=999]
-    # stop_on_column_check=['stoponaddr']
-    # stop_off_column_check=['stopoffaddr']
-    # stop_on_id_column_check=['stoponclntid']
-    # stop_off_id_column_check=['stopoffclntid']
-    # stop_on_id_column=check_all_characters_present(df,stop_on_id_column_check)
-    # stop_off_id_column=check_all_characters_present(df,stop_off_id_column_check)
-    # stop_on_column=check_all_characters_present(df,stop_on_column_check)
-    # stop_off_column=check_all_characters_present(df,stop_off_column_check)
 
     print("Filtered df data =", len(df))
 
@@ -917,13 +920,13 @@ def fetch_and_process_data(project,schema):
         wkday_time_value_df=create_time_value_df_with_display(wkday_overall_df,weekday_df,time_column,project)
     
     # ----- Route Direction DF -----
-    if project in ["ACTRANSIT", "SALEM", "KCATA"]:
-        wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
-        wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
-    else:
-        print("Creating weekend route direction df for other projects")
-        wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
-        wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
+    # if project in ["ACTRANSIT", "SALEM", "KCATA", "LACMTA_FEEDER"]:
+    #     wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
+    #     wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
+    # else:
+    print("Creating weekend route direction df for other projects")
+    wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
+    wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
 
     # ----- Station-wise Route DF -----
     if project=='KCATA RAIL':
@@ -949,7 +952,7 @@ def fetch_and_process_data(project,schema):
     #     weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
     #     weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
     # Include LocalTime column in raw data exports
-    if project=='KCATA' or project=='KCATA RAIL' or project=='ACTRANSIT' or project=='SALEM':
+    if project=='KCATA' or project=='KCATA RAIL' or project=='ACTRANSIT' or project=='SALEM' or project=='LACMTA_FEEDER':
         weekday_df.dropna(subset=[time_column[0]],inplace=True)
         weekday_raw_df=weekday_df[['id', 'LocalTime', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_df.dropna(subset=[time_column[0]],inplace=True)
@@ -989,7 +992,7 @@ def fetch_and_process_data(project,schema):
     else:
         wkend_comparison_df['Total_DIFFERENCE']=0
 
-    if project == 'KCATA' or project == 'ACTRANSIT' or project == 'SALEM':
+    if project == 'KCATA' or project == 'ACTRANSIT' or project == 'SALEM' or project == 'LACMTA_FEEDER':
         rename_dict = {
             'CR_Early_AM': '(1) Goal',
             'CR_AM_Peak': '(2) Goal',
@@ -1515,7 +1518,7 @@ def fetch_and_process_data(project,schema):
 
 
 
-    if project=='KCATA' or project=='ACTRANSIT' or project=='SALEM':
+    if project=='KCATA' or project=='ACTRANSIT' or project=='SALEM' or project == 'LACMTA_FEEDER':
         # Check if weekend data exists
         has_weekend_data = False
         weekend_dataframes = {}

@@ -476,6 +476,65 @@ def create_route_direction_level_df(overalldf,df,time_column,project):
         new_df['Evening_DIFFERENCE'] = (new_df['CR_Evening'] - new_df['DB_Evening']).clip(lower=0).apply(math.ceil)
         new_df['Total_DIFFERENCE'] = (new_df[['Early_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 
                                             'PM_PEAK_DIFFERENCE', 'Evening_DIFFERENCE']].sum(axis=1))
+    elif project=='LACMTA_FEEDER':
+        # Time period values
+        am_peak_values = ['AM1','AM2','AM3','MID1','MID2']
+        midday_values = ['MID7','MID3','MID4','MID5','MID6']
+        pm_peak_values = ['PM1','PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        # Column names in the DataFrame (as strings)
+        am_peak_column = ['1']        
+        midday_column = ['2']     
+        pm_peak_column = ['3']   
+        evening_column = ['4']   
+
+        # Initialize new DataFrame
+        new_df = pd.DataFrame()
+        new_df['ROUTE_SURVEYEDCode'] = overalldf['LS_NAME_CODE']
+
+        # Convert and clean numeric columns
+        def safe_convert(x):
+            try:
+                return math.ceil(float(x)) if pd.notnull(x) else 0
+            except (ValueError, TypeError):
+                return 0
+
+        # Process each time period column
+        for col, col_name in [(am_peak_column, 'CR_AM_Peak'),
+                            (midday_column, 'CR_Midday'),
+                            (pm_peak_column, 'CR_PM_Peak'),
+                            (evening_column, 'CR_Evening')]:
+            overalldf[col[0]] = pd.to_numeric(overalldf[col[0]], errors='coerce').fillna(0)
+            new_df[col_name] = overalldf[col[0]].apply(safe_convert)
+
+        # Calculate totals
+        new_df['CR_Total'] = new_df['CR_AM_Peak'] + new_df['CR_Midday'] + new_df['CR_PM_Peak'] + new_df['CR_Evening']
+
+        # Get counts from the database
+        for index, row in new_df.iterrows():
+            route_code = row['ROUTE_SURVEYEDCode']
+
+            def get_counts(time_values):
+                subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+                return subset_df.drop_duplicates(subset='id').shape[0]
+
+            # Initialize all DB columns first
+            new_df.at[index, 'DB_AM_Peak'] = get_counts(am_peak_values)
+            new_df.at[index, 'DB_Midday'] = get_counts(midday_values)
+            new_df.at[index, 'DB_PM_Peak'] = get_counts(pm_peak_values)
+            new_df.at[index, 'DB_Evening'] = get_counts(evening_values)
+            new_df.at[index, 'DB_Total'] = (new_df.at[index, 'DB_AM_Peak'] + 
+                                            new_df.at[index, 'DB_Midday'] + 
+                                            new_df.at[index, 'DB_PM_Peak'] + 
+                                            new_df.at[index, 'DB_Evening'])
+
+        # Calculate differences
+        new_df['AM_PEAK_DIFFERENCE'] = (new_df['CR_AM_Peak'] - new_df['DB_AM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['Midday_DIFFERENCE'] = (new_df['CR_Midday'] - new_df['DB_Midday']).clip(lower=0).apply(math.ceil)
+        new_df['PM_PEAK_DIFFERENCE'] = (new_df['CR_PM_Peak'] - new_df['DB_PM_Peak']).clip(lower=0).apply(math.ceil)
+        new_df['Evening_DIFFERENCE'] = (new_df['CR_Evening'] - new_df['DB_Evening']).clip(lower=0).apply(math.ceil)
+        new_df['Total_DIFFERENCE'] = (new_df[['AM_PEAK_DIFFERENCE', 'Midday_DIFFERENCE', 'PM_PEAK_DIFFERENCE', 'Evening_DIFFERENCE']].sum(axis=1))
     elif project=='KCATA RAIL':
         early_am_values = ['AM1','AM2']
         am_values = ['AM3', 'MID1','MID2','MID7']
@@ -1267,6 +1326,101 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                     math.ceil(max(0, evening_diff))
                 )
                 route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0, overall_difference))
+        elif project=="LACMTA_FEEDER":
+            am_peak_values = ['AM1','AM2','AM3','MID1','MID2']
+            midday_values = ['MID7','MID3','MID4','MID5','MID6']
+            pm_peak_values = ['PM1','PM2','PM3','PM4','PM5']
+            evening_values = ['PM6','PM7','PM8','PM9']
+
+            am_peak_column=['1']
+            midday_colum=['2']
+            pm_peak_column=['3']
+            evening_column=['4']
+
+            def convert_string_to_integer(x):
+                try:
+                    return float(x)
+                except (ValueError, TypeError):
+                    return 0
+
+            def safe_ceil(series):
+                return pd.to_numeric(series, errors='coerce').fillna(0).apply(lambda x: math.ceil(x))
+
+            new_df=pd.DataFrame()
+            new_df['ROUTE_SURVEYEDCode']=overall_df['LS_NAME_CODE']
+            new_df['CR_AM_Peak']  = safe_ceil(overall_df[am_peak_column[0]])
+            new_df['CR_Midday']   = safe_ceil(overall_df[midday_colum[0]])
+            new_df['CR_PM_Peak']  = safe_ceil(overall_df[pm_peak_column[0]])
+            new_df['CR_Evening']  = safe_ceil(overall_df[evening_column[0]])
+
+            new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
+            new_df.fillna(0,inplace=True)
+
+            for index, row in new_df.iterrows():
+                route_code = row['ROUTE_SURVEYEDCode']
+
+                def get_counts_and_ids(time_values):
+                    subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+                    subset_df=subset_df.drop_duplicates(subset='id')
+                    count = subset_df.shape[0]
+                    ids = subset_df['id'].values
+                    return count, ids
+
+                am_value, am_value_ids = get_counts_and_ids(am_peak_values)
+                midday_value, midday_value_ids = get_counts_and_ids(midday_values)
+                pm_peak_value, pm_peak_value_ids = get_counts_and_ids(pm_peak_values)
+                evening_value, evening_value_ids = get_counts_and_ids(evening_values)
+                
+                new_df.loc[index, 'CR_Total'] = row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+                new_df.loc[index, 'CR_AM_Peak'] = row['CR_AM_Peak']
+
+                new_df.loc[index, 'DB_AM_Peak'] = am_value
+                new_df.loc[index, 'DB_Midday'] = midday_value
+                new_df.loc[index, 'DB_PM_Peak'] = pm_peak_value
+                new_df.loc[index, 'DB_Evening'] = evening_value
+                new_df.loc[index, 'DB_Total'] = evening_value + am_value + midday_value + pm_peak_value
+
+            new_df['ROUTE_SURVEYEDCode_Splited']=new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]) )
+
+            route_level_df=pd.DataFrame()
+            unique_routes=new_df['ROUTE_SURVEYEDCode_Splited'].unique()
+            route_level_df['ROUTE_SURVEYEDCode']=unique_routes
+
+            route_df.rename(columns={'ROUTE_TOTAL':'CR_Overall_Goal','SURVEY_ROUTE_CODE':'ROUTE_SURVEYEDCode','LS_NAME_CODE':'ROUTE_SURVEYEDCode'},inplace=True)
+            route_df.dropna(subset=['ROUTE_SURVEYEDCode'],inplace=True)
+            route_level_df=pd.merge(route_level_df,route_df[['ROUTE_SURVEYEDCode','CR_Overall_Goal']],on='ROUTE_SURVEYEDCode')
+
+            for index , row in route_level_df.iterrows():
+                subset_df=new_df[new_df['ROUTE_SURVEYEDCode_Splited']==row['ROUTE_SURVEYEDCode']]
+                sum_per_route_cr = subset_df[['CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
+                sum_per_route_db = subset_df[['DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+
+                route_level_df.loc[index,'CR_AM_Peak']=sum_per_route_cr['CR_AM_Peak']
+                route_level_df.loc[index,'CR_Midday']=sum_per_route_cr['CR_Midday']
+                route_level_df.loc[index,'CR_PM_Peak']=sum_per_route_cr['CR_PM_Peak']
+                route_level_df.loc[index,'CR_Evening']=sum_per_route_cr['CR_Evening']
+                route_level_df.loc[index,'CR_Total']=sum_per_route_cr['CR_Total']
+                
+                route_level_df.loc[index,'DB_AM_Peak']=sum_per_route_db['DB_AM_Peak']
+                route_level_df.loc[index,'DB_Midday']=sum_per_route_db['DB_Midday']
+                route_level_df.loc[index,'DB_PM_Peak']=sum_per_route_db['DB_PM_Peak']
+                route_level_df.loc[index,'DB_Evening']=sum_per_route_db['DB_Evening']
+                route_level_df.loc[index,'DB_Total']=sum_per_route_db['DB_Total']   
+
+            for index, row in route_level_df.iterrows():
+                am_peak_diff=row['CR_AM_Peak']-row['DB_AM_Peak']
+                midday_diff=row['CR_Midday']-row['DB_Midday']    
+                pm_peak_diff=row['CR_PM_Peak']-row['DB_PM_Peak']
+                evening_diff=row['CR_Evening']-row['DB_Evening']
+                total_diff=row['CR_Total']-row['DB_Total']
+                overall_difference=row['CR_Overall_Goal']-row['DB_Total']
+                
+                route_level_df.loc[index, 'AM_PEAK_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+                route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+                route_level_df.loc[index, 'PM_PEAK_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+                route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
+                route_level_df.loc[index, 'Overall_Goal_DIFFERENCE'] = math.ceil(max(0,overall_difference))
         elif project=='SALEM':
             early_am_values = ['AM1','AM2','AM3', 'MID1','MID2','MID7', 'MID3']
             am_values = ['MID4', 'MID5', 'MID6']
@@ -4085,104 +4239,237 @@ def process_route_date_data(df, elvis_df, survey_date_route):
 
 
 # For KCATA three functions Route Comparison, Route Level Comparison, and Route Date Comparison
+# def process_route_comparison_data(cr_df, df, ke_df, project):
+#     """
+#     Process route comparison data and handle reverse direction logic
+#     """
+#     # Filter KINGElvis data
+#     ke_df = ke_df[ke_df['INTERV_INIT'].astype(str) != '999']
+#     ke_df = ke_df[ke_df['1st Cleaner'].astype(str) != 'Test/No 5 MIN']
+#     ke_df = ke_df[ke_df['Final_Usage'].astype(str).str.lower() == 'use']
+
+#     # Merge with filtered KINGElvis data
+#     df = pd.merge(df, ke_df['id'], on='id', how='inner')
+#     df.drop_duplicates(subset='id', inplace=True)
+
+#     def get_int_from_series(series, default=0):
+#         """
+#         Safely get a single int from a Series.
+#         - If empty -> default
+#         - If multiple -> take first non-null
+#         - Coerces to int
+#         """
+#         vals = pd.to_numeric(pd.Series(series).dropna(), errors='coerce').dropna().values
+#         if len(vals) == 0:
+#             return int(default)
+#         return int(vals[0])
+
+#     # Get column names
+#     time_column = check_all_characters_present(df, ['timeoncode'])
+#     route_survey_column = check_all_characters_present(df, ['routesurveyedcode'])
+#     if project == 'SALEM':
+#         early_am_values = ['AM1','AM2','AM3', 'MID1','MID2','MID7', 'MID3']
+#         am_values = ['MID4', 'MID5', 'MID6']
+#         midday_values = ['PM1','PM2','PM3']
+#         pm_peak_values = ['PM4','PM5','PM6','PM7','PM8','PM9']
+#         evening_values = ['PM10','PM11','PM12','PM13','PM14','PM15']
+#     else:
+#         early_am_values = ['AM1','AM2']
+#         am_values = ['AM3', 'MID1','MID2','MID7']
+#         midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+#         pm_peak_values = ['PM2','PM3','PM4','PM5']
+#         evening_values = ['PM6','PM7','PM8','PM9']
+
+#     # CR columns
+#     early_am_column = ['1']
+#     am_column = ['2']
+#     midday_colum = ['3']
+#     pm_column = ['4']
+#     evening_column = ['5']
+
+#     # cr_df.dropna(subset=['LS_NAME_CODE'], inplace=True)
+
+#     # Create new dataframe with CR data
+#     new_df = pd.DataFrame()
+#     new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
+#     new_df['CR_Early_AM'] = cr_df[early_am_column[0]]
+#     new_df['CR_AM_Peak'] = cr_df[am_column[0]]
+#     new_df['CR_Midday'] = cr_df[midday_colum[0]]
+#     new_df['CR_PM_Peak'] = cr_df[pm_column[0]]
+#     new_df['CR_Evening'] = cr_df[evening_column[0]]
+#     new_df.fillna(0, inplace=True)
+
+#     # Ensure CR columns are numeric
+#     cr_columns = ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening']
+#     for col in cr_columns:
+#         new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0)
+
+#     # Add values from database
+#     for index, row in new_df.iterrows():
+#         route_code = row['ROUTE_SURVEYEDCode']
+        
+#         def get_counts_and_ids(time_values):
+#             subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
+#             count = subset_df.shape[0]
+#             ids = subset_df['id'].values
+#             return count, ids
+        
+#         early_am_value, early_am_ids = get_counts_and_ids(early_am_values)
+#         am_value, am_value_ids = get_counts_and_ids(am_values)
+#         midday_value, midday_value_ids = get_counts_and_ids(midday_values)
+#         pm_value, pm_value_ids = get_counts_and_ids(pm_peak_values)
+#         evening_value, evening_value_ids = get_counts_and_ids(evening_values)
+        
+#         new_df.loc[index, 'CR_Total'] = row['CR_Early_AM'] + row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+#         new_df.loc[index, 'DB_Early_AM'] = early_am_value
+#         new_df.loc[index, 'DB_AM_Peak'] = am_value
+#         new_df.loc[index, 'DB_Midday'] = midday_value
+#         new_df.loc[index, 'DB_PM_Peak'] = pm_value
+#         new_df.loc[index, 'DB_Evening'] = evening_value
+#         new_df.loc[index, 'DB_Total'] = evening_value + am_value + midday_value + pm_value + early_am_value
+        
+#         # Store IDs as strings
+#         new_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(map(str, early_am_ids))
+#         new_df.loc[index, 'DB_AM_IDS'] = ', '.join(map(str, am_value_ids))
+#         new_df.loc[index, 'DB_Midday_IDS'] = ', '.join(map(str, midday_value_ids))
+#         new_df.loc[index, 'DB_PM_IDS'] = ', '.join(map(str, pm_value_ids))
+#         new_df.loc[index, 'DB_Evening_IDS'] = ', '.join(map(str, evening_value_ids))
+
+#     return new_df
 def process_route_comparison_data(cr_df, df, ke_df, project):
     """
     Process route comparison data and handle reverse direction logic
     """
-    # Filter KINGElvis data
+
+    # ---------------- FILTER KINGELVIS DATA (UNCHANGED) ----------------
     ke_df = ke_df[ke_df['INTERV_INIT'].astype(str) != '999']
     ke_df = ke_df[ke_df['1st Cleaner'].astype(str) != 'Test/No 5 MIN']
     ke_df = ke_df[ke_df['Final_Usage'].astype(str).str.lower() == 'use']
 
-    # Merge with filtered KINGElvis data
     df = pd.merge(df, ke_df['id'], on='id', how='inner')
     df.drop_duplicates(subset='id', inplace=True)
 
-    def get_int_from_series(series, default=0):
-        """
-        Safely get a single int from a Series.
-        - If empty -> default
-        - If multiple -> take first non-null
-        - Coerces to int
-        """
-        vals = pd.to_numeric(pd.Series(series).dropna(), errors='coerce').dropna().values
-        if len(vals) == 0:
-            return int(default)
-        return int(vals[0])
-
-    # Get column names
+    # ---------------- COLUMN DETECTION (UNCHANGED) ----------------
     time_column = check_all_characters_present(df, ['timeoncode'])
     route_survey_column = check_all_characters_present(df, ['routesurveyedcode'])
-    
+
+    # ==================================================================
+    # ===================== TIME PERIOD DEFINITIONS ====================
+    # ==================================================================
+
     if project == 'SALEM':
-        early_am_values = ['AM1','AM2','AM3', 'MID1','MID2','MID7', 'MID3']
-        am_values = ['MID4', 'MID5', 'MID6']
+        early_am_values = ['AM1','AM2','AM3','MID1','MID2','MID7','MID3']
+        am_values = ['MID4','MID5','MID6']
         midday_values = ['PM1','PM2','PM3']
         pm_peak_values = ['PM4','PM5','PM6','PM7','PM8','PM9']
         evening_values = ['PM10','PM11','PM12','PM13','PM14','PM15']
+
+        early_am_column = '1'
+        am_column = '2'
+        midday_column = '3'
+        pm_column = '4'
+        evening_column = '5'
+
+        has_early_am = True
+
+    elif project == 'LACMTA_FEEDER':
+        # -------- 4 PERIOD PROJECT --------
+        am_values = ['AM1','AM2','AM3','MID1','MID2']
+        midday_values = ['MID7','MID3','MID4','MID5','MID6']
+        pm_peak_values = ['PM1','PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        am_column = '1'
+        midday_column = '2'
+        pm_column = '3'
+        evening_column = '4'
+
+        has_early_am = False
+
     else:
         early_am_values = ['AM1','AM2']
-        am_values = ['AM3', 'MID1','MID2','MID7']
-        midday_values = ['MID3', 'MID4', 'MID5', 'MID6','PM1']
+        am_values = ['AM3','MID1','MID2','MID7']
+        midday_values = ['MID3','MID4','MID5','MID6','PM1']
         pm_peak_values = ['PM2','PM3','PM4','PM5']
         evening_values = ['PM6','PM7','PM8','PM9']
 
-    # CR columns
-    early_am_column = ['1']
-    am_column = ['2']
-    midday_colum = ['3']
-    pm_column = ['4']
-    evening_column = ['5']
+        early_am_column = '1'
+        am_column = '2'
+        midday_column = '3'
+        pm_column = '4'
+        evening_column = '5'
 
-    # cr_df.dropna(subset=['LS_NAME_CODE'], inplace=True)
+        has_early_am = True
 
-    # Create new dataframe with CR data
+    # ==================================================================
+    # ===================== CREATE CR DATAFRAME ========================
+    # ==================================================================
+
     new_df = pd.DataFrame()
     new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
-    new_df['CR_Early_AM'] = cr_df[early_am_column[0]]
-    new_df['CR_AM_Peak'] = cr_df[am_column[0]]
-    new_df['CR_Midday'] = cr_df[midday_colum[0]]
-    new_df['CR_PM_Peak'] = cr_df[pm_column[0]]
-    new_df['CR_Evening'] = cr_df[evening_column[0]]
-    new_df.fillna(0, inplace=True)
 
-    # Ensure CR columns are numeric
-    cr_columns = ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening']
-    for col in cr_columns:
-        new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0)
+    if has_early_am:
+        new_df['CR_Early_AM'] = pd.to_numeric(cr_df[early_am_column], errors='coerce').fillna(0)
+    else:
+        new_df['CR_Early_AM'] = 0
 
-    # Add values from database
+    new_df['CR_AM_Peak'] = pd.to_numeric(cr_df[am_column], errors='coerce').fillna(0)
+    new_df['CR_Midday'] = pd.to_numeric(cr_df[midday_column], errors='coerce').fillna(0)
+    new_df['CR_PM_Peak'] = pd.to_numeric(cr_df[pm_column], errors='coerce').fillna(0)
+    new_df['CR_Evening'] = pd.to_numeric(cr_df[evening_column], errors='coerce').fillna(0)
+
+    # ==================================================================
+    # ===================== DB COUNTS & IDS ============================
+    # ==================================================================
+
     for index, row in new_df.iterrows():
         route_code = row['ROUTE_SURVEYEDCode']
-        
-        def get_counts_and_ids(time_values):
-            subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & (df[time_column[0]].isin(time_values))]
-            count = subset_df.shape[0]
-            ids = subset_df['id'].values
-            return count, ids
-        
-        early_am_value, early_am_ids = get_counts_and_ids(early_am_values)
-        am_value, am_value_ids = get_counts_and_ids(am_values)
-        midday_value, midday_value_ids = get_counts_and_ids(midday_values)
-        pm_value, pm_value_ids = get_counts_and_ids(pm_peak_values)
-        evening_value, evening_value_ids = get_counts_and_ids(evening_values)
-        
-        new_df.loc[index, 'CR_Total'] = row['CR_Early_AM'] + row['CR_AM_Peak'] + row['CR_Midday'] + row['CR_PM_Peak'] + row['CR_Evening']
+
+        def get_counts_and_ids(values):
+            subset_df = df[
+                (df['ROUTE_SURVEYEDCode'] == route_code) &
+                (df[time_column[0]].isin(values))
+            ]
+            return subset_df.shape[0], subset_df['id'].values
+
+        if has_early_am:
+            early_am_value, early_am_ids = get_counts_and_ids(early_am_values)
+        else:
+            early_am_value, early_am_ids = 0, []
+
+        am_value, am_ids = get_counts_and_ids(am_values)
+        midday_value, midday_ids = get_counts_and_ids(midday_values)
+        pm_value, pm_ids = get_counts_and_ids(pm_peak_values)
+        evening_value, evening_ids = get_counts_and_ids(evening_values)
+
+        # ---------------- TOTALS (UNCHANGED LOGIC) ----------------
+        new_df.loc[index, 'CR_Total'] = (
+            row['CR_Early_AM'] + row['CR_AM_Peak'] +
+            row['CR_Midday'] + row['CR_PM_Peak'] +
+            row['CR_Evening']
+        )
+
         new_df.loc[index, 'DB_Early_AM'] = early_am_value
         new_df.loc[index, 'DB_AM_Peak'] = am_value
         new_df.loc[index, 'DB_Midday'] = midday_value
         new_df.loc[index, 'DB_PM_Peak'] = pm_value
         new_df.loc[index, 'DB_Evening'] = evening_value
-        new_df.loc[index, 'DB_Total'] = evening_value + am_value + midday_value + pm_value + early_am_value
-        
-        # Store IDs as strings
+
+        new_df.loc[index, 'DB_Total'] = (
+            early_am_value + am_value +
+            midday_value + pm_value +
+            evening_value
+        )
+
+        # ---------------- IDS ----------------
         new_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(map(str, early_am_ids))
-        new_df.loc[index, 'DB_AM_IDS'] = ', '.join(map(str, am_value_ids))
-        new_df.loc[index, 'DB_Midday_IDS'] = ', '.join(map(str, midday_value_ids))
-        new_df.loc[index, 'DB_PM_IDS'] = ', '.join(map(str, pm_value_ids))
-        new_df.loc[index, 'DB_Evening_IDS'] = ', '.join(map(str, evening_value_ids))
+        new_df.loc[index, 'DB_AM_IDS'] = ', '.join(map(str, am_ids))
+        new_df.loc[index, 'DB_Midday_IDS'] = ', '.join(map(str, midday_ids))
+        new_df.loc[index, 'DB_PM_IDS'] = ', '.join(map(str, pm_ids))
+        new_df.loc[index, 'DB_Evening_IDS'] = ', '.join(map(str, evening_ids))
 
     return new_df
+
 
 def create_route_level_comparison(new_df):
     """
@@ -5827,6 +6114,52 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str):
         # Salem has no multi-select fields
         multi_select_fields = {}
 
+    elif project_name.upper() == "LACMTA_FEEDER":
+        question_dict = {
+            "ORIGIN_PLACE_TYPE": "What type of place are you COMING FROM NOW? (the starting place for your one-way trip)",
+            "PREV_TRANSFERS": "How many buses/trains did you travel on BEFORE you boarded?",
+            "ORIGIN_TRANSPORT": "How did you GET FROM your origin?",
+            "DESTIN_PLACE_TYPE": "What type of place are you GOING TO NOW? (the ending place for your one-way trip)",
+            "NEXT_TRANSFERS": "How many buses/trains will you ride AFTER you get off?",
+            "DESTIN_TRANSPORT": "How will you GET TO your destination?",
+            "TRIP_IN_OPPO_DIR": "Will you (or did you) make this same trip in exactly the opposite direction today?",
+            "COUNT_VH_HH": "How many vehicles (cars, trucks, or motorcycles) are available to your household?",
+            "HHSIZE": "Including YOU, how many people live in your household?",
+            "EMPLOYMENT_STATUS": "What is your employment status? (Check the one response that BEST describes you)",
+            "STUDENT_STATUS": "What is your student status? (check the one response that BEST describes you)",
+            "YEAR_BORN": "In what year were you born?",
+            "YOUR_GENDER": "What is your gender? (select one that best describes your current gender identity)",
+            "INCOME": "Which of the following BEST describes your TOTAL ANNUAL HOUSEHOLD INCOME in 2025 before taxes?",
+            "ENGLISH_ABILITY": "How well do you speak English?",
+            "ROUTE_SURVEYED": "Select the ROUTE and [DIRECTION] you are working.",
+            "PAY_TO_RIDE": "How did you pay for this one-way trip?",
+            "UseVehicle": "Could you have used one of these vehicles to complete this trip?",
+            "DriverLicense": "Do you have a valid driver's license?",
+            "HOME_LANG_Other": "Do you speak a language other than English at home?",
+            "Race": "What is your race / ethnicity? (check all that apply)",
+            "TIME_ON": "What time did you BOARD this bus route?",
+            "FareDiscounts": "Did you receive any of the following special fare discounts for your trip today? (select only one)",
+            "HHSize18": "Including YOU, how many people 18 and over live in your household?",
+            "HH15Over": "Including you, how many people aged 15 and over in your household are employed full/part-time?",
+            "WhichLanguage": "Which language?",
+            "REGISTER_TO_WIN_YN": "People who submit an accurately completed survey will be entered in a random monthly drawing to win a $100 gift card. Would you like to enter into the drawing?"
+
+        }
+
+        # Salem has no multi-select fields
+        multi_select_fields = {
+            "Race": {
+                "American Indian / Alaska Native": "RACE_1",
+                "Black / African American": "RACE_2",
+                "Hispanic / Latino": "RACE_3",
+                "Asian": "RACE_4",
+                "Native Hawaiian / Pacific Islander": "RACE_5",
+                "White": "RACE_6",
+                "Middle Eastern or North African": "RACE_7",
+                "Prefer not to say": "RACE_8"
+            }
+        }
+
     else:
         raise ValueError(f"❌ Unknown project_name '{project_name}'")
 
@@ -5846,6 +6179,44 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str):
     # 3) MAIN PROCESSING LOOP
     # ===============================
     for column, q_text in question_dict.items():
+
+        # Special handling for Race column
+        if column in multi_select_fields and column.lower() == "race":
+            race_mapping = multi_select_fields[column]
+            
+            race_categories = { "Hispanic, all races": 0, "Multiple Races, non-Hispanic": 0 }
+            
+            # Add keys for each single non-Hispanic race
+            for race_name in race_mapping.keys():
+                if "Hispanic" not in race_name:
+                    race_categories[f"{race_name}, non-Hispanic"] = 0
+            
+            for _, row in elvis_df.iterrows():
+                # Collect selected races
+                selected = [race_name for race_name, col_name in race_mapping.items()
+                            if col_name in elvis_df.columns and str(row[col_name]).strip().upper() == "YES"]
+                
+                if not selected:
+                    continue
+                elif any("Hispanic" in s for s in selected):
+                    race_categories["Hispanic, all races"] += 1
+                elif len(selected) == 1:
+                    race_categories[f"{selected[0]}, non-Hispanic"] += 1
+                else:
+                    race_categories["Multiple Races, non-Hispanic"] += 1
+            
+            total_responses = sum(race_categories.values())
+            for cat, count in race_categories.items():
+                pct = (count / total_responses * 100) if total_responses > 0 else 0
+                demographic_review.append({
+                    "Question Column": column,
+                    "Question": q_text,
+                    "Answer Code": cat,
+                    "Answer Text": cat,
+                    "Count": count,
+                    "Percentage": round(pct, 2)
+                })
+            continue
 
         # Handle multi-select
         if column in multi_select_fields:
