@@ -911,9 +911,11 @@ def fetch_and_process_data(project,schema):
     stopoff_clntid_column=check_all_characters_present(df,stopoff_clntid_column_check)
 
 
-    wkend_overall_df.dropna(subset=['LS_NAME_CODE'],inplace=True)
-    wkday_overall_df.dropna(subset=['LS_NAME_CODE'],inplace=True)
+    if wkend_overall_df is not None and 'LS_NAME_CODE' in wkend_overall_df.columns:
+        wkend_overall_df.dropna(subset=['LS_NAME_CODE'], inplace=True)
 
+    if wkday_overall_df is not None and 'LS_NAME_CODE' in wkday_overall_df.columns:
+        wkday_overall_df.dropna(subset=['LS_NAME_CODE'], inplace=True)
  
     if project not in ["KCATA RAIL"]:
         wkend_time_value_df=create_time_value_df_with_display(wkend_overall_df,weekend_df,time_column,project)
@@ -993,23 +995,44 @@ def fetch_and_process_data(project,schema):
         wkend_comparison_df['Total_DIFFERENCE']=0
 
     if project == 'KCATA' or project == 'ACTRANSIT' or project == 'SALEM' or project == 'LACMTA_FEEDER':
-        rename_dict = {
-            'CR_Early_AM': '(1) Goal',
-            'CR_AM_Peak': '(2) Goal',
-            'CR_Midday': '(3) Goal',
-            'CR_PM_Peak': '(4) Goal',
-            'CR_Evening': '(5) Goal',
-            'DB_Early_AM_Peak': '(1) Collect',
-            'DB_AM_Peak': '(2) Collect',
-            'DB_Midday': '(3) Collect',
-            'DB_PM_Peak': '(4) Collect',
-            'DB_Evening': '(5) Collect',
-            'Early_AM_DIFFERENCE': '(1) Remain',
-            'AM_DIFFERENCE': '(2) Remain',
-            'Midday_DIFFERENCE': '(3) Remain',
-            'PM_PEAK_DIFFERENCE': '(4) Remain',
-            'Evening_DIFFERENCE': '(5) Remain'
-        }
+        if project == 'LACMTA_FEEDER':
+            rename_dict = {
+                # Goals
+                'CR_AM_Peak': '(1) Goal',
+                'CR_Midday': '(2) Goal',
+                'CR_PM_Peak': '(3) Goal',
+                'CR_Evening': '(4) Goal',
+
+                # Collected
+                'DB_AM_Peak': '(1) Collect',
+                'DB_Midday': '(2) Collect',
+                'DB_PM_Peak': '(3) Collect',
+                'DB_Evening': '(4) Collect',
+
+                # Remaining
+                'AM_PEAK_DIFFERENCE': '(1) Remain',
+                'Midday_DIFFERENCE': '(2) Remain',
+                'PM_PEAK_DIFFERENCE': '(3) Remain',
+                'Evening_DIFFERENCE': '(4) Remain'
+            }
+        else:
+            rename_dict = {
+                'CR_Early_AM': '(1) Goal',
+                'CR_AM_Peak': '(2) Goal',
+                'CR_Midday': '(3) Goal',
+                'CR_PM_Peak': '(4) Goal',
+                'CR_Evening': '(5) Goal',
+                'DB_Early_AM_Peak': '(1) Collect',
+                'DB_AM_Peak': '(2) Collect',
+                'DB_Midday': '(3) Collect',
+                'DB_PM_Peak': '(4) Collect',
+                'DB_Evening': '(5) Collect',
+                'Early_AM_DIFFERENCE': '(1) Remain',
+                'AM_DIFFERENCE': '(2) Remain',
+                'Midday_DIFFERENCE': '(3) Remain',
+                'PM_PEAK_DIFFERENCE': '(4) Remain',
+                'Evening_DIFFERENCE': '(5) Remain'
+            }
         # Check if weekend data exists using try/except for robustness
         has_weekend_data = False
         try:

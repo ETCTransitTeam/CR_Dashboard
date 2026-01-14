@@ -271,6 +271,68 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
 
         # Add a display text column with sequential numbering
         new_df['Display_Text'] = range(1, len(new_df) + 1)
+    elif project=='LACMTA_FEEDER':
+        am_peak_values = ['AM1','AM2','AM3','MID1','MID2']
+        midday_values = ['MID7','MID3','MID4','MID5','MID6']
+        pm_peak_values = ['PM1','PM2','PM3','PM4','PM5']
+        evening_values = ['PM6','PM7','PM8','PM9']
+
+        # Mapping time groups to corresponding columns
+        time_group_mapping = {
+            1: am_peak_values,
+            2: midday_values,
+            3: pm_peak_values,
+            4: evening_values,
+        }
+
+        time_mapping = {
+            'AM1': 'Before 5:00 am',
+            'AM2': '5:00 am - 6:00 am',
+            'AM3': '6:00 am - 7:00 am',
+            'MID1': '7:00 am - 8:00 am',
+            'MID2': '8:00 am - 9:00 am',
+            'MID7': '9:00 am - 10:00 am',
+            'MID3': '10:00 am - 11:00 am',
+            'MID4': '11:00 am - 12:00 pm',
+            'MID5': '12:00 pm - 1:00 pm',
+            'MID6': '1:00 pm - 2:00 pm',
+            'PM1': '2:00 pm - 3:00 pm',
+            'PM2': '3:00 pm - 4:00 pm',
+            'PM3': '4:00 pm - 5:00 pm',
+            'PM4': '5:00 pm - 6:00 pm',
+            'PM5': '6:00 pm - 7:00 pm',
+            'PM6': '7:00 pm - 8:00 pm',
+            'PM7': '8:00 pm - 9:00 pm',
+            'PM8': '9:00 pm - 10:00 pm',
+            'PM9': 'After 10:00 pm'
+        }
+
+        # Initialize the new DataFrame
+        new_df = pd.DataFrame(columns=["Original Text", 1, 2, 3, 4])
+
+        # Populate the DataFrame with counts
+        for col, values in time_group_mapping.items():
+            for value in values:
+                count = df[df[time_column[0]] == value].shape[0]
+                row = {"Original Text": value}
+
+                # Initialize all columns to 0
+                for c in range(6):
+                    row[c] = 0
+
+                # Update the corresponding column with the count
+                row[col] = count
+                new_df = pd.concat([new_df, pd.DataFrame([row])], ignore_index=True)
+
+        # Map time values to time ranges
+        new_df['Time Range'] = new_df['Original Text'].map(time_mapping)
+
+        # Drop rows with missing time ranges
+        new_df.dropna(subset=['Time Range'], inplace=True)
+
+        # Add a display text column with sequential numbering
+        new_df['Display_Text'] = range(1, len(new_df) + 1)
+    
     elif project=='KCATA RAIL':
         # Filter df where overall_df['ROUTE_SURVEYEDCode'] == df['ROUTE_SURVEYEDCode_Splited']
         matched_df = df[df['ROUTE_SURVEYEDCode_Splited'].isin(overall_df['ROUTE_SURVEYEDCode'])]
@@ -4341,7 +4403,7 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
     Process route comparison data and handle reverse direction logic
     """
 
-    # ---------------- FILTER KINGELVIS DATA (UNCHANGED) ----------------
+    # ---------------- FILTER KINGELVIS DATA ----------------
     ke_df = ke_df[ke_df['INTERV_INIT'].astype(str) != '999']
     ke_df = ke_df[ke_df['1st Cleaner'].astype(str) != 'Test/No 5 MIN']
     ke_df = ke_df[ke_df['Final_Usage'].astype(str).str.lower() == 'use']
@@ -4349,14 +4411,11 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
     df = pd.merge(df, ke_df['id'], on='id', how='inner')
     df.drop_duplicates(subset='id', inplace=True)
 
-    # ---------------- COLUMN DETECTION (UNCHANGED) ----------------
+    # ---------------- COLUMN DETECTION ----------------
     time_column = check_all_characters_present(df, ['timeoncode'])
     route_survey_column = check_all_characters_present(df, ['routesurveyedcode'])
 
-    # ==================================================================
-    # ===================== TIME PERIOD DEFINITIONS ====================
-    # ==================================================================
-
+    # ---------------- TIME PERIOD DEFINITIONS ----------------
     if project == 'SALEM':
         early_am_values = ['AM1','AM2','AM3','MID1','MID2','MID7','MID3']
         am_values = ['MID4','MID5','MID6']
@@ -4364,25 +4423,25 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
         pm_peak_values = ['PM4','PM5','PM6','PM7','PM8','PM9']
         evening_values = ['PM10','PM11','PM12','PM13','PM14','PM15']
 
-        early_am_column = '1'
-        am_column = '2'
-        midday_column = '3'
-        pm_column = '4'
-        evening_column = '5'
+        early_am_column = ['1']
+        am_column = ['2']
+        midday_column = ['3']
+        pm_column = ['4']
+        evening_column = ['5']
 
         has_early_am = True
 
     elif project == 'LACMTA_FEEDER':
-        # -------- 4 PERIOD PROJECT --------
+        # -------- 4 PERIOD PROJECT (OLD LOGIC STYLE) --------
         am_values = ['AM1','AM2','AM3','MID1','MID2']
         midday_values = ['MID7','MID3','MID4','MID5','MID6']
         pm_peak_values = ['PM1','PM2','PM3','PM4','PM5']
         evening_values = ['PM6','PM7','PM8','PM9']
 
-        am_column = '1'
-        midday_column = '2'
-        pm_column = '3'
-        evening_column = '4'
+        am_column = ['1']
+        midday_column = ['2']
+        pm_column = ['3']
+        evening_column = ['4']
 
         has_early_am = False
 
@@ -4393,35 +4452,29 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
         pm_peak_values = ['PM2','PM3','PM4','PM5']
         evening_values = ['PM6','PM7','PM8','PM9']
 
-        early_am_column = '1'
-        am_column = '2'
-        midday_column = '3'
-        pm_column = '4'
-        evening_column = '5'
+        early_am_column = ['1']
+        am_column = ['2']
+        midday_column = ['3']
+        pm_column = ['4']
+        evening_column = ['5']
 
         has_early_am = True
 
-    # ==================================================================
-    # ===================== CREATE CR DATAFRAME ========================
-    # ==================================================================
-
+    # ---------------- CREATE CR DATAFRAME ----------------
     new_df = pd.DataFrame()
     new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
 
     if has_early_am:
-        new_df['CR_Early_AM'] = pd.to_numeric(cr_df[early_am_column], errors='coerce').fillna(0)
+        new_df['CR_Early_AM'] = pd.to_numeric(cr_df[early_am_column[0]], errors='coerce').fillna(0)
     else:
         new_df['CR_Early_AM'] = 0
 
-    new_df['CR_AM_Peak'] = pd.to_numeric(cr_df[am_column], errors='coerce').fillna(0)
-    new_df['CR_Midday'] = pd.to_numeric(cr_df[midday_column], errors='coerce').fillna(0)
-    new_df['CR_PM_Peak'] = pd.to_numeric(cr_df[pm_column], errors='coerce').fillna(0)
-    new_df['CR_Evening'] = pd.to_numeric(cr_df[evening_column], errors='coerce').fillna(0)
+    new_df['CR_AM_Peak'] = pd.to_numeric(cr_df[am_column[0]], errors='coerce').fillna(0)
+    new_df['CR_Midday'] = pd.to_numeric(cr_df[midday_column[0]], errors='coerce').fillna(0)
+    new_df['CR_PM_Peak'] = pd.to_numeric(cr_df[pm_column[0]], errors='coerce').fillna(0)
+    new_df['CR_Evening'] = pd.to_numeric(cr_df[evening_column[0]], errors='coerce').fillna(0)
 
-    # ==================================================================
-    # ===================== DB COUNTS & IDS ============================
-    # ==================================================================
-
+    # ---------------- DB COUNTS ----------------
     for index, row in new_df.iterrows():
         route_code = row['ROUTE_SURVEYEDCode']
 
@@ -4442,7 +4495,6 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
         pm_value, pm_ids = get_counts_and_ids(pm_peak_values)
         evening_value, evening_ids = get_counts_and_ids(evening_values)
 
-        # ---------------- TOTALS (UNCHANGED LOGIC) ----------------
         new_df.loc[index, 'CR_Total'] = (
             row['CR_Early_AM'] + row['CR_AM_Peak'] +
             row['CR_Midday'] + row['CR_PM_Peak'] +
@@ -4461,7 +4513,6 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
             evening_value
         )
 
-        # ---------------- IDS ----------------
         new_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(map(str, early_am_ids))
         new_df.loc[index, 'DB_AM_IDS'] = ', '.join(map(str, am_ids))
         new_df.loc[index, 'DB_Midday_IDS'] = ', '.join(map(str, midday_ids))
@@ -4688,6 +4739,8 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/ac-transit25/lime"
         elif project_name.lower() == 'salem':
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/salemor-cherriots25/lime"
+        elif project_name.lower() == 'lacmta_feeder':
+            return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/lacmta25/lime"
         else:
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/kc-streetcar25/lime"
 

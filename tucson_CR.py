@@ -4057,114 +4057,118 @@ else:
 
         # Header Section
         with header_col1:
-            # st.header('Completion Report')
             # Button to trigger the entire script
-            # if role.upper() != "CLIENT":
-            #     if st.button("Sync"):
-            #         # Add session keep-alive mechanism
-            #         keep_alive_placeholder = st.empty()
-                    
-            #         # Create progress indicators
-            #         progress_bar = st.progress(0)
-            #         status_text = st.empty()
-            #         time_elapsed = st.empty()
-                    
-            #         # Function to update progress and keep session alive
-            #         def update_progress(step, total_steps, message, start_time):
-            #             progress = step / total_steps
-            #             progress_bar.progress(progress)
-            #             elapsed = time.time() - start_time
-            #             status_text.text(f"🔄 {message}")
-            #             time_elapsed.text(f"⏱️ Time elapsed: {elapsed:.1f} seconds")
-                        
-            #             # KEEP SESSION ALIVE - Update placeholder with current status
-            #             keep_alive_placeholder.text(f"⏳ Processing... Step {step} of {total_steps}: {message}")
-                        
-            #             # Small delay to show progress and keep session alive
-            #             time.sleep(0.5)
-                    
-            #         start_time = time.time()
-                    
-            #         try:
-            #             # Step 1: Initialize sync process
-            #             update_progress(1, 12, "Starting sync process...", start_time)
-                        
-            #             # Step 2: Fetch and process data - THIS IS THE LONG-RUNNING PART
-            #             update_progress(2, 12, "Fetching and processing data from Snowflake...", start_time)
-                        
-            #             # Call your long-running function
-            #             result = fetch_and_process_data(st.session_state["selected_project"], st.session_state["schema"])
-                        
-            #             # Continue with progress updates
-            #             update_progress(4, 12, "Data processing completed...", start_time)
-            #             update_progress(5, 12, "Updating cache...", start_time)
-                        
-            #             if "cache_key" not in st.session_state:
-            #                 st.session_state["cache_key"] = 0
-            #             st.session_state["cache_key"] += 1
-                        
-            #             update_progress(6, 12, "Loading processed data...", start_time)
-            #             dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
-            #             update_progress(7, 12, "Data loaded successfully...", start_time)
-                        
-            #             # Update all dataframes with progress updates
-            #             update_progress(8, 12, "Updating weekday dataframes...", start_time)
-            #             wkday_df = dataframes.get('wkday_df', pd.DataFrame())
-            #             wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
-            #             wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
-            #             wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
-            #             wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
-                        
-            #             update_progress(9, 12, "Updating weekend dataframes...", start_time)
-            #             wkend_df = dataframes.get('wkend_df', pd.DataFrame())
-            #             wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
-            #             wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
-            #             wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
-            #             wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
-                        
-            #             update_progress(10, 12, "Updating detail dataframes...", start_time)
-            #             detail_df = dataframes.get('detail_df', pd.DataFrame())
-            #             surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
-            #             route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
-            #             surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
-            #             route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
-                        
-            #             update_progress(11, 12, "Updating analysis dataframes...", start_time)
-            #             low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
-            #             refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
-            #             refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
-            #             by_interv_totals_df = dataframes.get('by_interv_totals_df', pd.DataFrame())
-            #             by_route_totals_df = dataframes.get('by_route_totals_df', pd.DataFrame())
-            #             survey_detail_totals_df = dataframes.get('survey_detail_totals_df', pd.DataFrame())
-            #             route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
-            #             reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
-            #             reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
-                        
-            #             # Final step
-            #             update_progress(12, 12, "Finalizing sync...", start_time)
-                        
-            #             # Clear all progress indicators
-            #             progress_bar.empty()
-            #             status_text.empty()
-            #             time_elapsed.empty()
-            #             keep_alive_placeholder.empty()
-                        
-            #             # Show success message
-            #             total_time = time.time() - start_time
-            #             st.success(f"✅ Data synced successfully in {total_time:.1f} seconds! Pipelines are tidy, tables are aligned, and we're good to go! 📂")
-                        
-            #             # Force a final rerun to ensure all data is properly displayed
-            #             st.rerun()
-                        
-            #         except Exception as e:
-            #             # Clear all progress indicators on error
-            #             progress_bar.empty()
-            #             status_text.empty()
-            #             time_elapsed.empty()
-            #             keep_alive_placeholder.empty()
-                        
-            #             st.error(f"❌ Sync failed: {str(e)}")
-            #             st.info("Please try again or contact support if the issue persists.")
+            # Initialize flag
+            if "sync_running" not in st.session_state:
+                st.session_state.sync_running = False
+
+            if role.upper() != "CLIENT":
+                # If a sync is already running, show a disabled state / info
+                if st.session_state.sync_running:
+                    st.info("🔄 Sync is already running. Please wait for it to finish.")
+                    # Optionally render a disabled-looking button (no action)
+                    st.button("Sync (running...)", disabled=True)
+                else:
+                    if st.button("Sync"):
+                        # Mark as running immediately
+                        st.session_state.sync_running = True
+
+                        # Add session keep-alive mechanism
+                        keep_alive_placeholder = st.empty()
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        time_elapsed = st.empty()
+
+                        def update_progress(step, total_steps, message, start_time):
+                            progress = step / total_steps
+                            progress_bar.progress(progress)
+                            elapsed = time.time() - start_time
+                            status_text.text(f"🔄 {message}")
+                            time_elapsed.text(f"⏱️ Time elapsed: {elapsed:.1f} seconds")
+                            keep_alive_placeholder.text(
+                                f"⏳ Processing... Step {step} of {total_steps}: {message}"
+                            )
+                            time.sleep(0.5)
+
+                        start_time = time.time()
+
+                        try:
+                            update_progress(1, 12, "Starting sync process...", start_time)
+                            update_progress(2, 12, "Fetching and processing data from Snowflake...", start_time)
+
+                            result = fetch_and_process_data(
+                                st.session_state["selected_project"],
+                                st.session_state["schema"],
+                            )
+
+                            update_progress(4, 12, "Data processing completed...", start_time)
+                            update_progress(5, 12, "Updating cache...", start_time)
+
+                            if "cache_key" not in st.session_state:
+                                st.session_state["cache_key"] = 0
+                            st.session_state["cache_key"] += 1
+
+                            update_progress(6, 12, "Loading processed data...", start_time)
+                            dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
+                            update_progress(7, 12, "Data loaded successfully...", start_time)
+
+                            update_progress(8, 12, "Updating weekday dataframes...", start_time)
+                            wkday_df = dataframes.get('wkday_df', pd.DataFrame())
+                            wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
+                            wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
+                            wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
+                            wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
+
+                            update_progress(9, 12, "Updating weekend dataframes...", start_time)
+                            wkend_df = dataframes.get('wkend_df', pd.DataFrame())
+                            wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
+                            wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
+                            wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
+                            wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
+
+                            update_progress(10, 12, "Updating detail dataframes...", start_time)
+                            detail_df = dataframes.get('detail_df', pd.DataFrame())
+                            surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
+                            route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
+                            surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
+                            route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
+
+                            update_progress(11, 12, "Updating analysis dataframes...", start_time)
+                            low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
+                            refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
+                            refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
+                            by_interv_totals_df = dataframes.get('by_interv_totals_df', pd.DataFrame())
+                            by_route_totals_df = dataframes.get('by_route_totals_df', pd.DataFrame())
+                            survey_detail_totals_df = dataframes.get('survey_detail_totals_df', pd.DataFrame())
+                            route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
+                            reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
+                            reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
+
+                            update_progress(12, 12, "Finalizing sync...", start_time)
+
+                            progress_bar.empty()
+                            status_text.empty()
+                            time_elapsed.empty()
+                            keep_alive_placeholder.empty()
+
+                            total_time = time.time() - start_time
+                            st.success(
+                                f"✅ Data synced successfully in {total_time:.1f} seconds! "
+                                "Pipelines are tidy, tables are aligned, and we're good to go! 📂"
+                            )
+
+                        except Exception as e:
+                            progress_bar.empty()
+                            status_text.empty()
+                            time_elapsed.empty()
+                            keep_alive_placeholder.empty()
+                            st.error(f"❌ Sync failed: {str(e)}")
+                            st.info("Please try again or contact support if the issue persists.")
+                            time.sleep(2)
+
+                        # Mark as not running and rerun once at the end
+                        st.session_state.sync_running = False
+                        st.rerun()
             
             
             
@@ -4266,16 +4270,20 @@ else:
             #             gc.collect()
                         
             #             st.error(f"❌ Sync failed: {str(e)}")
-            if "sync_in_progress" not in st.session_state:
-                st.session_state["sync_in_progress"] = False
 
-            if role.upper() != "CLIENT":
-                # col1, col2, col3 = st.columns([1, 1, 6])
-                # with col1:
-                clicked = st.button(
-                    "Sync",
-                    disabled=st.session_state["sync_in_progress"]
-                )
+
+
+
+            # if "sync_in_progress" not in st.session_state:
+            #     st.session_state["sync_in_progress"] = False
+
+            # if role.upper() != "CLIENT":
+            #     # col1, col2, col3 = st.columns([1, 1, 6])
+            #     # with col1:
+            #     clicked = st.button(
+            #         "Sync",
+            #         disabled=st.session_state["sync_in_progress"]
+            #     )
                 
 
 
@@ -4283,70 +4291,70 @@ else:
 
 
 
-                # if show_metrics:
-                #     st.markdown("---")
-                #     st.subheader("📊 Database Records Overview")
-                #     show_database_metrics_popup()
+            #     # if show_metrics:
+            #     #     st.markdown("---")
+            #     #     st.subheader("📊 Database Records Overview")
+            #     #     show_database_metrics_popup()
 
-                if st.session_state["sync_in_progress"]:
-                    st.caption("🔄 Sync is running. Please wait…")
+            #     if st.session_state["sync_in_progress"]:
+            #         st.caption("🔄 Sync is running. Please wait…")
 
-                if clicked and not st.session_state["sync_in_progress"]:
-                    st.session_state["sync_in_progress"] = True
-                    st.session_state["run_sync"] = True
-                    st.rerun()
+            #     if clicked and not st.session_state["sync_in_progress"]:
+            #         st.session_state["sync_in_progress"] = True
+            #         st.session_state["run_sync"] = True
+            #         st.rerun()
 
-            if st.session_state.get("run_sync", False):
+            # if st.session_state.get("run_sync", False):
 
-                import gc
-                import time
+            #     import gc
+            #     import time
 
-                try:
-                    gc.collect()
+            #     try:
+            #         gc.collect()
 
-                    fetch_and_process_data(
-                        st.session_state["selected_project"],
-                        st.session_state["schema"]
-                    )
+            #         fetch_and_process_data(
+            #             st.session_state["selected_project"],
+            #             st.session_state["schema"]
+            #         )
 
-                    st.session_state["cache_key"] = st.session_state.get("cache_key", 0) + 1
+            #         st.session_state["cache_key"] = st.session_state.get("cache_key", 0) + 1
 
-                    dataframes = fetch_dataframes_from_snowflake(
-                        st.session_state["cache_key"]
-                    )
+            #         dataframes = fetch_dataframes_from_snowflake(
+            #             st.session_state["cache_key"]
+            #         )
 
-                    essential_df_mapping = {
-                        'wkday_df': 'wkday_df',
-                        'wkday_dir_df': 'wkday_dir_df',
-                        'wkday_time_df': 'wkday_time_df',
-                        'wkend_df': 'wkend_df',
-                        'wkend_dir_df': 'wkend_dir_df',
-                        'wkend_time_df': 'wkend_time_df',
-                        'detail_df': 'detail_df'
-                    }
+            #         essential_df_mapping = {
+            #             'wkday_df': 'wkday_df',
+            #             'wkday_dir_df': 'wkday_dir_df',
+            #             'wkday_time_df': 'wkday_time_df',
+            #             'wkend_df': 'wkend_df',
+            #             'wkend_dir_df': 'wkend_dir_df',
+            #             'wkend_time_df': 'wkend_time_df',
+            #             'detail_df': 'detail_df'
+            #         }
 
-                    for df_key, global_var in essential_df_mapping.items():
-                        if df_key in dataframes:
-                            globals()[global_var] = dataframes[df_key]
+            #         for df_key, global_var in essential_df_mapping.items():
+            #             if df_key in dataframes:
+            #                 globals()[global_var] = dataframes[df_key]
 
-                    st.success("✅ Data synced successfully!")
+            #         st.success("✅ Data synced successfully!")
 
-                except Exception as e:
-                    st.error(f"❌ Sync failed: {str(e)}")
+            #     except Exception as e:
+            #         st.error(f"❌ Sync failed: {str(e)}")
 
-                finally:
-                    # Unlock
-                    st.session_state["sync_in_progress"] = False
-                    st.session_state["run_sync"] = False
+            #     finally:
+            #         # Unlock
+            #         st.session_state["sync_in_progress"] = False
+            #         st.session_state["run_sync"] = False
 
-                    # Trigger ONE clean rerun
-                    st.session_state["sync_completed"] = True
+            #         # Trigger ONE clean rerun
+            #         st.session_state["sync_completed"] = True
 
 
-            if st.session_state.get("sync_completed", False):
-                # Clear flag BEFORE rerun to avoid loop
-                st.session_state["sync_completed"] = False
-                st.rerun()
+            # if st.session_state.get("sync_completed", False):
+            #     # Clear flag BEFORE rerun to avoid loop
+            #     st.session_state["sync_completed"] = False
+            #     st.rerun()
 
 
 
