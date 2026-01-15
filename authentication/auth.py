@@ -290,8 +290,8 @@ def render_auth_layout(content_function, title, subtitle=None, dashboard_type="s
 
 def send_activation_email(email, activation_token):
     """Send an account activation email with a secure token using HTML format."""
-    activation_link = f"http://18.116.237.208:8501/?page=activate&token={activation_token}"
-    
+    activation_link = f"http://3.137.207.26:8501/?page=activate&token={activation_token}"
+
     subject = "Activate Your Account - ETC Institute"
     
     # HTML email body
@@ -710,7 +710,7 @@ def generate_reset_token(email):
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def send_reset_email(user_email, reset_token):
-    reset_link = f"http://18.116.237.208:8501/?page=reset_password&token={reset_token}"
+    reset_link = f"http://3.137.207.26:8501/?page=reset_password&token={reset_token}"
     subject = "Password Reset Request - ETC Institute"
 
     body = f"""
@@ -915,7 +915,7 @@ def generate_change_password_token(email):
 
 def send_change_password_email(email):
     token = generate_change_password_token(email)
-    change_link = f"http://18.116.237.208:8501/?page=change_password&token={token}"
+    change_link = f"http://3.137.207.26:8501/?page=change_password&token={token}"
     
     subject = "Change Your Password - ETC Institute"
 
