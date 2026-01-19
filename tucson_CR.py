@@ -108,20 +108,66 @@ else:
         selected_schema = st.session_state.get("schema", None)
         selected_project = str(st.session_state.get("selected_project", "")).lower()
         def create_snowflake_connection():
+            # Get selected project and agency
+            selected_agency = st.session_state.get("selected_agency", None)
+            selected_project = st.session_state.get("selected_project", "")
+            print("Selected Agency:", selected_agency)
+
+            # Determine which schema to use
+            schema_to_use = selected_schema  # Default to current schema
+            
+            if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                # Use agency-specific schema: LACMTA_FEEDER_<AGENCY_NAME>
+                schema_to_use = f"LACMTA_FEEDER_{selected_agency}"
+                print(f"Using agency schema: {schema_to_use}")
+            
             conn = snowflake.connector.connect(
                 user=os.getenv('SNOWFLAKE_USER'),
-                private_key= private_key_bytes,
+                private_key=private_key_bytes,
                 account=os.getenv('SNOWFLAKE_ACCOUNT'),
                 warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
                 database=os.getenv('SNOWFLAKE_DATABASE'),
                 authenticator="SNOWFLAKE_JWT",
-                schema=selected_schema,
+                schema=schema_to_use,  # Use dynamic schema name
                 role=os.getenv('SNOWFLAKE_ROLE'),
                 network_timeout=120
-                    )
+            )
             return conn
 
-
+        def get_agency_names(project):
+            """Fetch unique agency names from details file for LACMTA_FEEDER project"""
+            if project != "lacmta_feeder":
+                return []
+            
+            try:
+                from automated_refresh_flow_new import PROJECTS
+                project = project.upper()
+                project_config = PROJECTS[project]
+                bucket_name = os.getenv('bucket_name')
+                details_file = project_config["files"]["details"]
+                # Read details file from S3
+                s3_client = boto3.client(
+                    's3',
+                    aws_access_key_id=os.getenv('aws_access_key_id'),
+                    aws_secret_access_key=os.getenv('aws_secret_access_key')
+                )
+                
+                # Read STOPS sheet from details file
+                response = s3_client.get_object(Bucket=bucket_name, Key=details_file)
+                excel_data = response['Body'].read()
+                details_df = pd.read_excel(BytesIO(excel_data), sheet_name='STOPS')
+                
+                # Get unique agency names
+                if 'agency' in details_df.columns:
+                    agencies = sorted(details_df['agency'].dropna().unique())
+                    return agencies
+                else:
+                    print("Warning: agency column not found in details file")
+                    return []
+                    
+            except Exception as e:
+                print(f"Error fetching agency names: {e}")
+                return []
 
         def get_database_records_metrics():
             """
@@ -1214,11 +1260,46 @@ else:
                         st.session_state["show_switch_success"] = True
                         st.session_state["success_project_name"] = selected_new_project
                         st.rerun()
+                
+                # === AGENCY DROPDOWN FOR LACMTA_FEEDER ===
+                if selected_project == "lacmta_feeder":
+                    st.markdown("<div class='section-label'>Agency Filter</div>", unsafe_allow_html=True)
+                    
+                    # Fetch agency names from details file
+                    agency_names = get_agency_names("lacmta_feeder")
 
+                    if not agency_names:
+                        st.info("No agencies found in details file.")
+                    else:
+                        # Add "All" option at the beginning
+                        agency_options = ["All"] + agency_names
+                        
+                        # Initialize selected agency in session state
+                        if "selected_agency" not in st.session_state:
+                            st.session_state.selected_agency = "All"
+                        
+                        # Agency dropdown
+                        selected_agency = st.selectbox(
+                            "Select Agency",
+                            agency_options,
+                            index=agency_options.index(st.session_state.selected_agency) if st.session_state.selected_agency in agency_options else 0,
+                            key="agency_selector",
+                            help="Filter data by agency",
+                            label_visibility="collapsed"
+                        )
+                        
+                        # Update session state if agency changed
+                        if selected_agency != st.session_state.get("selected_agency"):
+                            st.session_state.selected_agency = selected_agency
+                            st.rerun()
+                        
+                        # Show current selection
+                        if st.session_state.selected_agency != "All":
+                            st.info(f"**Filtering by:** {st.session_state.selected_agency}")
 
             
 
-            st.markdown("<div class='section-label'>Completion Report</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-label'>Dashboard Pages</div>", unsafe_allow_html=True)
 
             # --- Menu Items ---
             if role.upper() == "CLIENT":
@@ -1284,9 +1365,16 @@ else:
 
         # === ADD PROFESSIONAL HEADER HERE - REPLACE YOUR CURRENT HEADER ===
         def create_professional_header():
+            from zoneinfo import ZoneInfo
+
+            # =====================================================
+            # TIMEZONE SETUP
+            # =====================================================
+            last_refresh_utc = datetime.datetime.now(ZoneInfo("UTC"))
+
             # === DATE SETUP ===
             current_date = datetime.datetime.now()
-            formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
+            formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
 
             # Get most recent "Completed" date
             if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
@@ -1453,9 +1541,9 @@ else:
             with success_placeholder.container():
                 st.success(f"✅ Successfully switched to **{success_project}**! Loading new data...")
             
-            # Auto-remove after 3 seconds
+            # Auto-remove after 2 seconds
             import time
-            time.sleep(3)
+            time.sleep(2)
             success_placeholder.empty()
             
             # Clear the success state
@@ -4094,12 +4182,51 @@ else:
 
                         try:
                             update_progress(1, 12, "Starting sync process...", start_time)
-                            update_progress(2, 12, "Fetching and processing data from Snowflake...", start_time)
-
-                            result = fetch_and_process_data(
-                                st.session_state["selected_project"],
-                                st.session_state["schema"],
-                            )
+                            
+                            # Check if we need to sync to agency schema
+                            selected_agency = st.session_state.get("selected_agency", None)
+                            selected_project = st.session_state.get("selected_project", "")
+                            
+                            if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                                # Create agency schema if it doesn't exist
+                                update_progress(2, 12, f"Preparing agency schema: {selected_agency}...", start_time)
+                                # agency_schema_name = create_agency_schema(selected_agency)
+                                agency_schema_name = f"LACMTA_FEEDER_{selected_agency}"
+                                if agency_schema_name:
+                                    update_progress(3, 12, f"Syncing to agency schema: {agency_schema_name}...", start_time)
+                                    # Store current schema
+                                    current_schema = st.session_state.get("schema")
+                                    
+                                    try:
+                                        # Temporarily switch to agency schema
+                                        st.session_state["schema"] = agency_schema_name
+                                        
+                                        result = fetch_and_process_data(
+                                            st.session_state["selected_project"],
+                                            agency_schema_name,
+                                        )
+                                        
+                                        # Restore original schema
+                                        st.session_state["schema"] = current_schema
+                                        
+                                    except Exception as e:
+                                        # Restore original schema on error
+                                        st.session_state["schema"] = current_schema
+                                        raise e
+                                else:
+                                    update_progress(3, 12, "Agency schema creation failed, syncing to default...", start_time)
+                                    result = fetch_and_process_data(
+                                        st.session_state["selected_project"],
+                                        st.session_state["schema"],
+                                    )
+                            else:
+                                update_progress(2, 12, "Syncing to default schema...", start_time)
+                                update_progress(3, 12, "Fetching and processing data from Snowflake...", start_time)
+                                
+                                result = fetch_and_process_data(
+                                    st.session_state["selected_project"],
+                                    st.session_state["schema"],
+                                )
 
                             update_progress(4, 12, "Data processing completed...", start_time)
                             update_progress(5, 12, "Updating cache...", start_time)
@@ -4152,10 +4279,18 @@ else:
                             keep_alive_placeholder.empty()
 
                             total_time = time.time() - start_time
-                            st.success(
-                                f"✅ Data synced successfully in {total_time:.1f} seconds! "
-                                "Pipelines are tidy, tables are aligned, and we're good to go! 📂"
-                            )
+                            
+                            # Show appropriate success message
+                            if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                                st.success(
+                                    f"✅ Data synced successfully to {selected_agency} schema in {total_time:.1f} seconds! "
+                                    f"Schema: LACMTA_FEEDER_{selected_agency} 📂"
+                                )
+                            else:
+                                st.success(
+                                    f"✅ Data synced successfully in {total_time:.1f} seconds! "
+                                    "Pipelines are tidy, tables are aligned, and we're good to go! 📂"
+                                )
 
                         except Exception as e:
                             progress_bar.empty()
@@ -4169,6 +4304,7 @@ else:
                         # Mark as not running and rerun once at the end
                         st.session_state.sync_running = False
                         st.rerun()
+
             
             
             

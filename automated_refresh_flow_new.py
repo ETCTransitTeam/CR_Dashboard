@@ -204,7 +204,7 @@ PROJECTS = {
 
 
 def fetch_and_process_data(project,schema):
-
+    agency = st.session_state.get("selected_agency", None)
     # in some Compeletion Report LSNAMECODE is splited in some it is not so have to check that
     def edit_ls_code_column(x):
         value=x.split('_')
@@ -222,6 +222,23 @@ def fetch_and_process_data(project,schema):
 
     project_config = PROJECTS[project]
     
+    # -----------------------
+    # Initialize S3 client for file reading
+    # -----------------------
+    bucket_name = os.getenv('bucket_name')
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=os.getenv('aws_access_key_id'),
+        aws_secret_access_key=os.getenv('aws_secret_access_key')
+    )
+
+    # Function to read an Excel file from S3 into a DataFrame
+    def read_excel_from_s3(bucket_name, file_key, sheet_name):
+        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        excel_data = response['Body'].read()
+        return pd.read_excel(BytesIO(excel_data), sheet_name=sheet_name)
+
+
     # Fetch data from both databases only once
     elvis_config = project_config['databases']["elvis"]
     table_name = elvis_config['table']
@@ -230,122 +247,8 @@ def fetch_and_process_data(project,schema):
     main_config = project_config['databases'].get("main", None)
     main_table_name = main_config["table"] if main_config else None
     main_database_name = main_config["database"] if main_config else None
-
+    
     # -----------------------
-    # Fetch fresh data every run (do NOT store raw data in session)
-    # -----------------------
-    # csv_buffer = fetch_data(database_name, table_name)
-    # if csv_buffer:
-    #     df = pd.read_csv(csv_buffer)
-    # else:
-    #     st.error("Failed to load elvis data.")
-    #     df = None
-
-    # df1 = None
-    # if main_config:
-    #     main_csv_buffer = fetch_data(main_database_name, main_table_name)
-    #     if main_csv_buffer:
-    #         df1 = pd.read_csv(main_csv_buffer)
-    #     else:
-    #         st.error("Failed to load main data.")
-
-    # # -----------------------
-    # # Process elvis data
-    # # -----------------------
-    # if df is not None:
-    #     if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"]:
-    #         df.columns = df.columns.str.strip()
-    #         df = df.rename(columns=KCATA_HEADER_MAPPING)
-    #         elvis_df = df.drop(index=0).reset_index(drop=True)
-
-    #     # Filtering & cleaning
-    #     time_value_code_check = ['have5minforsurvecode']
-    #     route_surveyed_code_check = ['routesurveyedcode']
-    #     route_surveyed_code = check_all_characters_present(df, route_surveyed_code_check)
-    #     time_value_code_df = check_all_characters_present(df, time_value_code_check)
-
-    #     df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
-    #     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
-    #     df = df[df[time_value_code_df[0]] == '1']
-    #     df = df[df['INTERV_INIT'] != '999']
-
-    #     elvis_status_column_check = ['elvisstatus']
-    #     elvis_status_column = check_all_characters_present(df, elvis_status_column_check)
-    #     df = df[df[elvis_status_column[0]].str.lower() != 'delete']
-
-    #     df.drop_duplicates(subset='id', inplace=True)
-    #     time_column_check = ['timeoncode']
-    #     time_period_column_check = ['timeon']
-    #     df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
-
-    #     time_column_df = check_all_characters_present(df, time_column_check)
-    #     time_period_column_df = check_all_characters_present(df, time_period_column_check)
-    # else:
-    #     st.warning("No data available. Click 'Fetch Data' to load the dataset.")
-
-    # # -----------------------
-    # # Process main data
-    # # -----------------------
-    # if df1 is not None:
-    #     column_mapping = {}
-    #     for df1_col in df1.columns:
-    #         cleaned_df1_col = clean_string(df1_col)
-    #         for df_col in df.columns:
-    #             if cleaned_df1_col == clean_string(df_col):
-    #                 column_mapping[df1_col] = df_col
-    #                 break
-
-    #     df1 = df1.rename(columns=column_mapping)
-
-    #     time_column_df1 = check_all_characters_present(df1, ['timeoncode'])
-    #     time_period_column_df1 = check_all_characters_present(df1, ['timeon'])
-
-    # # -----------------------
-    # # Merge logic
-    # # -----------------------
-    # baby_elvis_df_merged = None
-    # if df is not None and df1 is not None:
-    #     df3 = df.copy()
-    #     missing_ids = set(df1['id']) - set(df['id'])
-    #     df1_new = df1[df1['id'].isin(missing_ids)]
-    #     df = pd.concat([df, df1_new], ignore_index=True)
-    #     df.drop_duplicates(subset=['id'], inplace=True)
-    #     df = df.sort_values('id').reset_index(drop=True)
-
-    #     # Fill missing Time_ONCode values
-    #     mask = df[time_column_df[0]].isna() | (df[time_column_df[0]].str.strip() == '')
-    #     time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
-    #     df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
-
-    #     baby_elvis_df_merged = df
-    #     print("Data merged successfully!")
-
-    # # -----------------------
-    # # Prepare baby_elvis_df (already fetched in df1)
-    # # -----------------------
-    # baby_elvis_df = None
-    # if "main" in PROJECTS[project]["databases"]:
-    #     baby_elvis_config = PROJECTS[project]["databases"]["main"]
-    #     baby_table_name = baby_elvis_config['table']
-    #     baby_database_name = baby_elvis_config["database"]
-
-    #     # Use df1 as the baby_elvis_df
-    #     if df1 is not None:
-    #         baby_elvis_df = df1.copy()
-
-    #     if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM"] and baby_elvis_df is not None:
-    #         baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
-    #         baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
-
-    # # -----------------------
-    # # Store only the final merged & cleaned dataframe in session_state
-    # # -----------------------
-    # # st.session_state.merged_clean_df = baby_elvis_df_merged
-
-    # # Display success
-    # if baby_elvis_df_merged is not None:
-    #     st.success(f"Collected {len(baby_elvis_df_merged)} records from baby_elvis and elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
-        # -----------------------
     # Fetch fresh data every run (do NOT store raw data in session)
     # -----------------------
     csv_buffer = fetch_data(database_name, table_name)
@@ -452,6 +355,78 @@ def fetch_and_process_data(project,schema):
                 time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
                 df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
 
+
+    print("df columns after initial cleaning:", df.columns.tolist() if df is not None else "df is None")
+    # -----------------------
+    # AGENCY FILTERING FOR LACMTA_FEEDER (Better Approach)
+    # -----------------------
+    if project == "LACMTA_FEEDER" and agency and agency != "All":
+        print(f"Applying agency filter for: {agency}")
+        
+        # Read details file to get agency-route mapping
+        detail_df_stops = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'STOPS')
+        
+        if detail_df_stops is not None and not detail_df_stops.empty:
+            # Note: Column name might be 'agency' or 'AGENCY', check both
+            agency_col_name = None
+            for col in detail_df_stops.columns:
+                if col.lower() == 'agency':
+                    agency_col_name = col
+                    break
+            
+            if agency_col_name:
+                # Filter stops for selected agency
+                agency_stops = detail_df_stops[detail_df_stops[agency_col_name] == agency]
+                
+                if not agency_stops.empty:
+                    # Get unique routes for this agency
+                    agency_routes = agency_stops['ETC_ROUTE_ID'].dropna().unique()
+                    print("Agency Routes before processing:", agency_routes)
+                    # Extract base route code (remove direction suffix)
+                    agency_route_codes = []
+                    for route in agency_routes:
+                        route_str = str(route)
+                        route_parts = route_str.split('_')
+                        if len(route_parts) > 1:
+                            base_route = '_'.join(route_parts[:-1])  # Remove direction suffix
+                            agency_route_codes.append(base_route)
+                        else:
+                            agency_route_codes.append(route_str)
+                    
+                    # Filter df by agency routes
+                    if df is not None and 'ROUTE_SURVEYEDCode' in df.columns and agency_route_codes:
+                        before_count = len(df)
+                        
+                        # Extract base route from ROUTE_SURVEYEDCode
+                        df['ROUTE_BASE'] = df['ROUTE_SURVEYEDCode'].apply(
+                            lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
+                        )
+                        
+                        # Filter by agency routes
+                        df = df[df['ROUTE_BASE'].isin(agency_route_codes)]
+                        
+                        after_count = len(df)
+                        print(f"Agency Filter ({agency}): {before_count} -> {after_count} records")
+                        
+                        # Drop temporary column
+                        df = df.drop(columns=['ROUTE_BASE'])
+                        
+                        # Also filter baby_elvis_df if it exists
+                        if baby_elvis_df is not None and 'ROUTE_SURVEYEDCode' in baby_elvis_df.columns:
+                            baby_elvis_df['ROUTE_BASE'] = baby_elvis_df['ROUTE_SURVEYEDCode'].apply(
+                                lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
+                            )
+                            baby_elvis_df = baby_elvis_df[baby_elvis_df['ROUTE_BASE'].isin(agency_route_codes)]
+                            baby_elvis_df = baby_elvis_df.drop(columns=['ROUTE_BASE'])
+            else:
+                print(f"Warning: 'agency' column not found in stops sheet")
+        else:
+            print(f"Warning: Could not read details file for agency filtering")
+    elif agency and agency != "All":
+        print(f"Note: Agency filtering is only available for LACMTA_FEEDER project")
+
+
+
     # -----------------------
     # Step 5: Create other required variables
     # -----------------------
@@ -460,7 +435,8 @@ def fetch_and_process_data(project,schema):
     
     # elvis_df - copy of cleaned dataframe (for backward compatibility)
     elvis_df = df.copy() if df is not None else None
-    
+    print("elvis_df length:", len(elvis_df) if elvis_df is not None else "elvis_df is None")
+
     # Also keep time_column_df, time_period_column_df variables available
     # These were already created in Step 4
     
@@ -478,23 +454,10 @@ def fetch_and_process_data(project,schema):
         st.success(f"Collected {len(baby_elvis_df_merged)} records from baby_elvis and elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
 
 
-    bucket_name = os.getenv('bucket_name')
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=os.getenv('aws_access_key_id'),
-        aws_secret_access_key=os.getenv('aws_secret_access_key')
-    )
-
     # Now ALL your original variables are available:
     # df, df1, elvis_df, baby_elvis_df, baby_elvis_df_merged
     # time_column_df, time_period_column_df, time_column_df1, time_period_column_df1
     # And all other variables you had in your original code
-
-    # Function to read an Excel file from S3 into a DataFrame
-    def read_excel_from_s3(bucket_name, file_key, sheet_name):
-        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        excel_data = response['Body'].read()
-        return pd.read_excel(BytesIO(excel_data), sheet_name=sheet_name)
 
     if project=='KCATA':
         ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
