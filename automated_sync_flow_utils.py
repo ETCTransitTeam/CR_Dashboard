@@ -1442,7 +1442,19 @@ def create_route_level_df(overall_df,route_df,df,time_column,project):
                 new_df.loc[index, 'DB_Evening'] = evening_value
                 new_df.loc[index, 'DB_Total'] = evening_value + am_value + midday_value + pm_peak_value
 
-            new_df['ROUTE_SURVEYEDCode_Splited']=new_df['ROUTE_SURVEYEDCode'].apply(lambda x:('_').join(x.split('_')[:-1]) )
+            def normalize_route_code(route_code):
+                # Remove last _00/_01/_02 etc.
+                base_code = '_'.join(route_code.split('_')[:-1])
+                # Remove common direction suffixes (Clockwise, Counterclockwise, NB, SB, etc.)
+                for suffix in ['Clockwise', 'Counterclockwise']:
+                    if base_code.endswith(suffix):
+                        base_code = base_code[: -len(suffix)]
+                        # Remove trailing underscore if it exists
+                        if base_code.endswith('_'):
+                            base_code = base_code[:-1]
+                return base_code
+
+            new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(normalize_route_code)
 
             route_level_df=pd.DataFrame()
             unique_routes=new_df['ROUTE_SURVEYEDCode_Splited'].unique()

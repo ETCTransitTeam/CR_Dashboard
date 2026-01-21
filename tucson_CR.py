@@ -1370,7 +1370,7 @@ else:
             # =====================================================
             # TIMEZONE SETUP
             # =====================================================
-            last_refresh_utc = datetime.datetime.now(ZoneInfo("UTC"))
+            last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
 
             # === DATE SETUP ===
             current_date = datetime.datetime.now()
@@ -1601,7 +1601,49 @@ else:
 
         def main_page(data1, data2, data3):
             """Main page display with dynamic data"""
-            # Create two columns layout
+            # -------------------------------
+            # Overall Dashboard Description with full table
+            # -------------------------------
+            if selected_project == "lacmta_feeder":
+                with st.expander(" Overview of Time Periods and Column Definitions", expanded=False):
+                    st.markdown("**This table explains how each time period (1–4) maps to actual survey codes and times:**")
+
+                    # Full table as Jason wanted
+                    time_table = pd.DataFrame([
+                        [1, 'AM PEAK', 'AM1', 'Before 5:00 am'],
+                        [1, 'AM PEAK', 'AM2', '5:00 am - 6:00 am'],
+                        [1, 'AM PEAK', 'AM3', '6:00 am - 7:00 am'],
+                        [1, 'AM PEAK', 'MID1', '7:00 am - 8:00 am'],
+                        [1, 'AM PEAK', 'MID2', '8:00 am - 9:00 am'],
+                        [2, 'MIDDAY', 'MID7', '9:00 am - 10:00 am'],
+                        [2, 'MIDDAY', 'MID3', '10:00 am - 11:00 am'],
+                        [2, 'MIDDAY', 'MID4', '11:00 am - 12:00 pm'],
+                        [2, 'MIDDAY', 'MID5', '12:00 pm - 1:00 pm'],
+                        [2, 'MIDDAY', 'MID6', '1:00 pm - 2:00 pm'],
+                        [3, 'PM PEAK', 'PM1', '2:00 pm - 3:00 pm'],
+                        [3, 'PM PEAK', 'PM2', '3:00 pm - 4:00 pm'],
+                        [3, 'PM PEAK', 'PM3', '4:00 pm - 5:00 pm'],
+                        [3, 'PM PEAK', 'PM4', '5:00 pm - 6:00 pm'],
+                        [3, 'PM PEAK', 'PM5', '6:00 pm - 7:00 pm'],
+                        [4, 'EVENING', 'PM6', '7:00 pm - 8:00 pm'],
+                        [4, 'EVENING', 'PM7', '8:00 pm - 9:00 pm'],
+                        [4, 'EVENING', 'PM8', '9:00 pm - 10:00 pm'],
+                        [4, 'EVENING', 'PM9', 'After 10:00 pm'],
+                    ], columns=["TIME_PERIOD[Code]", "TIME_PERIOD", "TIME_ON[Code]", "TIME_ON"])
+
+                    st.dataframe(time_table, use_container_width=True, hide_index=True)
+
+                    # Description of Goal / Collect / Remain
+                    st.markdown("""
+                    **Column Definitions (applies to all tables below):**  
+                    - **Goal** → Planned number of surveys for this time period  
+                    - **Collect** → Surveys actually completed  
+                    - **Remain** → Surveys still needed to meet the goal (Goal - Collect, minimum 0)  
+                    """)
+
+            # -------------------------------
+            # Columns Layout
+            # -------------------------------
             col1, col2 = st.columns([2, 1])  # Left column is wider
 
             # Display the first dataframe on the left full screen (col1)
