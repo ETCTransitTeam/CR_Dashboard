@@ -16,7 +16,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
-from utils import fetch_data
+from utils import fetch_data, apply_lacmta_agency_filter
 
 warnings.filterwarnings('ignore')
 
@@ -357,73 +357,79 @@ def fetch_and_process_data(project,schema):
 
 
     print("df columns after initial cleaning:", df.columns.tolist() if df is not None else "df is None")
-    # -----------------------
-    # AGENCY FILTERING FOR LACMTA_FEEDER (Better Approach)
-    # -----------------------
-    if project == "LACMTA_FEEDER" and agency and agency != "All":
-        print(f"Applying agency filter for: {agency}")
+    
+    df, baby_elvis_df = apply_lacmta_agency_filter(
+        df,
+        project,
+        agency,
+        bucket_name,
+        project_config,
+        baby_elvis_df
+    )
+    # if project == "LACMTA_FEEDER" and agency and agency != "All":
+    #     print(f"Applying agency filter for: {agency}")
         
-        # Read details file to get agency-route mapping
-        detail_df_stops = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'STOPS')
+    #     # Read details file to get agency-route mapping
+    #     detail_df_stops = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'STOPS')
         
-        if detail_df_stops is not None and not detail_df_stops.empty:
-            # Note: Column name might be 'agency' or 'AGENCY', check both
-            agency_col_name = None
-            for col in detail_df_stops.columns:
-                if col.lower() == 'agency':
-                    agency_col_name = col
-                    break
+    #     if detail_df_stops is not None and not detail_df_stops.empty:
+    #         # Note: Column name might be 'agency' or 'AGENCY', check both
+    #         agency_col_name = None
+    #         for col in detail_df_stops.columns:
+    #             if col.lower() == 'agency':
+    #                 agency_col_name = col
+    #                 break
             
-            if agency_col_name:
-                # Filter stops for selected agency
-                agency_stops = detail_df_stops[detail_df_stops[agency_col_name] == agency]
+    #         if agency_col_name:
+    #             # Filter stops for selected agency
+    #             agency_stops = detail_df_stops[detail_df_stops[agency_col_name] == agency]
                 
-                if not agency_stops.empty:
-                    # Get unique routes for this agency
-                    agency_routes = agency_stops['ETC_ROUTE_ID'].dropna().unique()
-                    print("Agency Routes before processing:", agency_routes)
-                    # Extract base route code (remove direction suffix)
-                    agency_route_codes = []
-                    for route in agency_routes:
-                        route_str = str(route)
-                        route_parts = route_str.split('_')
-                        if len(route_parts) > 1:
-                            base_route = '_'.join(route_parts[:-1])  # Remove direction suffix
-                            agency_route_codes.append(base_route)
-                        else:
-                            agency_route_codes.append(route_str)
+    #             if not agency_stops.empty:
+    #                 # Get unique routes for this agency
+    #                 agency_routes = agency_stops['ETC_ROUTE_ID'].dropna().unique()
+    #                 print("Agency Routes before processing:", agency_routes)
+    #                 # Extract base route code (remove direction suffix)
+    #                 agency_route_codes = []
+    #                 for route in agency_routes:
+    #                     route_str = str(route)
+    #                     route_parts = route_str.split('_')
+    #                     if len(route_parts) > 1:
+    #                         base_route = '_'.join(route_parts[:-1])  # Remove direction suffix
+    #                         agency_route_codes.append(base_route)
+    #                     else:
+    #                         agency_route_codes.append(route_str)
                     
-                    # Filter df by agency routes
-                    if df is not None and 'ROUTE_SURVEYEDCode' in df.columns and agency_route_codes:
-                        before_count = len(df)
+    #                 # Filter df by agency routes
+    #                 if df is not None and 'ROUTE_SURVEYEDCode' in df.columns and agency_route_codes:
+    #                     before_count = len(df)
                         
-                        # Extract base route from ROUTE_SURVEYEDCode
-                        df['ROUTE_BASE'] = df['ROUTE_SURVEYEDCode'].apply(
-                            lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
-                        )
+    #                     # Extract base route from ROUTE_SURVEYEDCode
+    #                     df['ROUTE_BASE'] = df['ROUTE_SURVEYEDCode'].apply(
+    #                         lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
+    #                     )
                         
-                        # Filter by agency routes
-                        df = df[df['ROUTE_BASE'].isin(agency_route_codes)]
+    #                     # Filter by agency routes
+    #                     df = df[df['ROUTE_BASE'].isin(agency_route_codes)]
                         
-                        after_count = len(df)
-                        print(f"Agency Filter ({agency}): {before_count} -> {after_count} records")
+    #                     after_count = len(df)
+    #                     print(f"Agency Filter ({agency}): {before_count} -> {after_count} records")
                         
-                        # Drop temporary column
-                        df = df.drop(columns=['ROUTE_BASE'])
+    #                     # Drop temporary column
+    #                     df = df.drop(columns=['ROUTE_BASE'])
                         
-                        # Also filter baby_elvis_df if it exists
-                        if baby_elvis_df is not None and 'ROUTE_SURVEYEDCode' in baby_elvis_df.columns:
-                            baby_elvis_df['ROUTE_BASE'] = baby_elvis_df['ROUTE_SURVEYEDCode'].apply(
-                                lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
-                            )
-                            baby_elvis_df = baby_elvis_df[baby_elvis_df['ROUTE_BASE'].isin(agency_route_codes)]
-                            baby_elvis_df = baby_elvis_df.drop(columns=['ROUTE_BASE'])
-            else:
-                print(f"Warning: 'agency' column not found in stops sheet")
-        else:
-            print(f"Warning: Could not read details file for agency filtering")
-    elif agency and agency != "All":
-        print(f"Note: Agency filtering is only available for LACMTA_FEEDER project")
+    #                     # Also filter baby_elvis_df if it exists
+    #                     if baby_elvis_df is not None and 'ROUTE_SURVEYEDCode' in baby_elvis_df.columns:
+    #                         baby_elvis_df['ROUTE_BASE'] = baby_elvis_df['ROUTE_SURVEYEDCode'].apply(
+    #                             lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
+    #                         )
+    #                         baby_elvis_df = baby_elvis_df[baby_elvis_df['ROUTE_BASE'].isin(agency_route_codes)]
+    #                         baby_elvis_df = baby_elvis_df.drop(columns=['ROUTE_BASE'])
+    #         else:
+    #             print(f"Warning: 'agency' column not found in stops sheet")
+    #     else:
+    #         print(f"Warning: Could not read details file for agency filtering")
+    # elif agency and agency != "All":
+    #     print(f"Note: Agency filtering is only available for LACMTA_FEEDER project")
 
 
 
@@ -593,7 +599,7 @@ def fetch_and_process_data(project,schema):
         # df = df[df['id'].isin(include_ids)]
     
     print(f"After KingElvis filter (exclude Remove/No Data): {len(df)} records")
-
+    baby_elvis_merged_df_filtered = df.copy()
     stop_on_lat_lon_columns_check=['stoponlat','stoponlong']
     stop_off_lat_lon_columns_check=['stopofflat','stopofflong']
     stop_on_lat_lon_columns=check_all_characters_present(df,stop_on_lat_lon_columns_check)
@@ -859,7 +865,8 @@ def fetch_and_process_data(project,schema):
 
     weekend_df=df[df['Day'].isin(['Saturday','Sunday'])]
     print("Weekend DF length:", len(weekend_df))
-    weekday_df=df[~(df['Day'].isin(['Saturday','Sunday']))]
+    # weekday_df=df[~(df['Day'].isin(['Saturday','Sunday']))]
+    weekday_df = df.copy()
     print("Weekday DF length:", len(weekday_df))
     #to get the TIMEON column
     time_column_check=['timeoncode']
@@ -890,8 +897,14 @@ def fetch_and_process_data(project,schema):
     #     wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
     # else:
     print("Creating weekend route direction df for other projects")
+    # wkday_overall_df.to_csv('wkday_overall_df.csv')
+    # weekday_df.to_csv('weekday_df.csv')
+    # weekend_df.to_csv('weekend_df.csv')
+    # wkend_overall_df.to_csv('wkend_overall_df.csv')
     wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
     wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
+    # wkday_route_direction_df.to_csv('wkday_route_direction_df_result.csv')
+    # wkend_route_direction_df.to_csv('wkend_route_direction_df_result.csv')
 
     # ----- Station-wise Route DF -----
     if project=='KCATA RAIL':
@@ -1050,7 +1063,7 @@ def fetch_and_process_data(project,schema):
                 has_weekend_data = False
         print("Processing survey data...")  
         # Process survey data
-        df_for_processing = baby_elvis_df_merged.rename(columns={
+        df_for_processing = baby_elvis_merged_df_filtered.rename(columns={
             'LocalTime': 'Completed',
             'HAVE_5_MIN_FOR_SURVECode': 'HAVE_5_MIN_FOR_SURVE_Code_',
             'ROUTE_SURVEYEDCode': 'ROUTE_SURVEYED_Code_'
@@ -1060,9 +1073,9 @@ def fetch_and_process_data(project,schema):
 
         print("Processing route comparison data...")
         # Process the route comparison data
-        new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_df_merged, ke_df, project)
+        new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_merged_df_filtered, ke_df, project)
         route_level_df = create_route_level_comparison(new_df)
-        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_df_merged, route_level_df, project, stops_df)
+        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_merged_df_filtered, route_level_df, project, stops_df)
         print("Route comparison data processed successfully.")
 
         survey_report_df = process_surveyor_data_transit_ls6(ke_df, df)
@@ -1224,7 +1237,7 @@ def fetch_and_process_data(project,schema):
         })
 
         # Ensure all expected columns are present
-        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL']
+        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL']
         for col in expected_reverse_columns:
             if col not in reverse_routes_export.columns:
                 reverse_routes_export[col] = ''
@@ -1233,7 +1246,7 @@ def fetch_and_process_data(project,schema):
 
         # 3. Reverse Routes Difference sheet
         reverse_diff_export = reverse_df[reverse_df['Type'] != ''][[
-            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL'
+            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL'
         ]].copy()
 
         # Rename columns to match Excel format

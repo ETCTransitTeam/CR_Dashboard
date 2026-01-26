@@ -4737,13 +4737,73 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             return cr_route_info[route_code].get(info_type, '')
         return ''
 
-    # Function to create the final direction code with concatenation
+
     def get_final_direction_code(route_code):
         if route_code in cr_route_info:
             base_route = cr_route_info[route_code].get('BASE_ROUTE_CODE', '')
             direction_code = cr_route_info[route_code].get('FINAL_DIRECTION_CODE', '')
             if base_route and direction_code:
                 return f"{base_route}_{direction_code}"
+        return ''
+
+    def get_route_name_from_code(route_code):
+        """Get route name from route code by looking up in multiple sources"""
+        if not route_code:
+            return ''
+        
+        route_code_str = str(route_code)
+        
+        # Source 1: Look in the original df first
+        matching_rows = df[df[route_survey_column[0]] == route_code_str]
+        if not matching_rows.empty:
+            return matching_rows.iloc[0][route_survey_name_column[0]]
+        
+        # Source 2: Look in transfer route columns from original df
+        # Check all transfer route columns
+        transfer_code_columns = [*prev_trip_route_code_column, *next_trip_route_code_column]
+        transfer_name_columns = [*prev_trip_route_name_column, *next_trip_route_name_column]
+        
+        # Find if this route code exists in any transfer column
+        for code_col, name_col in zip(transfer_code_columns, transfer_name_columns):
+            if code_col in df.columns and name_col in df.columns:
+                matching_rows = df[df[code_col] == route_code_str]
+                if not matching_rows.empty:
+                    name = matching_rows.iloc[0][name_col]
+                    if pd.notna(name) and str(name).strip() != '':
+                        return str(name).strip()
+        
+        # Source 3: Try to find without direction suffix
+        if '_' in route_code_str:
+            base_route = '_'.join(route_code_str.split('_')[:-1])
+            
+            # Try original df again with base route
+            matching_rows = df[df[route_survey_column[0]] == base_route]
+            if not matching_rows.empty:
+                return matching_rows.iloc[0][route_survey_name_column[0]]
+            
+            # Try transfer columns with base route
+            for code_col, name_col in zip(transfer_code_columns, transfer_name_columns):
+                if code_col in df.columns and name_col in df.columns:
+                    matching_rows = df[df[code_col] == base_route]
+                    if not matching_rows.empty:
+                        name = matching_rows.iloc[0][name_col]
+                        if pd.notna(name) and str(name).strip() != '':
+                            return str(name).strip()
+        
+        # Source 4: Check wkday_overall_df for CR route info
+        if 'wkday_overall_df' in locals() and 'LS_NAME_CODE' in wkday_overall_df.columns and 'LS_NAME' in wkday_overall_df.columns:
+            matching_rows = wkday_overall_df[wkday_overall_df['LS_NAME_CODE'] == route_code_str]
+            if not matching_rows.empty:
+                return matching_rows.iloc[0]['LS_NAME']
+            
+            # Try without direction suffix
+            if '_' in route_code_str:
+                base_route = '_'.join(route_code_str.split('_')[:-1])
+                matching_rows = wkday_overall_df[wkday_overall_df['LS_NAME_CODE'] == base_route]
+                if not matching_rows.empty:
+                    return matching_rows.iloc[0]['LS_NAME']
+        
+        # If still not found, return empty string
         return ''
 
     def create_url(record_id):
@@ -4955,7 +5015,172 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         reverse_fixed = fix_single_dataframe(reverse_df, "reverse_df")
         all_type_fixed = fix_single_dataframe(all_type_df, "all_type_df")
         
-
+    def fill_missing_final_direction_codes():
+        """
+        Fill any empty FINAL_DIRECTION_CODE with the original route_survey_column value
+        and add FINAL_DIRECTION_NAME based on the FINAL_DIRECTION_CODE
+        """
+        
+        # Create a comprehensive dictionary to map route codes to route names from multiple sources
+        route_code_to_name = {}
+        
+        # Source 1: Original df
+        for index, row in df.iterrows():
+            if route_survey_column and route_survey_name_column:
+                route_code = row.get(route_survey_column[0], '')
+                route_name = row.get(route_survey_name_column[0], '')
+                if pd.notna(route_code) and pd.notna(route_name) and str(route_code).strip() != '' and str(route_name).strip() != '':
+                    route_code_to_name[str(route_code).strip()] = str(route_name).strip()
+        
+        # Source 2: Transfer routes from df
+        for index, row in df.iterrows():
+            # Previous trip routes
+            for code_col, name_col in zip(prev_trip_route_code_column, prev_trip_route_name_column):
+                if code_col in row and name_col in row:
+                    route_code = row[code_col]
+                    route_name = row[name_col]
+                    if pd.notna(route_code) and pd.notna(route_name) and str(route_code).strip() != '' and str(route_name).strip() != '':
+                        route_code_to_name[str(route_code).strip()] = str(route_name).strip()
+            
+            # Next trip routes
+            for code_col, name_col in zip(next_trip_route_code_column, next_trip_route_name_column):
+                if code_col in row and name_col in row:
+                    route_code = row[code_col]
+                    route_name = row[name_col]
+                    if pd.notna(route_code) and pd.notna(route_name) and str(route_code).strip() != '' and str(route_name).strip() != '':
+                        route_code_to_name[str(route_code).strip()] = str(route_name).strip()
+        
+        # Source 3: wkday_overall_df (CR data)
+        if 'wkday_overall_df' in locals() and 'LS_NAME_CODE' in wkday_overall_df.columns and 'LS_NAME' in wkday_overall_df.columns:
+            for _, row in wkday_overall_df.iterrows():
+                route_code = row.get('LS_NAME_CODE', '')
+                route_name = row.get('LS_NAME', '')
+                if pd.notna(route_code) and pd.notna(route_name) and str(route_code).strip() != '' and str(route_name).strip() != '':
+                    route_code_to_name[str(route_code)] = str(route_name)
+        
+        # Source 4: Already assigned routes in reverse_df (if it exists)
+        if 'reverse_df' in locals():
+            for _, row in reverse_df.iterrows():
+                if 'ORIGINAL_ROUTE_SURVEYEDCode' in row and 'ORIGINAL_ROUTE_SURVEYED' in row:
+                    route_code = row['ORIGINAL_ROUTE_SURVEYEDCode']
+                    route_name = row['ORIGINAL_ROUTE_SURVEYED']
+                    if pd.notna(route_code) and pd.notna(route_name) and str(route_code).strip() != '' and str(route_name).strip() != '':
+                        route_code_to_name[str(route_code)] = str(route_name)
+                
+                if route_survey_column[0] in row and route_survey_name_column[0] in row:
+                    route_code = row[route_survey_column[0]]
+                    route_name = row[route_survey_name_column[0]]
+                    if pd.notna(route_code) and pd.notna(route_name) and str(route_code).strip() != '' and str(route_name).strip() != '':
+                        route_code_to_name[str(route_code)] = str(route_name)
+        
+        def fill_for_dataframe(df_to_fill, df_name):
+            """Helper function to fill missing direction codes for a single dataframe"""
+            filled_count = 0
+            names_added = 0
+            missing_names_count = 0
+            
+            for index, row in df_to_fill.iterrows():
+                # Get current values
+                current_type = row['Type']
+                current_final_direction_code = row.get('FINAL_DIRECTION_CODE', '')
+                original_route_code = row.get('ORIGINAL_ROUTE_SURVEYEDCode', '')
+                
+                # Skip if Type is empty
+                if not current_type or current_type == '':
+                    continue
+                
+                # 1. Fill empty FINAL_DIRECTION_CODE with original route_survey_column
+                if not current_final_direction_code or current_final_direction_code == '':
+                    # Use the original route code from the ORIGINAL_ROUTE_SURVEYEDCode column
+                    if original_route_code:
+                        df_to_fill.loc[index, 'FINAL_DIRECTION_CODE'] = original_route_code
+                        filled_count += 1
+                
+                # 2. Add FINAL_DIRECTION_NAME based on FINAL_DIRECTION_CODE
+                final_direction_code = df_to_fill.loc[index, 'FINAL_DIRECTION_CODE']
+                if final_direction_code:
+                    # Convert to string for lookup
+                    direction_code_str = str(final_direction_code)
+                    
+                    # Get the route name for this code from our comprehensive dictionary
+                    route_name = route_code_to_name.get(direction_code_str, '')
+                    
+                    # If not found, try looking up without direction suffix
+                    if not route_name and '_' in direction_code_str:
+                        base_route = '_'.join(direction_code_str.split('_')[:-1])
+                        route_name = route_code_to_name.get(base_route, '')
+                    
+                    # CRITICAL FIX: Call the get_route_name_from_code function
+                    if not route_name:
+                        route_name = get_route_name_from_code(direction_code_str)
+                    
+                    # If still not found, use original route name if available
+                    if not route_name and 'ORIGINAL_ROUTE_SURVEYED' in row:
+                        route_name = row.get('ORIGINAL_ROUTE_SURVEYED', '')
+                    
+                    # If still not found, try to extract from the route code itself
+                    if not route_name and '_' in direction_code_str:
+                        # Try to create a readable name from the code
+                        parts = direction_code_str.split('_')
+                        if len(parts) >= 3:
+                            # Format like "Route ACT_2_51B"
+                            route_name = f"Route {parts[-1]}"
+                    
+                    if route_name:
+                        df_to_fill.loc[index, 'FINAL_DIRECTION_NAME'] = route_name
+                        names_added += 1
+                    else:
+                        missing_names_count += 1
+                        # Debug: print missing codes
+                        # print(f"DEBUG: Could not find name for route code: {direction_code_str} (Type: {current_type})")
+                        pass
+                        
+                    # Also check and fill Type-specific direction codes (p1-p4, n1-n4)
+                    if current_type.startswith('p') or current_type.startswith('n'):
+                        # Clean type for column name (remove Rev- prefix if present)
+                        clean_type = current_type.replace('Rev-', '')
+                        type_specific_col = f'FINAL_DIRECTION_CODE_{clean_type}'
+                        
+                        if type_specific_col in df_to_fill.columns:
+                            type_direction_code = df_to_fill.loc[index, type_specific_col]
+                            if not type_direction_code or type_direction_code == '':
+                                df_to_fill.loc[index, type_specific_col] = original_route_code
+                            
+                            # Add corresponding name column
+                            name_col = f'FINAL_DIRECTION_NAME_{clean_type}'
+                            df_to_fill.loc[index, name_col] = route_name
+            
+            if missing_names_count > 0:
+                # print(f"DEBUG: Could not find names for {missing_names_count} route codes in {df_name}")
+                pass
+            
+            return filled_count, names_added
+        
+        # Fill for both dataframes
+        reverse_filled, reverse_names = fill_for_dataframe(reverse_df, "reverse_df")
+        all_type_filled, all_type_names = fill_for_dataframe(all_type_df, "all_type_df")
+        
+        # print(f"\nDEBUG: Filled {reverse_filled} missing FINAL_DIRECTION_CODE in reverse_df")
+        # print(f"DEBUG: Added {reverse_names} FINAL_DIRECTION_NAME in reverse_df")
+        # print(f"DEBUG: Filled {all_type_filled} missing FINAL_DIRECTION_CODE in all_type_df")
+        # print(f"DEBUG: Added {all_type_names} FINAL_DIRECTION_NAME in all_type_df")
+        
+        # Print missing route codes for debugging
+        missing_codes = set()
+        for df_to_check, df_name in [(reverse_df, "reverse_df"), (all_type_df, "all_type_df")]:
+            for index, row in df_to_check.iterrows():
+                if 'FINAL_DIRECTION_CODE' in row and pd.notna(row['FINAL_DIRECTION_CODE']):
+                    code = str(row['FINAL_DIRECTION_CODE'])
+                    if code not in route_code_to_name:
+                        missing_codes.add(code)
+        
+        # if missing_codes:
+        #     # print(f"\nDEBUG: Found {len(missing_codes)} unique route codes without names in lookup dictionary:")
+        #     for code in sorted(missing_codes)[:20]:  # Show first 20
+        #         print(f"  - {code}")
+        #     if len(missing_codes) > 20:
+        #         print(f"  ... and {len(missing_codes) - 20} more")
+    
     # Create reverse dataframe - include route name columns for previous/next trips
     reverse_df = df[df[trip_oppo_dir_column[0]].str.lower() == 'yes'][[
         'id', *route_survey_column, *route_survey_name_column, *trip_code_column, 
@@ -5335,6 +5560,9 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
     if stops_df is not None:
         fix_final_direction_codes()
     
+    # NEW: Fill any missing FINAL_DIRECTION_CODE and add FINAL_DIRECTION_NAME
+    fill_missing_final_direction_codes()
+
     reverse_df['COMPLETED By'] = ''
     all_type_df['COMPLETED By'] = ''
     all_type_df['Type'].fillna('Reverse', inplace=True)

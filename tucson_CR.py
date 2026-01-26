@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import snowflake.connector
 from automated_refresh_flow_new import fetch_and_process_data
-from utils import render_aggrid,create_csv,download_csv,update_query_params, fetch_data, render_styled_dataframe
+from utils import create_csv,download_csv, render_styled_dataframe
 from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import serialization
 import plotly.express as px
 import plotly.graph_objects as go
 import time
-
+from utils import apply_lacmta_agency_filter
 import boto3
 from io import BytesIO
 
@@ -247,6 +247,18 @@ else:
 
                         if "id" in elvis_df.columns:
                             elvis_df = elvis_df.drop_duplicates(subset=["id"])
+                        
+                        # Apply LACMTA agency filter on Elvis
+                        selected_agency = st.session_state.get("selected_agency")
+
+                        if project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                            elvis_df, _ = apply_lacmta_agency_filter(
+                                df=elvis_df,
+                                project=project,
+                                agency=selected_agency,
+                                bucket_name=os.getenv("bucket_name"),
+                                project_config=project_config
+                            )
 
                         metrics["elvis_used"] = len(elvis_df)
 
@@ -287,7 +299,19 @@ else:
                     if "id" in baby_df.columns:
                         baby_df = baby_df.drop_duplicates(subset=["id"])
 
+                    # Apply LACMTA agency filter on BabyElvis
+                    if project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                        _, baby_df = apply_lacmta_agency_filter(
+                            df=None,
+                            baby_elvis_df=baby_df,
+                            project=project,
+                            agency=selected_agency,
+                            bucket_name=os.getenv("bucket_name"),
+                            project_config=project_config
+                        )
+
                     metrics["babyelvis_db_used"] = len(baby_df)
+
 
                 # ------------------------
                 # Aggregate DB metrics
@@ -322,6 +346,27 @@ else:
                         metrics["kingelvis_db_used"] = len(ke_df[~removed_mask])
                     else:
                         metrics["kingelvis_db_used"] = metrics["kingelvis_db_total"]
+                
+                # ------------------------
+                # Apply LACMTA Agency Filter (UI-level)
+                # ------------------------
+                selected_agency = st.session_state.get("selected_agency")
+                project = st.session_state.get("selected_project")
+
+                if project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+
+                    project_config = PROJECTS[project]
+                    bucket_name = os.getenv("bucket_name")
+
+                    elvis_df, baby_df = apply_lacmta_agency_filter(
+                        df=elvis_df,
+                        baby_elvis_df=baby_df,
+                        project=project,
+                        agency=selected_agency,
+                        bucket_name=bucket_name,
+                        project_config=project_config
+                    )
+
 
                 # ------------------------
                 # Merge Elvis + BabyElvis
@@ -1658,11 +1703,41 @@ else:
 
 
                 # st.dataframe(filtered_df1, use_container_width=True, hide_index=True)
+                def append_total_row(df):
+                    if 'Remaining' not in df.columns:
+                        return df
+
+                    total_remaining = int(df['Remaining'].fillna(0).sum())
+
+                    total_row = {}
+
+                    for col in df.columns:
+                        if col == 'Remaining':
+                            total_row[col] = total_remaining
+                        elif df[col].dtype.kind in 'if':  # int or float columns
+                            total_row[col] = 0
+                        else:
+                            total_row[col] = ''
+
+                    # Put label in first column
+                    total_row[df.columns[0]] = 'TOTAL'
+
+                    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
 
 
+                
                 filtered_df3 = filter_dataframe(data3, search_query)
+
+                # Append TOTAL row
+                filtered_df3 = append_total_row(filtered_df3)
                 st.subheader("Route Level Comparison")
                 render_styled_dataframe(filtered_df3, height=400, key='grid3')
+                # 🔒 Locked summary (TOP)
+                # total_remaining = get_total_remaining(filtered_df3)
+                # st.metric(
+                #     label="Total Remaining Surveys (All Routes)",
+                #     value=f"{total_remaining:,}"
+                # )
                 # st.dataframe(filtered_df3, use_container_width=True, hide_index=True)
 
 
@@ -2476,47 +2551,63 @@ else:
                             return route_str
                     
                     # ------------------------------------------
-                    # FIXED CLEAN DIRECTION EXTRACTION LOGIC
+                    # SIMPLIFIED DIRECTION EXTRACTION USING FINAL_DIRECTION_NAME
                     # ------------------------------------------
                     direction_code_mapping = {}
 
-                    if 'FINAL_DIRECTION_CODE' in merged_df.columns and 'ROUTE_SURVEYED' in merged_df.columns:
-                        from collections import defaultdict, Counter
-                        import re
-
-                        code_to_directions = defaultdict(Counter)
-
-                        for idx, row in merged_df.iterrows():
-                            route = row.get('ROUTE_SURVEYED')
-                            direction_code = row.get('FINAL_DIRECTION_CODE')
-
-                            if pd.isna(direction_code):
-                                continue
-
-                            code_str = str(direction_code)
-
-                            if pd.notna(route):
-                                route_str = str(route).strip()
-
-                                direction_text = None
-
-                                # 1️⃣ Check for square brackets [] first
-                                brackets = re.findall(r'\[([^\]]+)\]', route_str)
-                                if brackets:
-                                    direction_text = brackets[-1].strip()  # take last occurrence
-                                # 2️⃣ If no brackets, fallback to last part after dash
-                                elif ' - ' in route_str:
-                                    parts = route_str.split(' - ')
-                                    if len(parts) >= 2:
-                                        direction_text = parts[-1].strip()
+                    if 'FINAL_DIRECTION_CODE' in merged_df.columns:
+                        # First, try to use FINAL_DIRECTION_NAME if available
+                        if 'FINAL_DIRECTION_NAME' in merged_df.columns:
+                            for idx, row in merged_df.iterrows():
+                                direction_code = row.get('FINAL_DIRECTION_CODE')
+                                direction_name = row.get('FINAL_DIRECTION_NAME')
                                 
-                                if direction_text:
-                                    code_to_directions[code_str][direction_text] += 1
+                                if pd.notna(direction_code) and pd.notna(direction_name):
+                                    code_str = str(direction_code)
+                                    direction_code_mapping[code_str] = str(direction_name)
+                        
+                        # If FINAL_DIRECTION_NAME is not available or not fully populated,
+                        # fall back to extracting from ROUTE_SURVEYED
+                        if not direction_code_mapping and 'ROUTE_SURVEYED' in merged_df.columns:
+                            from collections import defaultdict, Counter
+                            import re
 
-                        # Assign most common extracted text per direction code
-                        for code_str, counter in code_to_directions.items():
-                            if len(counter) > 0:
-                                direction_code_mapping[code_str] = counter.most_common(1)[0][0]
+                            code_to_directions = defaultdict(Counter)
+
+                            for idx, row in merged_df.iterrows():
+                                route = row.get('ROUTE_SURVEYED')
+                                direction_code = row.get('FINAL_DIRECTION_CODE')
+
+                                if pd.isna(direction_code):
+                                    continue
+
+                                code_str = str(direction_code)
+
+                                if pd.notna(route):
+                                    route_str = str(route).strip()
+
+                                    direction_text = None
+
+                                    # 1️⃣ Check for square brackets [] first
+                                    brackets = re.findall(r'\[([^\]]+)\]', route_str)
+                                    if brackets:
+                                        direction_text = brackets[-1].strip()  # take last occurrence
+                                    # 2️⃣ If no brackets, fallback to last part after dash
+                                    elif ' - ' in route_str:
+                                        parts = route_str.split(' - ')
+                                        if len(parts) >= 2:
+                                            direction_text = parts[-1].strip()
+                                    
+                                    if direction_text:
+                                        code_to_directions[code_str][direction_text] += 1
+
+                            # Assign most common extracted text per direction code
+                            for code_str, counter in code_to_directions.items():
+                                if len(counter) > 0:
+                                    direction_code_mapping[code_str] = counter.most_common(1)[0][0]
+                    # ------------------------------------------
+                    # END SIMPLIFIED DIRECTION EXTRACTION
+                    # ------------------------------------------
 
 
                     # ------------------------------------------
@@ -2959,6 +3050,25 @@ else:
                         survey_df = survey_df.reset_index(drop=True)
                         
                         st.success(f"✅ Loaded {len(survey_df)} records for analysis")
+                        # ------------------------
+                        # Apply LACMTA Agency Filter (INITIAL FILTER)
+                        # ------------------------
+                        if 'RouteSurveyedCode' in survey_df.columns:
+                            survey_df = survey_df.rename(columns={'RouteSurveyedCode': 'ROUTE_SURVEYEDCode'})
+                        selected_project = st.session_state.get("selected_project")
+                        selected_agency = st.session_state.get("selected_agency")
+
+                        if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+
+                            survey_df, _ = apply_lacmta_agency_filter(
+                                df=survey_df,
+                                project=selected_project,
+                                agency=selected_agency,
+                                bucket_name=os.getenv("bucket_name"),
+                                project_config=project_config
+                            )
+
+                            st.info(f"🎯 Agency filter applied: {selected_agency}")
                     
                     # Now use survey_df instead of baby_elvis_df_merged
                     # Get the column names using your existing function
@@ -3864,6 +3974,20 @@ else:
                     except Exception as e:
                         st.warning(
                             f"Column renaming failed: {str(e)}. Using original column names."
+                        )
+                    # ------------------------
+                    # Apply LACMTA Agency Filter
+                    # ------------------------
+                    selected_agency = st.session_state.get("selected_agency")
+                    selected_project = st.session_state.get("selected_project")
+
+                    if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                        elvis_df, _ = apply_lacmta_agency_filter(
+                            df=elvis_df,
+                            project=selected_project,
+                            agency=selected_agency,
+                            bucket_name=os.getenv("bucket_name"),
+                            project_config=project_config
                         )
 
                     # Prepare location data
