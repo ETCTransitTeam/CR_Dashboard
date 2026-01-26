@@ -1,3 +1,4 @@
+import boto3
 import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, ColumnsAutoSizeMode,JsCode
@@ -150,6 +151,7 @@ def update_query_params(new_page):
 from database import DatabaseConnector
 import io
 import os
+import boto3
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -203,3 +205,117 @@ def fetch_data(database_name, table_name):
     st.query_params["page"] = "main"
     st.rerun()  # Refresh the page after login
     return None
+
+
+# -----------------------
+# Initialize S3 client for file reading
+# -----------------------
+bucket_name = os.getenv('bucket_name')
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv('aws_access_key_id'),
+    aws_secret_access_key=os.getenv('aws_secret_access_key')
+)
+
+# Function to read an Excel file from S3 into a DataFrame
+def read_excel_from_s3(bucket_name, file_key, sheet_name):
+    response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+    excel_data = response['Body'].read()
+    return pd.read_excel(io.BytesIO(excel_data), sheet_name=sheet_name)
+
+# -----------------------
+# AGENCY FILTERING FOR LACMTA_FEEDER (Better Approach)
+# -----------------------
+def apply_lacmta_agency_filter(
+    df,
+    project,
+    agency,
+    bucket_name,
+    project_config,
+    baby_elvis_df=None
+):
+    """
+    Applies LACMTA_FEEDER agency-based route filtering on df (and baby_elvis_df if provided)
+
+    Returns:
+        df, baby_elvis_df
+    """
+    if project != "LACMTA_FEEDER" or not agency or agency == "All":
+        return df, baby_elvis_df
+
+    print(f"Applying agency filter for: {agency}")
+
+    # Read details file to get agency-route mapping
+    detail_df_stops = read_excel_from_s3(
+        bucket_name,
+        project_config["files"]["details"],
+        "STOPS"
+    )
+
+    if detail_df_stops is None or detail_df_stops.empty:
+        print("Warning: Could not read details file for agency filtering")
+        return df, baby_elvis_df
+
+    # Find agency column (case-insensitive)
+    agency_col_name = None
+    for col in detail_df_stops.columns:
+        if col.lower() == "agency":
+            agency_col_name = col
+            break
+
+    if not agency_col_name:
+        print("Warning: 'agency' column not found in stops sheet")
+        return df, baby_elvis_df
+
+    # Filter stops for selected agency
+    agency_stops = detail_df_stops[detail_df_stops[agency_col_name] == agency]
+
+    if agency_stops.empty:
+        print(f"No stops found for agency: {agency}")
+        return df, baby_elvis_df
+
+    # Get unique routes
+    agency_routes = agency_stops["ETC_ROUTE_ID"].dropna().unique()
+    print("Agency Routes before processing:", agency_routes)
+
+    # Extract base route codes
+    agency_route_codes = []
+    for route in agency_routes:
+        route_str = str(route)
+        route_parts = route_str.split("_")
+        if len(route_parts) > 1:
+            agency_route_codes.append("_".join(route_parts[:-1]))
+        else:
+            agency_route_codes.append(route_str)
+
+    # -------------------------
+    # Apply filter on df
+    # -------------------------
+    if df is not None and "ROUTE_SURVEYEDCode" in df.columns and agency_route_codes:
+        before_count = len(df)
+
+        df = df.copy()
+        df["ROUTE_BASE"] = df["ROUTE_SURVEYEDCode"].apply(
+            lambda x: "_".join(str(x).split("_")[:-1]) if pd.notna(x) else None
+        )
+
+        df = df[df["ROUTE_BASE"].isin(agency_route_codes)]
+        df = df.drop(columns=["ROUTE_BASE"])
+
+        after_count = len(df)
+        print(f"Agency Filter ({agency}): {before_count} -> {after_count} records")
+
+    # -------------------------
+    # Apply filter on baby_elvis_df (optional)
+    # -------------------------
+    if baby_elvis_df is not None and "ROUTE_SURVEYEDCode" in baby_elvis_df.columns:
+        baby_elvis_df = baby_elvis_df.copy()
+        baby_elvis_df["ROUTE_BASE"] = baby_elvis_df["ROUTE_SURVEYEDCode"].apply(
+            lambda x: "_".join(str(x).split("_")[:-1]) if pd.notna(x) else None
+        )
+        baby_elvis_df = baby_elvis_df[
+            baby_elvis_df["ROUTE_BASE"].isin(agency_route_codes)
+        ]
+        baby_elvis_df = baby_elvis_df.drop(columns=["ROUTE_BASE"])
+
+    return df, baby_elvis_df
