@@ -2658,93 +2658,34 @@ else:
                     # Display the merged table
                     st.subheader("Reverse Routes View")
                     
-                    # Create filters - now with 6 columns (added REVERSE_TRIPS_STATUS filter)
-                    col1, col2, col3, col4, col5, col6 = st.columns(6)
+                    # Create filters - removed DAY_TYPE, TIME_PERIOD, and REVERSE_TRIPS_STATUS filters, adjusted to 3 columns
+                    col1, col2, col3 = st.columns(3)
                     
                     with col1:
                         type_options = ['All'] + sorted(merged_df['Type'].dropna().unique().tolist())
                         selected_type = st.selectbox("Filter by Type:", type_options)
-                        
+                    
                     with col2:
-                        if 'DAY_TYPE' in merged_df.columns:
-                            day_type_options = ['All'] + sorted(merged_df['DAY_TYPE'].dropna().unique().tolist())
-                            selected_day_type = st.selectbox("Filter by Day Type:", day_type_options)
+                        # Filter by Final Route Code (FINAL_DIRECTION_CODE)
+                        if 'FINAL_DIRECTION_CODE' in merged_df.columns:
+                            route_code_options = ['All'] + sorted(merged_df['FINAL_DIRECTION_CODE'].dropna().unique().tolist())
+                            selected_route_code = st.selectbox("Filter by Final Route Code:", route_code_options)
                         else:
-                            selected_day_type = 'All'
+                            selected_route_code = 'All'
                     
                     with col3:
-                        if 'TIME_PERIOD' in merged_df.columns:
-                            time_period_options = ['All'] + sorted(merged_df['TIME_PERIOD'].dropna().unique().tolist())
-                            selected_time_period = st.selectbox("Filter by Time Period:", time_period_options)
-                        else:
-                            selected_time_period = 'All'
-                    
-                    with col4:
-                        if main_routes:
-                            def sort_route(name):
-                                parts = name.split()
-                                if parts and parts[0].replace('.', '').isdigit():
-                                    try:
-                                        num = float(parts[0])
-                                        return (0, num, name)
-                                    except:
-                                        return (1, name)
-                                else:
-                                    return (1, name)
-                            
-                            sorted_main_routes = sorted(main_routes, key=sort_route)
-                            route_options = ['All'] + sorted_main_routes
-                            
-                            selected_main_route = st.selectbox("Filter by Route:", route_options)
-                        else:
-                            selected_main_route = 'All'
-                    
-                    with col5:
-                        if 'FINAL_DIRECTION_CODE' in merged_df.columns:
-                            direction_options = ['All']
-                            
-                            unique_codes = sorted(merged_df['FINAL_DIRECTION_CODE'].dropna().unique())
-                            
-                            for direction_code in unique_codes:
-                                direction_code_str = str(direction_code)
-                                
-                                if direction_code_str in direction_code_mapping:
-                                    human_name = direction_code_mapping[direction_code_str]
-                                    display_text = f"{direction_code_str} ({human_name})"
-                                else:
-                                    display_text = direction_code_str
-                                
-                                direction_options.append(display_text)
-                            
-                            selected_direction_display = st.selectbox("Filter by Direction:", direction_options)
-                            
-                            if selected_direction_display != 'All':
-                                selected_direction = selected_direction_display.split(' (')[0]
+                        # Filter by Final Direction Route Name (FINAL_DIRECTION_NAME)
+                        if 'FINAL_DIRECTION_NAME' in merged_df.columns:
+                            # Get unique route names from FINAL_DIRECTION_NAME
+                            route_names = merged_df['FINAL_DIRECTION_NAME'].dropna().unique()
+                            route_names = [str(r) for r in route_names if str(r).strip() != '']
+                            if route_names:
+                                route_name_options = ['All'] + sorted(route_names)
+                                selected_route_name = st.selectbox("Filter by Final Direction Route Name:", route_name_options)
                             else:
-                                selected_direction = 'All'
+                                selected_route_name = 'All'
                         else:
-                            selected_direction = 'All'
-                    
-                    with col6:
-                        # NEW FILTER: REVERSE_TRIPS_STATUS
-                        if 'REVERSE_TRIPS_STATUS' in merged_df.columns:
-                            # Get unique status values including empty/NaN values
-                            status_values = merged_df['REVERSE_TRIPS_STATUS'].fillna('(Empty)').unique()
-                            # Filter out any other NaN-like values
-                            status_values = [str(v) for v in status_values if pd.notna(v)]
-                            # Remove duplicates and sort
-                            status_options = ['All'] + sorted(set(status_values))
-                            
-                            selected_status = st.selectbox("Filter by Status:", status_options)
-                            
-                            # Map "(Empty)" back to actual empty string for filtering
-                            if selected_status == '(Empty)':
-                                status_filter_value = ''
-                            else:
-                                status_filter_value = selected_status
-                        else:
-                            selected_status = 'All'
-                            status_filter_value = 'All'
+                            selected_route_name = 'All'
                     
                     # Apply filters
                     filtered_df = merged_df.copy()
@@ -2752,30 +2693,13 @@ else:
                     if selected_type != 'All':
                         filtered_df = filtered_df[filtered_df['Type'] == selected_type]
                     
-                    if selected_day_type != 'All' and 'DAY_TYPE' in filtered_df.columns:
-                        filtered_df = filtered_df[filtered_df['DAY_TYPE'] == selected_day_type]
+                    # Filter by Final Route Code (FINAL_DIRECTION_CODE)
+                    if selected_route_code != 'All' and 'FINAL_DIRECTION_CODE' in filtered_df.columns:
+                        filtered_df = filtered_df[filtered_df['FINAL_DIRECTION_CODE'].astype(str) == str(selected_route_code)]
                     
-                    if selected_time_period != 'All' and 'TIME_PERIOD' in filtered_df.columns:
-                        filtered_df = filtered_df[filtered_df['TIME_PERIOD'] == selected_time_period]
-                    
-                    if selected_main_route != 'All' and 'ROUTE_SURVEYED' in filtered_df.columns:
-                        filtered_df = filtered_df[
-                            filtered_df['ROUTE_SURVEYED'].apply(
-                                lambda x: get_main_route_name(x) == selected_main_route if pd.notna(x) else False
-                            )
-                        ]
-                    
-                    if selected_direction != 'All' and 'FINAL_DIRECTION_CODE' in filtered_df.columns:
-                        filtered_df = filtered_df[filtered_df['FINAL_DIRECTION_CODE'].astype(str) == selected_direction]
-                    
-                    # Apply REVERSE_TRIPS_STATUS filter
-                    if selected_status != 'All' and 'REVERSE_TRIPS_STATUS' in filtered_df.columns:
-                        if selected_status == '(Empty)':
-                            # Filter for empty/null values
-                            filtered_df = filtered_df[filtered_df['REVERSE_TRIPS_STATUS'].isna() | 
-                                                    (filtered_df['REVERSE_TRIPS_STATUS'] == '')]
-                        else:
-                            filtered_df = filtered_df[filtered_df['REVERSE_TRIPS_STATUS'] == status_filter_value]
+                    # Filter by Final Direction Route Name (FINAL_DIRECTION_NAME)
+                    if selected_route_name != 'All' and 'FINAL_DIRECTION_NAME' in filtered_df.columns:
+                        filtered_df = filtered_df[filtered_df['FINAL_DIRECTION_NAME'].astype(str) == selected_route_name]
                     
                     # Additional search filter
                     search_term = st.text_input("Search across all columns:", "")
@@ -2786,15 +2710,26 @@ else:
                                 mask = mask | filtered_df[col].astype(str).str.contains(search_term, case=False, na=False)
                         filtered_df = filtered_df[mask]
                     
-                    # Reset index for display
+                    # Reset index for display and drop unwanted columns
                     display_df = filtered_df.reset_index(drop=True)
                     display_df.index = display_df.index + 1
                     
+                    # Drop columns that should not be displayed
+                    columns_to_hide = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'REVERSE_TRIPS_STATUS']
+                    # Also hide the index column name if it exists
+                    if display_df.index.name:
+                        display_df.index.name = None
+                    
+                    # Drop the unwanted columns if they exist
+                    for col in columns_to_hide:
+                        if col in display_df.columns:
+                            display_df = display_df.drop(columns=[col])
+                    
                     st.dataframe(display_df, use_container_width=True, height=400)
                     
-                    # Statistics - updated to include status statistics
+                    # Statistics - updated to remove TIME_PERIOD and DAY_TYPE references
                     st.subheader("Statistics")
-                    col1, col2, col3, col4, col5, col6 = st.columns(6)
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
                         st.metric("Total Records", len(filtered_df))
@@ -2806,52 +2741,22 @@ else:
                                 st.metric("Most Common Type", type_counts.index[0])
                     
                     with col3:
-                        if 'TIME_PERIOD' in filtered_df.columns and len(filtered_df) > 0:
-                            time_counts = filtered_df['TIME_PERIOD'].value_counts()
-                            if len(time_counts) > 0:
-                                st.metric("Most Common Time Period", time_counts.index[0])
+                        # Show Final Route Code (FINAL_DIRECTION_CODE) if available
+                        if selected_route_code != 'All':
+                            st.metric("Selected Final Route Code", str(selected_route_code))
+                        elif 'FINAL_DIRECTION_CODE' in filtered_df.columns and len(filtered_df) > 0:
+                            route_code_counts = filtered_df['FINAL_DIRECTION_CODE'].value_counts()
+                            if len(route_code_counts) > 0:
+                                st.metric("Most Common Final Route Code", str(route_code_counts.index[0]))
                     
                     with col4:
-                        if selected_main_route != 'All':
-                            st.metric("Selected Route", selected_main_route)
-                        elif 'ROUTE_SURVEYED' in filtered_df.columns and len(filtered_df) > 0:
-                            main_route_counts = {}
-                            for route in filtered_df['ROUTE_SURVEYED']:
-                                main_route = get_main_route_name(route)
-                                if main_route:
-                                    main_route_counts[main_route] = main_route_counts.get(main_route, 0) + 1
-                            if main_route_counts:
-                                st.metric("Most Common Route", max(main_route_counts, key=main_route_counts.get))
-                    
-                    with col5:
-                        if selected_direction != 'All' and 'FINAL_DIRECTION_CODE' in filtered_df.columns and len(filtered_df) > 0:
-                            if selected_direction in direction_code_mapping:
-                                human_name = direction_code_mapping[selected_direction]
-                                st.metric("Selected Direction", f"{selected_direction} ({human_name})")
-                            else:
-                                st.metric("Selected Direction", selected_direction)
-                        elif 'FINAL_DIRECTION_CODE' in filtered_df.columns and len(filtered_df) > 0:
-                            direction_counts = filtered_df['FINAL_DIRECTION_CODE'].value_counts()
-                            if len(direction_counts) > 0:
-                                top_code = str(direction_counts.index[0])
-                                if top_code in direction_code_mapping:
-                                    human_name = direction_code_mapping[top_code]
-                                    display_text = f"{top_code} ({human_name})"
-                                else:
-                                    display_text = top_code
-                                st.metric("Most Common Direction", display_text)
-                    
-                    with col6:
-                        # NEW STAT: REVERSE_TRIPS_STATUS statistics
-                        if 'REVERSE_TRIPS_STATUS' in filtered_df.columns and len(filtered_df) > 0:
-                            status_counts = filtered_df['REVERSE_TRIPS_STATUS'].fillna('(Empty)').value_counts()
-                            if len(status_counts) > 0:
-                                top_status = status_counts.index[0]
-                                if top_status == '(Empty)':
-                                    display_status = 'Empty'
-                                else:
-                                    display_status = top_status
-                                st.metric("Most Common Status", display_status)
+                        # Show Final Direction Route Name (FINAL_DIRECTION_NAME) if available
+                        if selected_route_name != 'All':
+                            st.metric("Selected Final Direction Route Name", selected_route_name)
+                        elif 'FINAL_DIRECTION_NAME' in filtered_df.columns and len(filtered_df) > 0:
+                            route_name_counts = filtered_df['FINAL_DIRECTION_NAME'].value_counts()
+                            if len(route_name_counts) > 0:
+                                st.metric("Most Common Final Direction Route Name", route_name_counts.index[0])
                     
                     # Download buttons
                     st.subheader("Download Data")
@@ -4317,158 +4222,214 @@ else:
                 st.session_state.sync_running = False
 
             if role.upper() != "CLIENT":
-                # If a sync is already running, show a disabled state / info
-                if st.session_state.sync_running:
-                    st.info("🔄 Sync is already running. Please wait for it to finish.")
-                    # Optionally render a disabled-looking button (no action)
-                    st.button("Sync (running...)", disabled=True)
+                # Initialize sync flags
+                if "sync_running" not in st.session_state:
+                    st.session_state.sync_running = False
+                if "sync_completed" not in st.session_state:
+                    st.session_state.sync_completed = False
+                
+                # Check if sync is already running
+                is_sync_running = st.session_state.get("sync_running", False)
+                sync_completed = st.session_state.get("sync_completed", False)
+                
+                # If sync was completed in previous run, reset flags and clear status
+                if sync_completed and not is_sync_running:
+                    st.session_state.sync_running = False
+                    st.session_state.sync_completed = False
+                    # Re-read after reset
+                    is_sync_running = False
+                    sync_completed = False
+                
+                # Use placeholders for status messages so they can be cleared
+                status_placeholder = st.empty()
+                warning_placeholder = st.empty()
+                
+                # Show status message if sync is running (but not if it just completed)
+                if is_sync_running and not sync_completed:
+                    status_placeholder.info("🔄 Sync is already running. Please wait for it to finish.")
+                    warning_placeholder.warning("⚠️ Do not refresh the page or click other buttons while sync is in progress.")
                 else:
-                    if st.button("Sync"):
-                        # Mark as running immediately
-                        st.session_state.sync_running = True
+                    # Clear status messages when sync is not running
+                    status_placeholder.empty()
+                    warning_placeholder.empty()
+                
+                # Render button with disabled state based on sync status
+                sync_button_clicked = st.button(
+                    "Sync" if not is_sync_running else "Sync (running...)",
+                    disabled=is_sync_running,
+                    key="sync_button"
+                )
+                
+                # Determine if we should execute sync:
+                # Only execute if button was clicked AND sync is not already running
+                # We don't continue sync on rerun - it must complete in one execution
+                should_execute_sync = sync_button_clicked and not is_sync_running
+                
+                if should_execute_sync:
+                    # CRITICAL: Set state immediately to prevent concurrent syncs
+                    st.session_state.sync_running = True
+                    st.session_state.sync_completed = False
+                    
+                    # Add session keep-alive mechanism
+                    keep_alive_placeholder = st.empty()
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    time_elapsed = st.empty()
 
-                        # Add session keep-alive mechanism
-                        keep_alive_placeholder = st.empty()
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        time_elapsed = st.empty()
+                    def update_progress(step, total_steps, message, start_time):
+                        progress = step / total_steps
+                        progress_bar.progress(progress)
+                        elapsed = time.time() - start_time
+                        status_text.text(f"🔄 {message}")
+                        time_elapsed.text(f"⏱️ Time elapsed: {elapsed:.1f} seconds")
+                        keep_alive_placeholder.text(
+                            f"⏳ Processing... Step {step} of {total_steps}: {message}"
+                        )
+                        time.sleep(0.5)
 
-                        def update_progress(step, total_steps, message, start_time):
-                            progress = step / total_steps
-                            progress_bar.progress(progress)
-                            elapsed = time.time() - start_time
-                            status_text.text(f"🔄 {message}")
-                            time_elapsed.text(f"⏱️ Time elapsed: {elapsed:.1f} seconds")
-                            keep_alive_placeholder.text(
-                                f"⏳ Processing... Step {step} of {total_steps}: {message}"
-                            )
-                            time.sleep(0.5)
+                    start_time = time.time()
 
-                        start_time = time.time()
-
-                        try:
-                            update_progress(1, 12, "Starting sync process...", start_time)
-                            
-                            # Check if we need to sync to agency schema
-                            selected_agency = st.session_state.get("selected_agency", None)
-                            selected_project = st.session_state.get("selected_project", "")
-                            
-                            if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
-                                # Create agency schema if it doesn't exist
-                                update_progress(2, 12, f"Preparing agency schema: {selected_agency}...", start_time)
-                                # agency_schema_name = create_agency_schema(selected_agency)
-                                agency_schema_name = f"LACMTA_FEEDER_{selected_agency}"
-                                if agency_schema_name:
-                                    update_progress(3, 12, f"Syncing to agency schema: {agency_schema_name}...", start_time)
-                                    # Store current schema
-                                    current_schema = st.session_state.get("schema")
+                    try:
+                        update_progress(1, 12, "Starting sync process...", start_time)
+                        
+                        # Check if we need to sync to agency schema
+                        selected_agency = st.session_state.get("selected_agency", None)
+                        selected_project = st.session_state.get("selected_project", "")
+                        
+                        if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                            # Create agency schema if it doesn't exist
+                            update_progress(2, 12, f"Preparing agency schema: {selected_agency}...", start_time)
+                            # agency_schema_name = create_agency_schema(selected_agency)
+                            agency_schema_name = f"LACMTA_FEEDER_{selected_agency}"
+                            if agency_schema_name:
+                                update_progress(3, 12, f"Syncing to agency schema: {agency_schema_name}...", start_time)
+                                # Store current schema
+                                current_schema = st.session_state.get("schema")
+                                
+                                try:
+                                    # Temporarily switch to agency schema
+                                    st.session_state["schema"] = agency_schema_name
                                     
-                                    try:
-                                        # Temporarily switch to agency schema
-                                        st.session_state["schema"] = agency_schema_name
-                                        
-                                        result = fetch_and_process_data(
-                                            st.session_state["selected_project"],
-                                            agency_schema_name,
-                                        )
-                                        
-                                        # Restore original schema
-                                        st.session_state["schema"] = current_schema
-                                        
-                                    except Exception as e:
-                                        # Restore original schema on error
-                                        st.session_state["schema"] = current_schema
-                                        raise e
-                                else:
-                                    update_progress(3, 12, "Agency schema creation failed, syncing to default...", start_time)
                                     result = fetch_and_process_data(
                                         st.session_state["selected_project"],
-                                        st.session_state["schema"],
+                                        agency_schema_name,
                                     )
+                                    
+                                    # Restore original schema
+                                    st.session_state["schema"] = current_schema
+                                    
+                                except Exception as e:
+                                    # Restore original schema on error
+                                    st.session_state["schema"] = current_schema
+                                    raise e
                             else:
-                                update_progress(2, 12, "Syncing to default schema...", start_time)
-                                update_progress(3, 12, "Fetching and processing data from Snowflake...", start_time)
-                                
+                                update_progress(3, 12, "Agency schema creation failed, syncing to default...", start_time)
                                 result = fetch_and_process_data(
                                     st.session_state["selected_project"],
                                     st.session_state["schema"],
                                 )
-
-                            update_progress(4, 12, "Data processing completed...", start_time)
-                            update_progress(5, 12, "Updating cache...", start_time)
-
-                            if "cache_key" not in st.session_state:
-                                st.session_state["cache_key"] = 0
-                            st.session_state["cache_key"] += 1
-
-                            update_progress(6, 12, "Loading processed data...", start_time)
-                            dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
-                            update_progress(7, 12, "Data loaded successfully...", start_time)
-
-                            update_progress(8, 12, "Updating weekday dataframes...", start_time)
-                            wkday_df = dataframes.get('wkday_df', pd.DataFrame())
-                            wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
-                            wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
-                            wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
-                            wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
-
-                            update_progress(9, 12, "Updating weekend dataframes...", start_time)
-                            wkend_df = dataframes.get('wkend_df', pd.DataFrame())
-                            wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
-                            wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
-                            wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
-                            wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
-
-                            update_progress(10, 12, "Updating detail dataframes...", start_time)
-                            detail_df = dataframes.get('detail_df', pd.DataFrame())
-                            surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
-                            route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
-                            surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
-                            route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
-
-                            update_progress(11, 12, "Updating analysis dataframes...", start_time)
-                            low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
-                            refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
-                            refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
-                            by_interv_totals_df = dataframes.get('by_interv_totals_df', pd.DataFrame())
-                            by_route_totals_df = dataframes.get('by_route_totals_df', pd.DataFrame())
-                            survey_detail_totals_df = dataframes.get('survey_detail_totals_df', pd.DataFrame())
-                            route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
-                            reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
-                            reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
-
-                            update_progress(12, 12, "Finalizing sync...", start_time)
-
-                            progress_bar.empty()
-                            status_text.empty()
-                            time_elapsed.empty()
-                            keep_alive_placeholder.empty()
-
-                            total_time = time.time() - start_time
+                        else:
+                            update_progress(2, 12, "Syncing to default schema...", start_time)
+                            update_progress(3, 12, "Fetching and processing data from Snowflake...", start_time)
                             
-                            # Show appropriate success message
-                            if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
-                                st.success(
-                                    f"✅ Data synced successfully to {selected_agency} schema in {total_time:.1f} seconds! "
-                                    f"Schema: LACMTA_FEEDER_{selected_agency} 📂"
-                                )
-                            else:
-                                st.success(
-                                    f"✅ Data synced successfully in {total_time:.1f} seconds! "
-                                    "Pipelines are tidy, tables are aligned, and we're good to go! 📂"
-                                )
+                            result = fetch_and_process_data(
+                                st.session_state["selected_project"],
+                                st.session_state["schema"],
+                            )
 
-                        except Exception as e:
-                            progress_bar.empty()
-                            status_text.empty()
-                            time_elapsed.empty()
-                            keep_alive_placeholder.empty()
-                            st.error(f"❌ Sync failed: {str(e)}")
-                            st.info("Please try again or contact support if the issue persists.")
-                            time.sleep(2)
+                        update_progress(4, 12, "Data processing completed...", start_time)
+                        update_progress(5, 12, "Updating cache...", start_time)
 
-                        # Mark as not running and rerun once at the end
+                        if "cache_key" not in st.session_state:
+                            st.session_state["cache_key"] = 0
+                        st.session_state["cache_key"] += 1
+
+                        update_progress(6, 12, "Loading processed data...", start_time)
+                        dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
+                        update_progress(7, 12, "Data loaded successfully...", start_time)
+
+                        update_progress(8, 12, "Updating weekday dataframes...", start_time)
+                        wkday_df = dataframes.get('wkday_df', pd.DataFrame())
+                        wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
+                        wkday_time_df = dataframes.get('wkday_time_df', pd.DataFrame())
+                        wkday_raw_df = dataframes.get('wkday_raw_df', pd.DataFrame())
+                        wkday_stationwise_df = dataframes.get('wkday_stationwise_df', pd.DataFrame())
+
+                        update_progress(9, 12, "Updating weekend dataframes...", start_time)
+                        wkend_df = dataframes.get('wkend_df', pd.DataFrame())
+                        wkend_dir_df = dataframes.get('wkend_dir_df', pd.DataFrame())
+                        wkend_time_df = dataframes.get('wkend_time_df', pd.DataFrame())
+                        wkend_raw_df = dataframes.get('wkend_raw_df', pd.DataFrame())
+                        wkend_stationwise_df = dataframes.get('wkend_stationwise_df', pd.DataFrame())
+
+                        update_progress(10, 12, "Updating detail dataframes...", start_time)
+                        detail_df = dataframes.get('detail_df', pd.DataFrame())
+                        surveyor_report_trends_df = dataframes.get('surveyor_report_trends_df', pd.DataFrame())
+                        route_report_trends_df = dataframes.get('route_report_trends_df', pd.DataFrame())
+                        surveyor_report_date_trends_df = dataframes.get('surveyor_report_date_trends_df', pd.DataFrame())
+                        route_report_date_trends_df = dataframes.get('route_report_date_trends_df', pd.DataFrame())
+
+                        update_progress(11, 12, "Updating analysis dataframes...", start_time)
+                        low_response_questions_df = dataframes.get('low_response_questions_df', pd.DataFrame())
+                        refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
+                        refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
+                        by_interv_totals_df = dataframes.get('by_interv_totals_df', pd.DataFrame())
+                        by_route_totals_df = dataframes.get('by_route_totals_df', pd.DataFrame())
+                        survey_detail_totals_df = dataframes.get('survey_detail_totals_df', pd.DataFrame())
+                        route_comparison_df = dataframes.get('route_comparison_df', pd.DataFrame())
+                        reverse_routes_df = dataframes.get('reverse_routes_df', pd.DataFrame())
+                        reverse_routes_difference_df = dataframes.get('reverse_routes_difference_df', pd.DataFrame())
+
+                        update_progress(12, 12, "Finalizing sync...", start_time)
+
+                        progress_bar.empty()
+                        status_text.empty()
+                        time_elapsed.empty()
+                        keep_alive_placeholder.empty()
+
+                        total_time = time.time() - start_time
+                        
+                        # Clear status messages
+                        status_placeholder.empty()
+                        warning_placeholder.empty()
+                        
+                        # Show appropriate success message
+                        if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                            st.success(
+                                f"✅ Data synced successfully to {selected_agency} schema in {total_time:.1f} seconds! "
+                                f"Schema: LACMTA_FEEDER_{selected_agency} 📂"
+                            )
+                        else:
+                            st.success(
+                                f"✅ Data synced successfully in {total_time:.1f} seconds! "
+                                "Pipelines are tidy, tables are aligned, and we're good to go! 📂"
+                            )
+
+                    except Exception as e:
+                        progress_bar.empty()
+                        status_text.empty()
+                        time_elapsed.empty()
+                        keep_alive_placeholder.empty()
+                        # Clear status messages
+                        status_placeholder.empty()
+                        warning_placeholder.empty()
+                        
+                        st.error(f"❌ Sync failed: {str(e)}")
+                        st.info("Please try again or contact support if the issue persists.")
+                        # Mark sync as completed (even on error) so UI can reset
                         st.session_state.sync_running = False
+                        st.session_state.sync_completed = True
+                        # Small delay to show error message, then rerun to refresh UI
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        # Mark sync as completed successfully BEFORE rerun
+                        st.session_state.sync_running = False
+                        st.session_state.sync_completed = True
+                        # Cache key was already incremented during sync (line 4430), so data will be fresh
+                        # Small delay to show success message, then rerun to refresh UI and fetch fresh data
+                        time.sleep(1.5)
+                        # Rerun will clear status messages and fetch fresh data from Snowflake
                         st.rerun()
 
             

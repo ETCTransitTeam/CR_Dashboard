@@ -1227,7 +1227,7 @@ def fetch_and_process_data(project,schema):
 
         # 2. Reverse Routes sheet
         reverse_routes_export = all_type_df[[
-            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL'
+            'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL'
         ]].copy()
 
         # Rename columns to match Excel format if needed
