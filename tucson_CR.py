@@ -633,6 +633,7 @@ else:
                 'refusal_analysis_report': 'refusal_analysis_df',
                 'refusal_race_report': 'refusal_race_df',
                 'demographic_review': 'demographic_review_df',
+                'last_survey_date': 'last_survey_date_df',
             }
 
             # Initialize an empty dictionary to hold DataFrames
@@ -705,6 +706,7 @@ else:
         refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
         refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
         demographic_review_df = dataframes.get('demographic_review_df', pd.DataFrame())
+        last_survey_date_df = dataframes.get('last_survey_date_df', pd.DataFrame())
 
         ####################################################################################################
 
@@ -1413,13 +1415,48 @@ else:
             from zoneinfo import ZoneInfo
 
             # =====================================================
-            # TIMEZONE SETUP
+            # GET LAST SYNC DATE FROM SNOWFLAKE
             # =====================================================
-            last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
+            # Try to get Last_Sync_Date from last_survey_date_df
+            if not last_survey_date_df.empty and 'Last_Sync_Date' in last_survey_date_df.columns:
+                last_sync_value = last_survey_date_df['Last_Sync_Date'].iloc[0]
+                if pd.notna(last_sync_value):
+                    try:
+                        # Convert to datetime - handle both string and datetime objects
+                        last_sync_datetime = pd.to_datetime(last_sync_value, errors='coerce')
+                        
+                        if pd.notna(last_sync_datetime):
+                            # If it's a pandas Timestamp, convert to datetime
+                            if isinstance(last_sync_datetime, pd.Timestamp):
+                                last_sync_datetime = last_sync_datetime.to_pydatetime()
+                            
+                            # Convert to America/Chicago timezone if needed
+                            if last_sync_datetime.tzinfo is None:
+                                last_sync_datetime = last_sync_datetime.replace(tzinfo=ZoneInfo("America/Chicago"))
+                            else:
+                                last_sync_datetime = last_sync_datetime.astimezone(ZoneInfo("America/Chicago"))
+                            
+                            formatted_date = last_sync_datetime.strftime("%Y-%m-%d %H:%M:%S %Z")
+                        else:
+                            # Fallback to current time if parsing fails
+                            last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
+                            formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
+                    except Exception as e:
+                        # Fallback to current time if any error occurs
+                        print(f"Error parsing Last_Sync_Date: {e}")
+                        last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
+                        formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
+                else:
+                    # Fallback to current time if value is NaN
+                    last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
+                    formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
+            else:
+                # Fallback to current time if dataframe is empty or column doesn't exist
+                last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
+                formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
 
             # === DATE SETUP ===
             current_date = datetime.datetime.now()
-            formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
 
             # Get most recent "Completed" date
             if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
@@ -2029,183 +2066,509 @@ else:
 
         def daily_totals_page():
             if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
-                st.title("📊 Daily Totals - Interviewer and Route Level")
-                # Load Snowflake-extracted DataFrames
-                by_interv_totals_df = dataframes['by_interv_totals_df']
-                by_route_totals_df = dataframes['by_route_totals_df']
-                survey_detail_totals_df = dataframes['survey_detail_totals_df']
-
-                # Standardize column names to uppercase for consistent access
-                survey_detail_totals_df.columns = survey_detail_totals_df.columns.astype(str).str.strip().str.upper()
-
-                # Ensure DATE column exists
-                if 'DATE' not in survey_detail_totals_df.columns:
-                    st.error("❌ 'DATE' column not found in survey_detail_totals_df.")
-                    st.stop()
-
-                # Convert DATE column to datetime.date and handle errors
-                survey_detail_totals_df['DATE'] = pd.to_datetime(survey_detail_totals_df['DATE'], errors='coerce').dt.date
-
-                # Extract unique values for filters
-                all_dates = sorted(survey_detail_totals_df['DATE'].dropna().astype(str).unique())
-                all_intervs = sorted(survey_detail_totals_df['INTERV_INIT'].dropna().unique())
-
-                # Summary cards
-                total_surveys = survey_detail_totals_df['COUNT'].sum()
-                unique_interviewers = survey_detail_totals_df['INTERV_INIT'].nunique()
-                active_routes = survey_detail_totals_df['ROUTE'].nunique()
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Surveys", f"{total_surveys:,}")
-                with col2:
-                    st.metric("Unique Interviewers", unique_interviewers)
-                with col3:
-                    st.metric("Active Routes", active_routes)
-
-                # Create filter controls in a single row at the top - Interviewer first, then Date
-                filter_col1, filter_col2 = st.columns(2)
-                with filter_col1:
-                    selected_interv = st.selectbox(
-                        "Filter by Interviewer:",
-                        options=[None] + list(all_intervs),
-                        format_func=lambda x: x if x else "— All Interviewers —"
-                    )
-                with filter_col2:
-                    selected_date = st.selectbox(
-                        "Filter by Date:",
-                        options=[None] + list(all_dates),
-                        format_func=lambda x: x if x else "— All Dates —"
-                    )
-
-                # Function to add total row
-                def add_total_row(df, index_col):
-                    if not df.empty:
-                        total_row = df.select_dtypes(include=['number']).sum()
-                        total_row[index_col] = 'Total'
-                        return pd.concat([df, total_row.to_frame().T], ignore_index=True)
-                    return df
-
-                # Function to filter columns while keeping all rows
-                def filter_date_columns(df, date_col, selected_date_str):
-                    if selected_date_str is None:
-                        return df
-                    
-                    # Keep index column, selected date column (if exists), and Total column
-                    cols_to_keep = [df.columns[0]]  # First column (index)
-                    
-                    # Find the matching date column
-                    date_cols = [col for col in df.columns if str(col).split()[0] == selected_date_str]
-                    if date_cols:
-                        cols_to_keep.append(date_cols[0])
-                    
-                    # Keep Total column if it exists
-                    if 'Total' in df.columns:
-                        cols_to_keep.append('Total')
-                    
-                    return df[cols_to_keep]
-
-                # Function to format date columns
-                def format_date_columns(df):
-                    # Format date columns (those that can be parsed as dates)
-                    for col in df.columns:
-                        try:
-                            # Try to parse the column name as a date
-                            pd.to_datetime(col)
-                            # If successful, format it
-                            df = df.rename(columns={col: str(col).split()[0]})
-                        except:
-                            continue
-                    return df
-
-                # Process data based on filters
-                if selected_date or selected_interv:
-                    # Filter the detail data based on selections
-                    filtered_detail = survey_detail_totals_df.copy()
-                    
-                    if selected_date:
-                        filtered_detail = filtered_detail[filtered_detail['DATE'].astype(str) == selected_date]
-                    
-                    if selected_interv:
-                        filtered_detail = filtered_detail[filtered_detail['INTERV_INIT'] == selected_interv]
-
-                    # Process interviewer data
-                    if not filtered_detail.empty:
-                        # Pivot interviewer data
-                        interv_filtered = filtered_detail.pivot_table(
-                            index='INTERV_INIT',
-                            columns='DATE',
-                            values='COUNT',
-                            aggfunc='sum',
-                            fill_value=0
-                        ).reset_index()
-                        
-                        # Add Total column
-                        interv_filtered['Total'] = interv_filtered.select_dtypes(include=['number']).sum(axis=1)
-                        
-                        # Format date columns
-                        interv_filtered = format_date_columns(interv_filtered)
-                        
-                        # Add Total row
-                        interv_filtered_with_total = add_total_row(interv_filtered, 'INTERV_INIT')
-                        
-                        # Filter columns if date is selected
-                        if selected_date:
-                            interv_filtered_with_total = filter_date_columns(interv_filtered_with_total, 'DATE', selected_date)
-                    else:
-                        # Create empty DataFrame with correct structure
-                        columns = ['INTERV_INIT'] + ([selected_date] if selected_date else []) + ['Total']
-                        interv_filtered_with_total = pd.DataFrame(columns=columns)
-
-                    # Process route data
-                    if not filtered_detail.empty:
-                        # Pivot route data
-                        route_filtered = filtered_detail.pivot_table(
-                            index='ROUTE',
-                            columns='DATE',
-                            values='COUNT',
-                            aggfunc='sum',
-                            fill_value=0
-                        ).reset_index()
-                        
-                        # Add Total column
-                        route_filtered['Total'] = route_filtered.select_dtypes(include=['number']).sum(axis=1)
-                        
-                        # Format date columns
-                        route_filtered = format_date_columns(route_filtered)
-                        
-                        # Add Total row
-                        route_filtered_with_total = add_total_row(route_filtered, 'ROUTE')
-                        
-                        # Filter columns if date is selected
-                        if selected_date:
-                            route_filtered_with_total = filter_date_columns(route_filtered_with_total, 'DATE', selected_date)
-                    else:
-                        # Create empty DataFrame with correct structure
-                        columns = ['ROUTE'] + ([selected_date] if selected_date else []) + ['Total']
-                        route_filtered_with_total = pd.DataFrame(columns=columns)
-                else:
-                    
-                    # Format date columns in the original dataframes if needed
-                    interv_filtered_with_total = format_date_columns(by_interv_totals_df)
-                    route_filtered_with_total = format_date_columns(by_route_totals_df)
-                    
-
-                # Main content layout
-                col1, col2 = st.columns([1.3, 2])
+                st.title("Daily Totals - Interviewer and Route Level")
                 
-                with col1:
-                    st.subheader("👤 Interviewer Totals")
-                    st.dataframe(interv_filtered_with_total, use_container_width=True, hide_index=True)
+                # Create tabs
+                tab1, tab2 = st.tabs(["Daily Totals Summary", "Interviewer Records"])
+                
+                with tab1:
+                    # Load Snowflake-extracted DataFrames
+                    by_interv_totals_df = dataframes['by_interv_totals_df']
+                    by_route_totals_df = dataframes['by_route_totals_df']
+                    survey_detail_totals_df = dataframes['survey_detail_totals_df']
 
-                with col2:
-                    st.subheader("🛣️ Route Totals")
-                    st.dataframe(route_filtered_with_total, use_container_width=True, hide_index=True)
+                    # Standardize column names to uppercase for consistent access
+                    survey_detail_totals_df.columns = survey_detail_totals_df.columns.astype(str).str.strip().str.upper()
 
-                # Navigation
-                if st.button("🔙 Home Page"):
-                    st.query_params["page"] = "main"
-                    st.rerun()
+                    # Ensure DATE column exists
+                    if 'DATE' not in survey_detail_totals_df.columns:
+                        st.error("❌ 'DATE' column not found in survey_detail_totals_df.")
+                        st.stop()
+
+                    # Convert DATE column to datetime.date and handle errors
+                    survey_detail_totals_df['DATE'] = pd.to_datetime(survey_detail_totals_df['DATE'], errors='coerce').dt.date
+
+                    # Extract unique values for filters
+                    all_dates = sorted(survey_detail_totals_df['DATE'].dropna().astype(str).unique())
+                    all_intervs = sorted(survey_detail_totals_df['INTERV_INIT'].dropna().unique())
+
+                    # Summary cards
+                    total_surveys = survey_detail_totals_df['COUNT'].sum()
+                    unique_interviewers = survey_detail_totals_df['INTERV_INIT'].nunique()
+                    active_routes = survey_detail_totals_df['ROUTE'].nunique()
+
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Surveys", f"{total_surveys:,}")
+                    with col2:
+                        st.metric("Unique Interviewers", unique_interviewers)
+                    with col3:
+                        st.metric("Active Routes", active_routes)
+
+                    # Create filter controls in a single row at the top - Interviewer first, then Date
+                    filter_col1, filter_col2 = st.columns(2)
+                    with filter_col1:
+                        selected_interv = st.selectbox(
+                            "Filter by Interviewer:",
+                            options=[None] + list(all_intervs),
+                            format_func=lambda x: x if x else "— All Interviewers —"
+                        )
+                    with filter_col2:
+                        selected_date = st.selectbox(
+                            "Filter by Date:",
+                            options=[None] + list(all_dates),
+                            format_func=lambda x: x if x else "— All Dates —"
+                        )
+
+                    # Function to add total row
+                    def add_total_row(df, index_col):
+                        if not df.empty:
+                            total_row = df.select_dtypes(include=['number']).sum()
+                            total_row[index_col] = 'Total'
+                            return pd.concat([df, total_row.to_frame().T], ignore_index=True)
+                        return df
+
+                    # Function to filter columns while keeping all rows
+                    def filter_date_columns(df, date_col, selected_date_str):
+                        if selected_date_str is None:
+                            return df
+                        
+                        # Keep index column, selected date column (if exists), and Total column
+                        cols_to_keep = [df.columns[0]]  # First column (index)
+                        
+                        # Find the matching date column
+                        date_cols = [col for col in df.columns if str(col).split()[0] == selected_date_str]
+                        if date_cols:
+                            cols_to_keep.append(date_cols[0])
+                        
+                        # Keep Total column if it exists
+                        if 'Total' in df.columns:
+                            cols_to_keep.append('Total')
+                        
+                        return df[cols_to_keep]
+
+                    # Function to format date columns
+                    def format_date_columns(df):
+                        # Format date columns (those that can be parsed as dates)
+                        for col in df.columns:
+                            try:
+                                # Try to parse the column name as a date
+                                pd.to_datetime(col)
+                                # If successful, format it
+                                df = df.rename(columns={col: str(col).split()[0]})
+                            except:
+                                continue
+                        return df
+
+                    # Process data based on filters
+                    if selected_date or selected_interv:
+                        # Filter the detail data based on selections
+                        filtered_detail = survey_detail_totals_df.copy()
+                        
+                        if selected_date:
+                            filtered_detail = filtered_detail[filtered_detail['DATE'].astype(str) == selected_date]
+                        
+                        if selected_interv:
+                            filtered_detail = filtered_detail[filtered_detail['INTERV_INIT'] == selected_interv]
+
+                        # Process interviewer data
+                        if not filtered_detail.empty:
+                            # Pivot interviewer data
+                            interv_filtered = filtered_detail.pivot_table(
+                                index='INTERV_INIT',
+                                columns='DATE',
+                                values='COUNT',
+                                aggfunc='sum',
+                                fill_value=0
+                            ).reset_index()
+                            
+                            # Add Total column
+                            interv_filtered['Total'] = interv_filtered.select_dtypes(include=['number']).sum(axis=1)
+                            
+                            # Format date columns
+                            interv_filtered = format_date_columns(interv_filtered)
+                            
+                            # Add Total row
+                            interv_filtered_with_total = add_total_row(interv_filtered, 'INTERV_INIT')
+                            
+                            # Filter columns if date is selected
+                            if selected_date:
+                                interv_filtered_with_total = filter_date_columns(interv_filtered_with_total, 'DATE', selected_date)
+                        else:
+                            # Create empty DataFrame with correct structure
+                            columns = ['INTERV_INIT'] + ([selected_date] if selected_date else []) + ['Total']
+                            interv_filtered_with_total = pd.DataFrame(columns=columns)
+
+                        # Process route data
+                        if not filtered_detail.empty:
+                            # Pivot route data
+                            route_filtered = filtered_detail.pivot_table(
+                                index='ROUTE',
+                                columns='DATE',
+                                values='COUNT',
+                                aggfunc='sum',
+                                fill_value=0
+                            ).reset_index()
+                            
+                            # Add Total column
+                            route_filtered['Total'] = route_filtered.select_dtypes(include=['number']).sum(axis=1)
+                            
+                            # Format date columns
+                            route_filtered = format_date_columns(route_filtered)
+                            
+                            # Add Total row
+                            route_filtered_with_total = add_total_row(route_filtered, 'ROUTE')
+                            
+                            # Filter columns if date is selected
+                            if selected_date:
+                                route_filtered_with_total = filter_date_columns(route_filtered_with_total, 'DATE', selected_date)
+                        else:
+                            # Create empty DataFrame with correct structure
+                            columns = ['ROUTE'] + ([selected_date] if selected_date else []) + ['Total']
+                            route_filtered_with_total = pd.DataFrame(columns=columns)
+                    else:
+                        
+                        # Format date columns in the original dataframes if needed
+                        interv_filtered_with_total = format_date_columns(by_interv_totals_df)
+                        route_filtered_with_total = format_date_columns(by_route_totals_df)
+                        
+
+                    # Main content layout
+                    col1, col2 = st.columns([1.3, 2])
+                    
+                    with col1:
+                        st.subheader("👤 Interviewer Totals")
+                        st.dataframe(interv_filtered_with_total, use_container_width=True, hide_index=True)
+
+                    with col2:
+                        st.subheader("🛣️ Route Totals")
+                        st.dataframe(route_filtered_with_total, use_container_width=True, hide_index=True)
+
+                    # Navigation
+                    if st.button("🔙 Home Page", key="daily_totals_home"):
+                        st.query_params["page"] = "main"
+                        st.rerun()
+                
+                with tab2:
+                    st.subheader("Interviewer Records - Field Supervisor View")
+                    st.markdown("**View all records created by an interviewer for a specific day**")
+                    
+                    try:
+                        # Fetch the dataset from elvis database
+                        from automated_refresh_flow_new import PROJECTS, fetch_data
+                        from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
+                        
+                        project_config = PROJECTS[st.session_state["selected_project"]]
+                        
+                        # Use elvis database
+                        if "elvis" in project_config["databases"]:
+                            conf = project_config["databases"]["elvis"]
+                            csv_buffer = fetch_data(conf["database"], conf["table"])
+                            
+                            if csv_buffer:
+                                with st.spinner("🔄 Loading interviewer records data..."):
+                                    csv_buffer.seek(0)
+                                    interviewer_records_df = pd.read_csv(csv_buffer, low_memory=False)
+                                    interviewer_records_df = interviewer_records_df.drop(index=0).reset_index(drop=True)
+                                    
+                                    # Apply header mapping if needed
+                                    if selected_project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
+                                        interviewer_records_df.columns = interviewer_records_df.columns.str.strip()
+                                        interviewer_records_df = interviewer_records_df.rename(columns=KCATA_HEADER_MAPPING)
+                                        # Remove first row if it's a header row
+                                        if not interviewer_records_df.empty and interviewer_records_df.iloc[0].isnull().all():
+                                            interviewer_records_df = interviewer_records_df.drop(index=0)
+                                    
+                                    interviewer_records_df = interviewer_records_df.reset_index(drop=True)
+                                    
+                                    # Apply LACMTA agency filter if needed
+                                    selected_agency = st.session_state.get("selected_agency")
+                                    if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                                        interviewer_records_df, _ = apply_lacmta_agency_filter(
+                                            df=interviewer_records_df,
+                                            project=selected_project,
+                                            agency=selected_agency,
+                                            bucket_name=os.getenv("bucket_name"),
+                                            project_config=project_config
+                                        )
+                                    
+                                    st.success(f"✅ Loaded {len(interviewer_records_df):,} records")
+                            else:
+                                st.error("❌ Failed to fetch data from database")
+                                interviewer_records_df = pd.DataFrame()
+                        else:
+                            st.error("❌ Database configuration not found")
+                            interviewer_records_df = pd.DataFrame()
+                        
+                        if not interviewer_records_df.empty:
+                            # Get column names using check_all_characters_present
+                            id_col = check_all_characters_present(interviewer_records_df, ['id'])
+                            id_col = id_col[0] if id_col else None
+                            
+                            interv_init_col = check_all_characters_present(interviewer_records_df, ['intervinit'])
+                            interv_init_col = interv_init_col[0] if interv_init_col else None
+                            
+                            localtime_col = check_all_characters_present(interviewer_records_df, ['localtime'])
+                            localtime_col = localtime_col[0] if localtime_col else None
+                            
+                            route_code_col = check_all_characters_present(interviewer_records_df, ['routesurveyedcode'])
+                            route_code_col = route_code_col[0] if route_code_col else None
+                            
+                            route_name_col = check_all_characters_present(interviewer_records_df, ['routesurveyed'])
+                            route_name_col = route_name_col[0] if route_name_col else None
+                            
+                            have5min_code_col = check_all_characters_present(interviewer_records_df, ['have5minforsurvecode'])
+                            have5min_code_col = have5min_code_col[0] if have5min_code_col else None
+                            
+                            have5min_col = check_all_characters_present(interviewer_records_df, ['have5minforsurve'])
+                            have5min_col = have5min_col[0] if have5min_col else None
+                            
+                            timeon_code_col = check_all_characters_present(interviewer_records_df, ['timeoncode'])
+                            timeon_code_col = timeon_code_col[0] if timeon_code_col else None
+                            
+                            timeon_col = check_all_characters_present(interviewer_records_df, ['timeon'])
+                            timeon_col = timeon_col[0] if timeon_col else None
+                            
+                            register_win_code_col = check_all_characters_present(interviewer_records_df, ['registertowinyncode'])
+                            register_win_code_col = register_win_code_col[0] if register_win_code_col else None
+                            
+                            register_win_col = check_all_characters_present(interviewer_records_df, ['registertowinyn'])
+                            register_win_col = register_win_col[0] if register_win_col else None
+                            
+                            survey_lang_code_col = check_all_characters_present(interviewer_records_df, ['surveylanguagecode'])
+                            survey_lang_code_col = survey_lang_code_col[0] if survey_lang_code_col else None
+                            
+                            survey_lang_col = check_all_characters_present(interviewer_records_df, ['surveylanguage'])
+                            survey_lang_col = survey_lang_col[0] if survey_lang_col else None
+                            
+                            lat_col = check_all_characters_present(interviewer_records_df, ['elvisuserloc1lat'])
+                            lat_col = lat_col[0] if lat_col else None
+                            
+                            lon_col = check_all_characters_present(interviewer_records_df, ['elvisuserloc1long'])
+                            lon_col = lon_col[0] if lon_col else None
+                            
+                            # Check if required columns exist
+                            required_cols = [id_col, interv_init_col, localtime_col]
+                            missing_cols = [col for col in required_cols if col is None]
+                            
+                            if missing_cols:
+                                st.error(f"❌ Missing required columns: {missing_cols}")
+                                st.write("Available columns:", interviewer_records_df.columns.tolist()[:20])
+                            else:
+                                # Prepare the dataframe with standardized column names
+                                display_df = interviewer_records_df.copy()
+                                
+                                # Convert LocalTime to datetime for filtering
+                                if localtime_col:
+                                    display_df['LocalTime'] = pd.to_datetime(display_df[localtime_col], errors='coerce')
+                                    display_df['Date'] = display_df['LocalTime'].dt.date
+                                
+                                # Get unique dates and interviewers
+                                if 'Date' in display_df.columns:
+                                    all_dates = sorted(display_df['Date'].dropna().astype(str).unique())
+                                else:
+                                    all_dates = []
+                                
+                                if interv_init_col:
+                                    all_intervs = sorted(display_df[interv_init_col].dropna().unique())
+                                else:
+                                    all_intervs = []
+                                
+                                # Filters
+                                filter_col1, filter_col2 = st.columns(2)
+                                with filter_col1:
+                                    selected_date = st.selectbox(
+                                        "Select Date:",
+                                        options=[None] + list(all_dates),
+                                        format_func=lambda x: x if x else "— Select Date —",
+                                        key="interviewer_records_date"
+                                    )
+                                
+                                with filter_col2:
+                                    selected_interv = st.selectbox(
+                                        "Select Interviewer (Initial):",
+                                        options=[None] + list(all_intervs),
+                                        format_func=lambda x: x if x else "— Select Interviewer —",
+                                        key="interviewer_records_interv"
+                                    )
+                                
+                                # Filter data
+                                filtered_display_df = display_df.copy()
+                                
+                                if selected_date:
+                                    filtered_display_df = filtered_display_df[filtered_display_df['Date'].astype(str) == selected_date]
+                                
+                                if selected_interv and interv_init_col:
+                                    filtered_display_df = filtered_display_df[filtered_display_df[interv_init_col] == selected_interv]
+                                
+                                # Show record count
+                                st.info(f"📊 Showing {len(filtered_display_df):,} records")
+                                
+                                if not filtered_display_df.empty:
+                                    # Prepare columns for display
+                                    display_columns = []
+                                    column_mapping = {}
+                                    
+                                    if id_col:
+                                        display_columns.append(id_col)
+                                        column_mapping[id_col] = 'id'
+                                    if interv_init_col:
+                                        display_columns.append(interv_init_col)
+                                        column_mapping[interv_init_col] = 'IntervInit'
+                                    if localtime_col:
+                                        display_columns.append(localtime_col)
+                                        column_mapping[localtime_col] = 'LocalTime'
+                                    if route_code_col:
+                                        display_columns.append(route_code_col)
+                                        column_mapping[route_code_col] = 'RouteSurveyedCode'
+                                    if route_name_col:
+                                        display_columns.append(route_name_col)
+                                        column_mapping[route_name_col] = 'RouteSurveyed'
+                                    if have5min_code_col:
+                                        display_columns.append(have5min_code_col)
+                                        column_mapping[have5min_code_col] = 'Have5MinForSurveCode'
+                                    if have5min_col:
+                                        display_columns.append(have5min_col)
+                                        column_mapping[have5min_col] = 'Have5MinForSurve'
+                                    if timeon_code_col:
+                                        display_columns.append(timeon_code_col)
+                                        column_mapping[timeon_code_col] = 'TimeOnCode'
+                                    if timeon_col:
+                                        display_columns.append(timeon_col)
+                                        column_mapping[timeon_col] = 'TimeOn'
+                                    if register_win_code_col:
+                                        display_columns.append(register_win_code_col)
+                                        column_mapping[register_win_code_col] = 'RegisterToWinYNCode'
+                                    if register_win_col:
+                                        display_columns.append(register_win_col)
+                                        column_mapping[register_win_col] = 'RegisterToWinYN'
+                                    if survey_lang_code_col:
+                                        display_columns.append(survey_lang_code_col)
+                                        column_mapping[survey_lang_code_col] = 'SurveyLanguageCode'
+                                    if survey_lang_col:
+                                        display_columns.append(survey_lang_col)
+                                        column_mapping[survey_lang_col] = 'SurveyLanguage'
+                                    
+                                    # Create display dataframe with renamed columns
+                                    display_data = filtered_display_df[display_columns].copy()
+                                    display_data = display_data.rename(columns=column_mapping)
+                                    
+                                    # Display table
+                                    st.subheader("📋 Records Table")
+                                    st.dataframe(display_data, use_container_width=True, height=400)
+                                    
+                                    # Map section
+                                    if lat_col and lon_col:
+                                        st.subheader("🗺️ Interviewer Location Map")
+                                        
+                                        # Prepare map data
+                                        map_data = filtered_display_df[[lat_col, lon_col, id_col if id_col else interv_init_col, localtime_col if localtime_col else interv_init_col]].copy()
+                                        
+                                        # Rename columns for map
+                                        map_data.columns = ['latitude', 'longitude', 'id', 'localtime']
+                                        
+                                        # Convert to numeric
+                                        map_data['latitude'] = pd.to_numeric(map_data['latitude'], errors='coerce')
+                                        map_data['longitude'] = pd.to_numeric(map_data['longitude'], errors='coerce')
+                                        
+                                        # Drop rows with invalid coordinates
+                                        map_data = map_data.dropna(subset=['latitude', 'longitude'])
+                                        
+                                        if not map_data.empty:
+                                            # Format LocalTime for tooltip
+                                            if 'localtime' in map_data.columns:
+                                                map_data['localtime'] = pd.to_datetime(map_data['localtime'], errors='coerce')
+                                                map_data['localtime_str'] = map_data['localtime'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                                            else:
+                                                map_data['localtime_str'] = ''
+                                            
+                                            # Create hover text with ID and LocalTime
+                                            map_data['hover_text'] = map_data.apply(
+                                                lambda row: f"ID: {row['id']}<br>Time: {row['localtime_str']}" if pd.notna(row['id']) else f"Time: {row['localtime_str']}",
+                                                axis=1
+                                            )
+                                            
+                                            # Create interactive map with Plotly
+                                            try:
+                                                # Prepare customdata with proper formatting
+                                                map_data['id_str'] = map_data['id'].astype(str).replace('nan', 'N/A')
+                                                map_data['time_str'] = map_data['localtime_str'].fillna('N/A')
+                                                
+                                                fig = px.scatter_mapbox(
+                                                    map_data,
+                                                    lat='latitude',
+                                                    lon='longitude',
+                                                    zoom=10,
+                                                    height=500,
+                                                    mapbox_style='open-street-map'
+                                                )
+                                                
+                                                # Update hover template to show ID and LocalTime
+                                                fig.update_traces(
+                                                    hovertemplate='<b>ID:</b> %{customdata[0]}<br><b>LocalTime:</b> %{customdata[1]}<extra></extra>',
+                                                    customdata=map_data[['id_str', 'time_str']].values,
+                                                    marker=dict(
+                                                        size=10,
+                                                        color='red',
+                                                        opacity=0.7
+                                                    )
+                                                )
+                                                
+                                                # Update layout
+                                                fig.update_layout(
+                                                    margin=dict(l=0, r=0, t=0, b=0),
+                                                    mapbox=dict(
+                                                        center=dict(
+                                                            lat=map_data['latitude'].mean(),
+                                                            lon=map_data['longitude'].mean()
+                                                        ),
+                                                        zoom=10
+                                                    )
+                                                )
+                                                
+                                                st.plotly_chart(fig, use_container_width=True)
+                                                
+                                            except Exception as e:
+                                                # Fallback to Streamlit map if Plotly fails
+                                                st.warning(f"Interactive map unavailable, using basic map: {str(e)}")
+                                                st.map(
+                                                    map_data,
+                                                    latitude='latitude',
+                                                    longitude='longitude',
+                                                    size=100,
+                                                    use_container_width=True
+                                                )
+                                            
+                                            st.caption(f"📍 Showing {len(map_data)} location points on map. Hover over points to see ID and LocalTime.")
+                                        else:
+                                            st.info("📍 No valid location data available for the selected filters")
+                                    else:
+                                        st.info("📍 Location columns (ElvisUserLoc1_LAT/LONG) not found in dataset")
+                                    
+                                    # Download button
+                                    csv_data = display_data.to_csv(index=False)
+                                    st.download_button(
+                                        label="📥 Download Records as CSV",
+                                        data=csv_data,
+                                        file_name=f"interviewer_records_{selected_date}_{selected_interv}.csv" if selected_date and selected_interv else "interviewer_records.csv",
+                                        mime="text/csv",
+                                        key="download_interviewer_records"
+                                    )
+                                else:
+                                    st.warning("⚠️ No records found for the selected filters")
+                        else:
+                            st.warning("⚠️ No data available")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Error loading interviewer records: {str(e)}")
+                        import traceback
+                        with st.expander("🔧 Technical Details"):
+                            st.code(traceback.format_exc())
+                    
+                    # Navigation
+                    if st.button("🔙 Home Page", key="interviewer_records_home"):
+                        st.query_params["page"] = "main"
+                        st.rerun()
 
         # Function to extract date and clean a column
         # This function extracts the date from a column and creates a new column with the cleaned data

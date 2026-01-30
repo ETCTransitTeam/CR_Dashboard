@@ -860,7 +860,16 @@ def fetch_and_process_data(project,schema):
         print(f"Error encountered: {e}")
         df['LAST_SURVEY_DATE'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True)
     latest_date = df['LAST_SURVEY_DATE'].max()
-    latest_date_df = pd.DataFrame({'Latest_Survey_Date': [latest_date]})
+    
+    # Get current sync time in America/Chicago timezone
+    from zoneinfo import ZoneInfo
+    import datetime
+    last_sync_time = datetime.datetime.now(ZoneInfo("America/Chicago"))
+    
+    latest_date_df = pd.DataFrame({
+        'Latest_Survey_Date': [latest_date],
+        'Last_Sync_Date': [last_sync_time]
+    })
 
 
     weekend_df=df[df['Day'].isin(['Saturday','Sunday'])]
