@@ -331,18 +331,27 @@ def fetch_and_process_data(project,schema):
         elvis_status_column = check_all_characters_present(df, elvis_status_column_check)
         time_column_df = check_all_characters_present(df, time_column_check)
         time_period_column_df = check_all_characters_present(df, time_period_column_check)
+
+        # ---- Defensive normalization (CRITICAL) ----
+        time_col = time_value_code_df[0]
+        df[time_col] = (
+            df[time_col]
+            .astype(str)
+            .str.strip()
+            .str.replace('.0', '', regex=False)
+        )
         
         # Apply filters and cleaning (SAME AS YOUR ORIGINAL CODE)
         df[time_value_code_df[0]] = df[time_value_code_df[0]].astype(str)
-        df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
-        df = df[df[time_value_code_df[0]] == '1']
+        # ---- Apply required filters ----
+        df = df[df[time_col] == '1']
         df = df[df['INTERV_INIT'] != '999']
         
         if elvis_status_column:
             df = df[df[elvis_status_column[0]].str.lower() != 'delete']
         
         df.drop_duplicates(subset='id', inplace=True)
-        
+        print("df length after cleaning:", len(df))
         # Rename route surveyed column
         if route_surveyed_code:
             df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
