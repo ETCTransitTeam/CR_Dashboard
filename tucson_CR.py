@@ -2402,7 +2402,138 @@ else:
                                     filtered_display_df = filtered_display_df[filtered_display_df[interv_init_col] == selected_interv]
                                 
                                 # Show record count
-                                st.info(f"📊 Showing {len(filtered_display_df):,} records")
+                                total_records = len(filtered_display_df)
+                                st.info(f"📊 Showing {total_records:,} records")
+                                
+                                # Summary table for Have5MinForSurve breakdown
+                                if not filtered_display_df.empty and have5min_col:
+                                    st.markdown("---")
+                                    
+                                    # Get value counts for Have5MinForSurve
+                                    participation_counts = filtered_display_df[have5min_col].value_counts()
+                                    
+                                    # Create summary data
+                                    summary_data = []
+                                    for value, count in participation_counts.items():
+                                        if pd.notna(value) and str(value).strip() != '':
+                                            percentage = (count / total_records * 100) if total_records > 0 else 0
+                                            summary_data.append({
+                                                'Response': str(value).strip(),
+                                                'Count': int(count),
+                                                'Percentage': f"{percentage:.1f}%"
+                                            })
+                                    
+                                    if summary_data:
+                                        summary_df = pd.DataFrame(summary_data)
+                                        summary_df = summary_df.sort_values('Count', ascending=False)
+                                        
+                                        # Calculate participation rate (Yes responses)
+                                        yes_responses = summary_df[
+                                            summary_df['Response'].str.contains('Yes|yes|participate|1', case=False, na=False)
+                                        ]['Count'].sum()
+                                        participation_rate = (yes_responses / total_records * 100) if total_records > 0 else 0
+                                        
+                                        refusals = total_records - yes_responses
+                                        refusal_rate = (refusals / total_records * 100) if total_records > 0 else 0
+                                        
+                                        # ============================================
+                                        # QUICK SNAPSHOT - Always Visible
+                                        # ============================================
+                                        st.subheader("📋 Quick Snapshot - Participation Summary")
+                                        
+                                        # Top metrics row
+                                        metric_col1, metric_col2, metric_col3 = st.columns(3)
+                                        
+                                        with metric_col1:
+                                            st.metric("Total Records", f"{total_records:,}")
+                                        
+                                        with metric_col2:
+                                            st.metric("Participations", f"{yes_responses:,}", f"{participation_rate:.1f}%")
+                                        
+                                        with metric_col3:
+                                            st.metric("Refusals", f"{refusals:,}", f"{refusal_rate:.1f}%")
+                                        
+                                        # Prepare display dataframe (outside expanders for reuse)
+                                        display_summary_df = summary_df.copy()
+                                        display_summary_df.columns = ['Response Type', 'Count', 'Percentage']
+                                        
+                                        # Add category for color coding
+                                        def get_category(response):
+                                            response_lower = str(response).lower()
+                                            if 'yes' in response_lower or 'participate' in response_lower or (response_lower.startswith('1') and len(response_lower) == 1):
+                                                return 'yes'
+                                            elif 'no' in response_lower or 'refused' in response_lower or 'refusal' in response_lower:
+                                                return 'no'
+                                            else:
+                                                return 'other'
+                                        
+                                        display_summary_df['Category'] = display_summary_df['Response Type'].apply(get_category)
+                                        
+                                        # ============================================
+                                        # DETAILED BREAKDOWN - In Expander
+                                        # ============================================
+                                        with st.expander("📊 Detailed Breakdown (Visual Cards)", expanded=False):
+                                            # Display as cards in columns for better visual appeal
+                                            num_rows = len(display_summary_df)
+                                            cols_per_row = 2
+                                            
+                                            for i in range(0, num_rows, cols_per_row):
+                                                row_cols = st.columns(cols_per_row)
+                                                for j, col in enumerate(row_cols):
+                                                    if i + j < num_rows:
+                                                        row = display_summary_df.iloc[i + j]
+                                                        category = row['Category']
+                                                        
+                                                        with col:
+                                                            # Determine colors based on category
+                                                            if category == 'yes':
+                                                                bg_color = "#d1fae5"
+                                                                text_color = "#065f46"
+                                                                border_color = "#10b981"
+                                                            elif category == 'no':
+                                                                bg_color = "#fee2e2"
+                                                                text_color = "#991b1b"
+                                                                border_color = "#ef4444"
+                                                            else:
+                                                                bg_color = "#f3f4f6"
+                                                                text_color = "#374151"
+                                                                border_color = "#6b7280"
+                                                            
+                                                            st.markdown(f"""
+                                                            <div style="
+                                                                background-color: {bg_color};
+                                                                border-left: 4px solid {border_color};
+                                                                padding: 1rem;
+                                                                border-radius: 8px;
+                                                                margin-bottom: 1rem;
+                                                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                                                            ">
+                                                                <div style="font-size: 0.85rem; color: {text_color}; font-weight: 600; margin-bottom: 0.5rem;">
+                                                                    {row['Response Type']}
+                                                                </div>
+                                                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                                                    <span style="font-size: 1.5rem; font-weight: 700; color: #1e3a5f;">
+                                                                        {row['Count']:,}
+                                                                    </span>
+                                                                    <span style="font-size: 1rem; color: #6b7280; font-weight: 500;">
+                                                                        {row['Percentage']}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            """, unsafe_allow_html=True)
+                                        
+                                        # ============================================
+                                        # SUMMARY TABLE - In Expander
+                                        # ============================================
+                                        with st.expander("📋 Summary Table", expanded=False):
+                                            # Remove category column before display
+                                            table_df = display_summary_df[['Response Type', 'Count', 'Percentage']].copy()
+                                            st.dataframe(
+                                                table_df,
+                                                use_container_width=True,
+                                                hide_index=True,
+                                                height=min(400, len(table_df) * 50 + 50)
+                                            )
                                 
                                 if not filtered_display_df.empty:
                                     # Prepare columns for display
