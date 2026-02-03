@@ -1974,7 +1974,7 @@ def process_survey_data(df):
     return interviewer_pivot, route_pivot, detail_table
 
 
-def process_surveyor_data_transit_ls6(df, elvis_df):
+def process_surveyor_data_transit_ls6(df, elvis_df, project=None):
     """Process data for surveyor-level report"""
     # Clean and filter elvis data (use elvis_df for all calculations)
     elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
@@ -2127,10 +2127,49 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
                 .astype(str).str.strip().str.replace('.0', '', regex=False)
                 .isin(['10'])
         ),
-        ('Hispanic', filtered_elvis['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', filtered_elvis['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', filtered_elvis['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    
+    # Add race metrics based on project
+    if project and project.upper() == "LACMTA_FEEDER":
+        # LACMTA_FEEDER race mappings (corrected)
+        race_metrics = [
+            ('American Indian / Alaska Native', 'RACE_1'),
+            ('Black / African American', 'RACE_2'),
+            ('Hispanic / Latino', 'RACE_3'),
+            ('Asian', 'RACE_4'),
+            ('Native Hawaiian / Pacific Islander', 'RACE_5'),
+            ('White', 'RACE_6'),
+            ('Middle Eastern or North African', 'RACE_7'),
+            ('Prefer not to say', 'RACE_8')
+        ]
+        
+        for race_name, race_col in race_metrics:
+            if race_col in filtered_elvis.columns:
+                metrics.append((
+                    race_name,
+                    filtered_elvis[race_col].astype(str).str.strip().str.upper() == 'YES'
+                ))
+            else:
+                # If column doesn't exist, create a Series of False values with same index
+                # This ensures all race columns are always included in the output (will show 0.0%)
+                metrics.append((
+                    race_name,
+                    pd.Series(False, index=filtered_elvis.index)
+                ))
+    else:
+        # Default/legacy race mappings (for backward compatibility)
+        race_metrics = [
+            ('Hispanic', 'RACE_6'),
+            ('Black', 'RACE_5'),
+            ('White', 'RACE_4')
+        ]
+        
+        for race_name, race_col in race_metrics:
+            if race_col in filtered_elvis.columns:
+                metrics.append((
+                    race_name,
+                    filtered_elvis[race_col].astype(str).str.strip().str.upper() == 'YES'
+                ))
     
     # First get total records per interviewer
     total_records_group = filtered_elvis.groupby('INTERV_INIT')['id'].count().reset_index()
@@ -2234,16 +2273,51 @@ def process_surveyor_data_transit_ls6(df, elvis_df):
     
     summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
     
-    column_order = [
+    # Build column order dynamically based on available race columns
+    base_columns = [
         'INTERV_INIT', '# of Records', '# of Supervisor Delete', '# of Records Remove',
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of LowIncome', '% of No Income'
+    ]
+    
+    # Add race columns in order
+    if project and project.upper() == "LACMTA_FEEDER":
+        race_columns = [
+            '% of American Indian / Alaska Native',
+            '% of Black / African American',
+            '% of Hispanic / Latino',
+            '% of Asian',
+            '% of Native Hawaiian / Pacific Islander',
+            '% of White',
+            '% of Middle Eastern or North African',
+            '% of Prefer not to say'
+        ]
+    else:
+        race_columns = [
+            '% of Hispanic',
+            '% of Black',
+            '% of White'
+        ]
+    
+    # For LACMTA_FEEDER, ensure all race columns exist (add missing ones with 0.0%)
+    if project and project.upper() == "LACMTA_FEEDER":
+        for race_col in race_columns:
+            if race_col not in summary_df.columns:
+                summary_df[race_col] = '0.0%'
+    
+    # Filter to only include columns that exist in summary_df
+    available_race_columns = [col for col in race_columns if col in summary_df.columns]
+    
+    column_order = base_columns + available_race_columns + [
         '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
     
-    return summary_df[column_order]
+    # Ensure all columns in column_order exist in summary_df
+    final_columns = [col for col in column_order if col in summary_df.columns]
+    
+    return summary_df[final_columns]
 
 
 def process_surveyor_data(df, elvis_df):

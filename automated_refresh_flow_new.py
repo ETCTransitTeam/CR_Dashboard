@@ -1096,7 +1096,7 @@ def fetch_and_process_data(project,schema):
         comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_merged_df_filtered, route_level_df, project, stops_df)
         print("Route comparison data processed successfully.")
 
-        survey_report_df = process_surveyor_data_transit_ls6(ke_df, df)
+        survey_report_df = process_surveyor_data_transit_ls6(ke_df, df, project)
         route_report_df = process_route_data_transit_ls6(ke_df, df)
         low_response_questions_df = create_low_response_report(df)
         refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df)
