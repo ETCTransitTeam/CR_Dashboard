@@ -1237,3 +1237,344 @@ def change_password(email):
             st.rerun()
     
     render_auth_layout(change_password_content, "Change Password", "Update your account password")
+
+# ============================================
+# SUPER ADMIN MANAGEMENT FUNCTIONS
+# ============================================
+
+# List of super admin emails
+SUPER_ADMIN_EMAILS = [
+    "shehryar.iqbal@etcinstitute.com",
+    "booali735@gmail.com",
+    "jason.jones@etcinstitute.com"
+]
+
+def is_super_admin(email):
+    """Check if the email belongs to a super admin."""
+    return email.lower() in [admin_email.lower() for admin_email in SUPER_ADMIN_EMAILS]
+
+def get_all_users():
+    conn = user_connect_to_snowflake()
+    cursor = conn.cursor(snowflake.connector.DictCursor)
+
+    try:
+        cursor.execute("""
+            SELECT
+                EMAIL,
+                USERNAME,
+                ROLE,
+                IS_ACTIVE,
+                CREATED_AT,
+                LAST_LOGIN
+            FROM USER.USER_TABLE
+            ORDER BY EMAIL
+        """)
+
+        rows = cursor.fetchall()
+        users = []
+
+        for row in rows:
+            users.append({
+                "email": row["EMAIL"],
+                "username": row["USERNAME"],
+                "role": row["ROLE"],
+                "is_active": row["IS_ACTIVE"],
+                "created_at": (
+                    row["CREATED_AT"].strftime("%Y-%m-%d %H:%M:%S")
+                    if row["CREATED_AT"] else "N/A"
+                ),
+                "last_login": (
+                    row["LAST_LOGIN"].strftime("%Y-%m-%d %H:%M:%S")
+                    if row["LAST_LOGIN"] else "Never logged in"
+                ),
+            })
+
+        return users
+
+    except Exception as e:
+        st.error(f"Error fetching users: {e}")
+        return []
+
+    finally:
+        cursor.close()
+        conn.close()
+
+def toggle_user_status(email, new_status):
+    """Activate or deactivate a user account."""
+    conn = user_connect_to_snowflake()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            UPDATE user.user_table 
+            SET is_active = %s 
+            WHERE email = %s
+        """, (new_status, email))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        st.error(f"Error updating user status: {e}")
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
+def admin_create_user(email, username, password, role):
+    """Create a new user account (admin function)."""
+    conn = user_connect_to_snowflake()
+    cursor = conn.cursor()
+    
+    try:
+        # Check if user already exists
+        cursor.execute("SELECT email FROM user.user_table WHERE email = %s", (email,))
+        if cursor.fetchone():
+            return False, "User already exists!"
+        
+        # Hash password
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        encoded_password = base64.b64encode(hashed_password).decode('utf-8')
+        
+        # Create user (active by default for admin-created accounts)
+        cursor.execute("""
+            INSERT INTO user.user_table (email, username, password, role, is_active, activation_token) 
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (email, username, encoded_password, role, True, None))
+        
+        conn.commit()
+        return True, f"User {username} created successfully!"
+    except Exception as e:
+        return False, f"Error creating user: {str(e)}"
+    finally:
+        cursor.close()
+        conn.close()
+
+def admin_update_password(email, new_password):
+    """Update a user's password (admin function)."""
+    # Prevent updating passwords for super admins
+    if is_super_admin(email):
+        return False, "Cannot update password for super admin accounts."
+    
+    conn = user_connect_to_snowflake()
+    cursor = conn.cursor()
+    
+    try:
+        # Check if user exists
+        cursor.execute("SELECT email FROM user.user_table WHERE email = %s", (email,))
+        if not cursor.fetchone():
+            return False, "User not found!"
+        
+        # Hash new password
+        hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+        encoded_password = base64.b64encode(hashed_password).decode('utf-8')
+        
+        # Update password
+        cursor.execute("""
+            UPDATE user.user_table 
+            SET password = %s 
+            WHERE email = %s
+        """, (encoded_password, email))
+        
+        conn.commit()
+        return True, f"Password updated successfully for {email}!"
+    except Exception as e:
+        return False, f"Error updating password: {str(e)}"
+    finally:
+        cursor.close()
+        conn.close()
+
+# ============================================
+# MANAGEMENT PAGE FUNCTIONS
+# ============================================
+
+def accounts_management_page():
+    """Display all accounts with activate/deactivate functionality."""
+    st.title("Accounts Management")
+    st.markdown("**View and manage all user accounts**")
+    
+    # Get current user email
+    current_user_email = st.session_state.get("user", {}).get("email", "")
+    
+    if not is_super_admin(current_user_email):
+        st.error("❌ Access Denied: This page is only accessible to super administrators.")
+        return
+    
+    # Fetch all users
+    users = get_all_users()
+    
+    if not users:
+        st.info("No users found in the system.")
+        return
+    
+    # Display statistics
+    total_users = len(users)
+    active_users = sum(1 for u in users if u['is_active'])
+    inactive_users = total_users - active_users
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Users", total_users)
+    with col2:
+        st.metric("Active Users", active_users)
+    with col3:
+        st.metric("Inactive Users", inactive_users)
+    
+    st.markdown("---")
+    
+    # Search and filter
+    search_term = st.text_input("🔍 Search by username or email", "")
+    
+    # Filter users
+    filtered_users = users
+    if search_term:
+        filtered_users = [
+            u for u in users 
+            if search_term.lower() in u['username'].lower() or search_term.lower() in u['email'].lower()
+        ]
+    
+    # Display users in a table
+    if filtered_users:
+        st.subheader(f"User Accounts ({len(filtered_users)} found)")
+        
+        for idx, user in enumerate(filtered_users):
+            is_super = is_super_admin(user['email'])
+            
+            # Adjusted columns: removed Last Login column
+            col1, col2, col3, col4, col5 = st.columns([2.5, 2, 2, 1.5, 1])
+            
+            with col1:
+                if is_super:
+                    st.write(f"**👑 {user['username']}**")
+                    st.caption(f"{user['email']} (Super Admin)")
+                else:
+                    st.write(f"**{user['username']}**")
+                    st.caption(user['email'])
+            
+            with col2:
+                role_badge = "🔵 ADMIN" if user['role'].upper() == "ADMIN" else "🟢 CLIENT"
+                st.write(role_badge)
+                status_badge = "✅ Active" if user['is_active'] else "❌ Inactive"
+                st.write(status_badge)
+            
+            with col3:
+                st.caption("Created:")
+                created_date = user.get('created_at', 'N/A')
+                st.write(created_date if created_date != 'N/A' else 'N/A')
+            
+            with col4:
+                if is_super:
+                    st.markdown("🔒 **Protected**")
+                else:
+                    if user['is_active']:
+                        if st.button("Deactivate", key=f"deactivate_{idx}", type="secondary"):
+                            if toggle_user_status(user['email'], False):
+                                st.success(f"User {user['username']} deactivated successfully!")
+                                st.rerun()
+                    else:
+                        if st.button("Activate", key=f"activate_{idx}", type="primary"):
+                            if toggle_user_status(user['email'], True):
+                                st.success(f"User {user['username']} activated successfully!")
+                                st.rerun()
+            
+            with col5:
+                # Empty space for alignment
+                st.write("")
+            
+            st.markdown("---")
+    else:
+        st.info("No users found matching your search criteria.")
+
+def create_accounts_page():
+    """Page for creating new user accounts."""
+    st.title("Create User Account")
+    st.markdown("**Create new admin or client accounts**")
+    
+    # Get current user email
+    current_user_email = st.session_state.get("user", {}).get("email", "")
+    
+    if not is_super_admin(current_user_email):
+        st.error("❌ Access Denied: This page is only accessible to super administrators.")
+        return
+    
+    with st.form("create_account_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            username = st.text_input("Username *", placeholder="Enter username")
+            email = st.text_input("Email *", placeholder="Enter email address")
+        
+        with col2:
+            password = st.text_input("Password *", type="password", placeholder="Enter password")
+            confirm_password = st.text_input("Confirm Password *", type="password", placeholder="Re-enter password")
+        
+        role = st.selectbox("Role *", ["ADMIN", "CLIENT"], help="Select user role")
+        
+        st.markdown("**Note:** Accounts created by super admins are automatically activated.")
+        
+        if st.form_submit_button("Create Account", type="primary", use_container_width=True):
+            if not all([username, email, password, confirm_password]):
+                st.error("Please fill in all required fields.")
+            elif password != confirm_password:
+                st.error("Passwords do not match.")
+            else:
+                success, message = admin_create_user(email, username, password, role)
+                if success:
+                    st.success(message)
+                    st.balloons()
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(message)
+
+def password_update_page():
+    """Page for updating user passwords."""
+    st.title("Password Update")
+    st.markdown("**Update passwords for any user account**")
+    
+    # Get current user email
+    current_user_email = st.session_state.get("user", {}).get("email", "")
+    
+    if not is_super_admin(current_user_email):
+        st.error("❌ Access Denied: This page is only accessible to super administrators.")
+        return
+    
+    # Fetch all users (excluding super admins)
+    all_users = get_all_users()
+    non_admin_users = [u for u in all_users if not is_super_admin(u['email'])]
+    
+    if not non_admin_users:
+        st.info("No users available for password update.")
+        return
+    
+    st.warning("⚠️ **Note:** You cannot update passwords for super admin accounts (Jason, Shehryar, Boo Ali).")
+    
+    # User selection
+    user_options = {f"{u['username']} ({u['email']})": u['email'] for u in non_admin_users}
+    selected_user_display = st.selectbox("Select User", list(user_options.keys()))
+    selected_email = user_options[selected_user_display]
+    
+    # Get selected user details
+    selected_user = next((u for u in non_admin_users if u['email'] == selected_email), None)
+    
+    if selected_user:
+        st.info(f"**Selected User:** {selected_user['username']} ({selected_user['email']}) | **Role:** {selected_user['role']}")
+        
+        with st.form("update_password_form"):
+            new_password = st.text_input("New Password *", type="password", placeholder="Enter new password")
+            confirm_password = st.text_input("Confirm New Password *", type="password", placeholder="Re-enter new password")
+            
+            if st.form_submit_button("Update Password", type="primary", use_container_width=True):
+                if not new_password or not confirm_password:
+                    st.error("Please fill in both password fields.")
+                elif new_password != confirm_password:
+                    st.error("Passwords do not match.")
+                elif len(new_password) < 6:
+                    st.error("Password must be at least 6 characters long.")
+                else:
+                    success, message = admin_update_password(selected_email, new_password)
+                    if success:
+                        st.success(message)
+                        st.balloons()
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(message)

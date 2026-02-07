@@ -7,7 +7,7 @@ import streamlit as st
 import snowflake.connector
 from automated_refresh_flow_new import fetch_and_process_data
 from utils import create_csv,download_csv, render_styled_dataframe
-from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page
+from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -710,23 +710,31 @@ else:
 
         ####################################################################################################
 
+        # Page mapping (shared for forward and reverse lookup)
+        PAGE_MAPPING = {
+            "🏠︎   Home": "main",
+            "🗓︎   WEEKDAY-OVERALL": "weekday",
+            "☀︎   WEEKEND-OVERALL": "weekend",
+            "🕒  Time Of Day Details": "timedetails",
+            "🗺️  Location Maps": "location_maps",
+            "⤓    LOW RESPONSE QUESTIONS": "low_response_questions_tab",
+            "↺   Clone Records": "reverse_routes",
+            "⌗  DAILY TOTALS": "dailytotals",
+            "∆   Surveyor/Route/Trend Reports": "surveyreport",
+            "◉  WEEKDAY StationWise Comparison": "weekday_station",
+            "⦾  WEEKEND StationWise Comparison": "weekend_station",
+            "🚫  Refusal Analysis": "refusal",
+            "👥  Demographic Review": "demographic",
+            "⚙️  Accounts Management": "accounts_management",
+            "➕  Create Accounts": "create_accounts",
+            "🔐  Password Update": "password_update",
+        }
+        
+        # Reverse mapping (page key -> menu item)
+        REVERSE_PAGE_MAPPING = {v: k for k, v in PAGE_MAPPING.items()}
+        
         def get_page_key(selected_page):
-            mapping = {
-                "🏠︎   Home": "main",
-                "🗓︎   WEEKDAY-OVERALL": "weekday",
-                "☀︎   WEEKEND-OVERALL": "weekend",
-                "🕒  Time Of Day Details": "timedetails",
-                "🗺️  Location Maps": "location_maps",
-                "⤓    LOW RESPONSE QUESTIONS": "low_response_questions_tab",
-                "↺   Clone Records": "reverse_routes",
-                "⌗  DAILY TOTALS": "dailytotals",
-                "∆   Surveyor/Route/Trend Reports": "surveyreport",
-                "◉  WEEKDAY StationWise Comparison": "weekday_station",
-                "⦾  WEEKEND StationWise Comparison": "weekend_station",
-                "🚫  Refusal Analysis": "refusal",
-                "👥  Demographic Review": "demographic",
-            }
-            return mapping.get(selected_page, "main")
+            return PAGE_MAPPING.get(selected_page, "main")
         
 
         user = st.session_state["user"]
@@ -1384,6 +1392,32 @@ else:
             # --- Session State ---
             if "selected_page" not in st.session_state:
                 st.session_state.selected_page = "🏠︎   Home"
+            
+            # Check if current page is a management page
+            management_page_keys = ["accounts_management", "create_accounts", "password_update"]
+            is_management_page = current_page in management_page_keys
+            
+            # Management page mapping
+            management_mapping = {
+                "accounts_management": "⚙️  Accounts Management",
+                "create_accounts": "➕  Create Accounts",
+                "password_update": "🔐  Password Update"
+            }
+            
+            # Sync selected_page with current_page if it's a dashboard page
+            if not is_management_page:
+                # Reverse lookup: find menu item from page key
+                if current_page in REVERSE_PAGE_MAPPING:
+                    st.session_state.selected_page = REVERSE_PAGE_MAPPING[current_page]
+                # Clear management page state when on dashboard page
+                if "selected_management_page" in st.session_state and current_page not in management_page_keys:
+                    del st.session_state.selected_management_page
+            else:
+                # If it's a management page, ensure dashboard page is reset
+                st.session_state.selected_page = "🏠︎   Home"
+                # Sync management page state - always update if URL has management page
+                if current_page in management_mapping:
+                    st.session_state.selected_management_page = management_mapping[current_page]
 
             # --- Dropdown for Navigation ---
             selected_page = st.selectbox(
@@ -1394,11 +1428,52 @@ else:
                 label_visibility="collapsed"
             )
 
-            # --- Detect Page Change ---
-            if selected_page != st.session_state.selected_page:
+            # --- Detect Page Change (only if not a management page) ---
+            if selected_page != st.session_state.selected_page and not is_management_page:
                 st.session_state.selected_page = selected_page
+                # Clear management page selection when dashboard page is selected
+                if "selected_management_page" in st.session_state:
+                    del st.session_state.selected_management_page
                 st.query_params["page"] = get_page_key(selected_page)
                 st.rerun()
+            
+            # --- Management Pages Section (Separate Dropdown for Super Admins) ---
+            current_user_email = st.session_state.get("user", {}).get("email", "")
+            if is_super_admin(current_user_email):
+                # Add visual separator
+                st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">', unsafe_allow_html=True)
+                st.markdown("<div class='section-label'>Management</div>", unsafe_allow_html=True)
+                
+                management_items = [
+                    "⚙️  Accounts Management",
+                    "➕  Create Accounts",
+                    "🔐  Password Update"
+                ]
+                
+                # Initialize management page state if not set
+                if "selected_management_page" not in st.session_state:
+                    if is_management_page and current_page in management_mapping:
+                        st.session_state.selected_management_page = management_mapping[current_page]
+                    else:
+                        st.session_state.selected_management_page = management_items[0]
+                
+                # --- Management Dropdown (Separate from Dashboard Pages) ---
+                selected_management_page = st.selectbox(
+                    "",
+                    management_items,
+                    index=management_items.index(st.session_state.selected_management_page) if st.session_state.selected_management_page in management_items else 0,
+                    key="sidebar_management_menu",
+                    label_visibility="collapsed"
+                )
+                
+                # --- Detect Management Page Change ---
+                if selected_management_page != st.session_state.selected_management_page:
+                    st.session_state.selected_management_page = selected_management_page
+                    # Clear dashboard page selection when management page is selected
+                    st.session_state.selected_page = "🏠︎   Home"
+                    page_key = get_page_key(selected_management_page)
+                    st.query_params["page"] = page_key
+                    st.rerun()
 
             # --- Bottom Buttons ---
             st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 0;">', unsafe_allow_html=True)
@@ -5311,6 +5386,12 @@ else:
             elif current_page == "demographic":
                 if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                    demographic_review_page(demographic_review_df)
+            elif current_page == "accounts_management":
+                accounts_management_page()
+            elif current_page == "create_accounts":
+                create_accounts_page()
+            elif current_page == "password_update":
+                password_update_page()
 
             else:
                 if 'tucson' in selected_project:
