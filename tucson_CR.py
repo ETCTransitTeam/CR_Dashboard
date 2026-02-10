@@ -1404,75 +1404,58 @@ else:
                 "password_update": "🔐  Password Update"
             }
             
-            # Sync selected_page with current_page if it's a dashboard page
+            # --- Sync state from URL/current_page BEFORE rendering widgets ---
             if not is_management_page:
-                # Reverse lookup: find menu item from page key
+                # dashboard page
                 if current_page in REVERSE_PAGE_MAPPING:
                     st.session_state.selected_page = REVERSE_PAGE_MAPPING[current_page]
-                # Clear management page state when on dashboard page
-                if "selected_management_page" in st.session_state and current_page not in management_page_keys:
+                if "selected_management_page" in st.session_state:
                     del st.session_state.selected_management_page
             else:
-                # If it's a management page, ensure dashboard page is reset
+                # management page
                 st.session_state.selected_page = "🏠︎   Home"
-                # Sync management page state - always update if URL has management page
                 if current_page in management_mapping:
                     st.session_state.selected_management_page = management_mapping[current_page]
 
-            # --- Dropdown for Navigation ---
-            selected_page = st.selectbox(
+            # Ensure widget keys exist and are consistent
+            if "sidebar_menu" not in st.session_state:
+                st.session_state.sidebar_menu = st.session_state.selected_page
+
+            def on_dashboard_change():
+                # Called when dashboard dropdown changes
+                new_val = st.session_state.sidebar_menu
+                if new_val != st.session_state.selected_page:
+                    st.session_state.selected_page = new_val
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = get_page_key(new_val)
+                    st.rerun()
+
+            # --- Dashboard dropdown (NO dynamic index) ---
+            st.session_state.sidebar_menu = st.session_state.selected_page
+            st.selectbox(
                 "",
                 menu_items,
-                index=menu_items.index(st.session_state.selected_page) if st.session_state.selected_page in menu_items else 0,
                 key="sidebar_menu",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                on_change=on_dashboard_change,
             )
 
-            # --- Detect Page Change (only if not a management page) ---
-            if selected_page != st.session_state.selected_page and not is_management_page:
-                st.session_state.selected_page = selected_page
-                # Clear management page selection when dashboard page is selected
-                if "selected_management_page" in st.session_state:
-                    del st.session_state.selected_management_page
-                st.query_params["page"] = get_page_key(selected_page)
-                st.rerun()
-            
-            # --- Management Pages Section (Separate Dropdown for Super Admins) ---
+            # --- Management section for super admins ---
             current_user_email = st.session_state.get("user", {}).get("email", "")
             if is_super_admin(current_user_email):
-                # Add visual separator
-                st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">', unsafe_allow_html=True)
-                st.markdown("<div class='section-label'>Management</div>", unsafe_allow_html=True)
-                
-                management_items = [
-                    "⚙️  Accounts Management",
-                    "➕  Create Accounts",
-                    "🔐  Password Update"
-                ]
-                
-                # Initialize management page state if not set
-                if "selected_management_page" not in st.session_state:
-                    if is_management_page and current_page in management_mapping:
-                        st.session_state.selected_management_page = management_mapping[current_page]
-                    else:
-                        st.session_state.selected_management_page = management_items[0]
-                
-                # --- Management Dropdown (Separate from Dashboard Pages) ---
-                selected_management_page = st.selectbox(
-                    "",
-                    management_items,
-                    index=management_items.index(st.session_state.selected_management_page) if st.session_state.selected_management_page in management_items else 0,
-                    key="sidebar_management_menu",
-                    label_visibility="collapsed"
+                st.markdown(
+                    '<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">',
+                    unsafe_allow_html=True,
                 )
-                
-                # --- Detect Management Page Change ---
-                if selected_management_page != st.session_state.selected_management_page:
-                    st.session_state.selected_management_page = selected_management_page
-                    # Clear dashboard page selection when management page is selected
+                st.markdown("<div class='section-label'>Management</div>", unsafe_allow_html=True)
+
+                # Single button to go to Accounts Management page
+                if st.button("Accounts Management", use_container_width=True, type="primary"):
                     st.session_state.selected_page = "🏠︎   Home"
-                    page_key = get_page_key(selected_management_page)
-                    st.query_params["page"] = page_key
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "accounts_management"
                     st.rerun()
 
             # --- Bottom Buttons ---

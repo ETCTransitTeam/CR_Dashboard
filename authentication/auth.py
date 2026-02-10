@@ -1388,7 +1388,16 @@ def admin_update_password(email, new_password):
 
 def accounts_management_page():
     """Display all accounts with activate/deactivate functionality."""
-    st.title("Accounts Management")
+    # Header with title and Create Account button on same line
+    title_col1, title_col2 = st.columns([3, 1])
+    with title_col1:
+        st.title("Accounts Management")
+    with title_col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align button with title
+        if st.button("Create Account", type="primary", use_container_width=False):
+            st.query_params["page"] = "create_accounts"
+            st.rerun()
+    
     st.markdown("**View and manage all user accounts**")
     
     # Get current user email
@@ -1433,53 +1442,87 @@ def accounts_management_page():
     
     # Display users in a table
     if filtered_users:
+        # Table header
         st.subheader(f"User Accounts ({len(filtered_users)} found)")
         
+        # Create table with header row
+        header_col1, header_col2, header_col3, header_col4, header_col5, header_col6 = st.columns([2, 2.5, 1, 1, 1.5, 2])
+        with header_col1:
+            st.markdown("**Username**")
+        with header_col2:
+            st.markdown("**Email**")
+        with header_col3:
+            st.markdown("**Role**")
+        with header_col4:
+            st.markdown("**Status**")
+        with header_col5:
+            st.markdown("**Created**")
+        with header_col6:
+            st.markdown("**Actions**")
+        
+        st.markdown("---")
+        
+        # Table rows with action buttons
         for idx, user in enumerate(filtered_users):
             is_super = is_super_admin(user['email'])
             
-            # Adjusted columns: removed Last Login column
-            col1, col2, col3, col4, col5 = st.columns([2.5, 2, 2, 1.5, 1])
+            # Format username with super admin indicator
+            username_display = f"👑 {user['username']}" if is_super else user['username']
+            email_display = user['email']
+            if is_super:
+                email_display += " (Super Admin)"
             
-            with col1:
+            # Format role
+            role_display = "🔵 ADMIN" if user['role'].upper() == "ADMIN" else "🟢 CLIENT"
+            
+            # Format status
+            status_display = "✅ Active" if user['is_active'] else "❌ Inactive"
+            
+            # Format created date
+            created_date = user.get('created_at', 'N/A')
+            created_display = created_date if created_date != 'N/A' else 'N/A'
+            
+            # Create row with columns for actions
+            row_col1, row_col2, row_col3, row_col4, row_col5, row_col6 = st.columns([2, 2.5, 1, 1, 1.5, 2])
+            
+            with row_col1:
+                st.write(username_display)
+            with row_col2:
+                st.caption(email_display)
+            with row_col3:
+                st.write(role_display)
+            with row_col4:
+                st.write(status_display)
+            with row_col5:
+                st.caption(created_display)
+            with row_col6:
                 if is_super:
-                    st.write(f"**👑 {user['username']}**")
-                    st.caption(f"{user['email']} (Super Admin)")
+                    st.caption("🔒 Protected")
                 else:
-                    st.write(f"**{user['username']}**")
-                    st.caption(user['email'])
+                    # Action buttons in a horizontal layout
+                    action_col1, action_col2 = st.columns(2)
+                    with action_col1:
+                        # Activate/Deactivate button
+                        if user['is_active']:
+                            if st.button("Deactivate", key=f"deactivate_{idx}", type="secondary", use_container_width=True):
+                                if toggle_user_status(user['email'], False):
+                                    st.success(f"User {user['username']} deactivated successfully!")
+                                    st.rerun()
+                        else:
+                            if st.button("Activate", key=f"activate_{idx}", type="primary", use_container_width=True):
+                                if toggle_user_status(user['email'], True):
+                                    st.success(f"User {user['username']} activated successfully!")
+                                    st.rerun()
+                    with action_col2:
+                        # Password Update button
+                        if st.button("Update Pwd", key=f"password_{idx}", use_container_width=True):
+                            st.session_state["password_update_target_email"] = user['email']
+                            st.query_params["page"] = "password_update"
+                            st.rerun()
             
-            with col2:
-                role_badge = "🔵 ADMIN" if user['role'].upper() == "ADMIN" else "🟢 CLIENT"
-                st.write(role_badge)
-                status_badge = "✅ Active" if user['is_active'] else "❌ Inactive"
-                st.write(status_badge)
-            
-            with col3:
-                st.caption("Created:")
-                created_date = user.get('created_at', 'N/A')
-                st.write(created_date if created_date != 'N/A' else 'N/A')
-            
-            with col4:
-                if is_super:
-                    st.markdown("🔒 **Protected**")
-                else:
-                    if user['is_active']:
-                        if st.button("Deactivate", key=f"deactivate_{idx}", type="secondary"):
-                            if toggle_user_status(user['email'], False):
-                                st.success(f"User {user['username']} deactivated successfully!")
-                                st.rerun()
-                    else:
-                        if st.button("Activate", key=f"activate_{idx}", type="primary"):
-                            if toggle_user_status(user['email'], True):
-                                st.success(f"User {user['username']} activated successfully!")
-                                st.rerun()
-            
-            with col5:
-                # Empty space for alignment
-                st.write("")
-            
-            st.markdown("---")
+            # Add separator between rows (except last)
+            if idx < len(filtered_users) - 1:
+                st.markdown("---")
     else:
         st.info("No users found matching your search criteria.")
 
@@ -1525,6 +1568,14 @@ def create_accounts_page():
                 else:
                     st.error(message)
 
+    # Add a button to go back to Accounts Management
+    if st.button("← Back to Accounts Management", type="secondary"):
+        # Clear the selected email when going back
+        if "password_update_selected_email" in st.session_state:
+            del st.session_state["password_update_selected_email"]
+        st.query_params["page"] = "accounts_management"
+        st.rerun()
+
 def password_update_page():
     """Page for updating user passwords."""
     st.title("Password Update")
@@ -1545,24 +1596,65 @@ def password_update_page():
         st.info("No users available for password update.")
         return
     
-    st.warning("⚠️ **Note:** You cannot update passwords for super admin accounts (Jason, Shehryar, Boo Ali).")
+    # Check if target email is set from Accounts Management page
+    target_email = st.session_state.get("password_update_target_email", None)
     
-    # User selection
-    user_options = {f"{u['username']} ({u['email']})": u['email'] for u in non_admin_users}
-    selected_user_display = st.selectbox("Select User", list(user_options.keys()))
-    selected_email = user_options[selected_user_display]
+    # Store selected email in session state to persist across reruns
+    if target_email:
+        # Set the selected email in session state and clear target_email
+        st.session_state["password_update_selected_email"] = target_email
+        del st.session_state["password_update_target_email"]
     
-    # Get selected user details
-    selected_user = next((u for u in non_admin_users if u['email'] == selected_email), None)
+    # Get the selected email from session state (persists across reruns)
+    selected_email = st.session_state.get("password_update_selected_email", None)
+    
+    # If selected email is set, show only that user (no dropdown)
+    if selected_email:
+        selected_user = next((u for u in non_admin_users if u['email'] == selected_email), None)
+        
+        if not selected_user:
+            st.error(f"User with email {selected_email} not found or is a super admin.")
+            # Clear the selected email
+            if "password_update_selected_email" in st.session_state:
+                del st.session_state["password_update_selected_email"]
+            return
+        
+        # Check if it's a super admin
+        if is_super_admin(selected_email):
+            st.error("⚠️ **Cannot update password for super admin accounts.**")
+            # Clear the selected email
+            if "password_update_selected_email" in st.session_state:
+                del st.session_state["password_update_selected_email"]
+            return
+        
+        # Show selected user info (no dropdown)
+        st.info(f"**Updating password for:** {selected_user['username']} ({selected_user['email']}) | **Role:** {selected_user['role']}")
+    else:
+        # If no selected email, show dropdown for all users
+        st.warning("⚠️ **Note:** You cannot update passwords for super admin accounts (Jason, Shehryar, Boo Ali).")
+        
+        user_options = {f"{u['username']} ({u['email']})": u['email'] for u in non_admin_users}
+        selected_user_display = st.selectbox("Select User", list(user_options.keys()))
+        selected_email = user_options[selected_user_display]
+        
+        # Store in session state
+        st.session_state["password_update_selected_email"] = selected_email
+        
+        # Get selected user details
+        selected_user = next((u for u in non_admin_users if u['email'] == selected_email), None)
     
     if selected_user:
-        st.info(f"**Selected User:** {selected_user['username']} ({selected_user['email']}) | **Role:** {selected_user['role']}")
+        # Double-check we're using the correct email
+        selected_email = st.session_state.get("password_update_selected_email", selected_user['email'])
         
         with st.form("update_password_form"):
             new_password = st.text_input("New Password *", type="password", placeholder="Enter new password")
             confirm_password = st.text_input("Confirm New Password *", type="password", placeholder="Re-enter new password")
             
             if st.form_submit_button("Update Password", type="primary", use_container_width=True):
+                # Use the email from session state to ensure we update the correct user
+                email_to_update = st.session_state.get("password_update_selected_email", selected_email)
+                
                 if not new_password or not confirm_password:
                     st.error("Please fill in both password fields.")
                 elif new_password != confirm_password:
@@ -1570,11 +1662,21 @@ def password_update_page():
                 elif len(new_password) < 6:
                     st.error("Password must be at least 6 characters long.")
                 else:
-                    success, message = admin_update_password(selected_email, new_password)
+                    success, message = admin_update_password(email_to_update, new_password)
                     if success:
                         st.success(message)
                         st.balloons()
+                        # Keep the selected email in session state so same user remains selected
+                        # Don't clear it - user can update again or go back to accounts management
                         time.sleep(1)
                         st.rerun()
                     else:
                         st.error(message)
+        
+        # Add a button to go back to Accounts Management
+        if st.button("← Back to Accounts Management", type="secondary"):
+            # Clear the selected email when going back
+            if "password_update_selected_email" in st.session_state:
+                del st.session_state["password_update_selected_email"]
+            st.query_params["page"] = "accounts_management"
+            st.rerun()
