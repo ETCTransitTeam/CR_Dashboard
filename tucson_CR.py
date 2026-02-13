@@ -5,8 +5,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import snowflake.connector
-from automated_refresh_flow_new import fetch_and_process_data
-from utils import create_csv,download_csv, render_styled_dataframe
+import tempfile
+from automated_refresh_flow_new import fetch_and_process_data, PROJECTS
+from utils import create_csv,download_csv, render_styled_dataframe, validate_filename, validate_kingelvis_sheet, validate_cr_sheets, validate_details_sheets, upload_file_to_s3, list_s3_files
 from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
@@ -1394,14 +1395,16 @@ else:
                 st.session_state.selected_page = "🏠︎   Home"
             
             # Check if current page is a management page
-            management_page_keys = ["accounts_management", "create_accounts", "password_update"]
+            management_page_keys = ["accounts_management", "create_accounts", "password_update", "file_management", "view_s3_files"]
             is_management_page = current_page in management_page_keys
             
             # Management page mapping
             management_mapping = {
                 "accounts_management": "⚙️  Accounts Management",
                 "create_accounts": "➕  Create Accounts",
-                "password_update": "🔐  Password Update"
+                "password_update": "🔐  Password Update",
+                "file_management": "📁  File Management",
+                "view_s3_files": "📦  View S3 Files"
             }
             
             # --- Sync state from URL/current_page BEFORE rendering widgets ---
@@ -1456,6 +1459,22 @@ else:
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = "accounts_management"
+                    st.rerun()
+                
+                # File Management button
+                if st.button("File Management", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "file_management"
+                    st.rerun()
+                
+                # View S3 Files button
+                if st.button("View S3 Files", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "view_s3_files"
                     st.rerun()
 
             # --- Bottom Buttons ---
@@ -4763,6 +4782,405 @@ else:
                     else:
                         st.info("👆 Select a question from the right to view its results.")
 
+        def safe_delete_file(file_path, max_retries=3, delay=0.5):
+            """
+            Safely delete a file with retry logic to handle Windows file locking issues.
+            
+            Args:
+                file_path: Path to the file to delete
+                max_retries: Maximum number of retry attempts
+                delay: Delay in seconds between retries
+            """
+            if not file_path or not os.path.exists(file_path):
+                return
+            
+            for attempt in range(max_retries):
+                try:
+                    os.remove(file_path)
+                    return  # Success
+                except PermissionError:
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)  # Wait before retrying
+                    else:
+                        # Last attempt failed, log but don't crash
+                        print(f"Warning: Could not delete temp file {file_path} after {max_retries} attempts. It may be cleaned up later.")
+                except Exception as e:
+                    print(f"Error deleting file {file_path}: {e}")
+                    return
+
+        def file_management_page():
+            """Page for managing project files (CR, Details, KingElvis) upload to S3."""
+            st.title("📁 Project File Management")
+            st.markdown("**Upload and manage project files in S3 bucket**")
+            
+            # Get current user email
+            current_user_email = st.session_state.get("user", {}).get("email", "")
+            
+            if not is_super_admin(current_user_email):
+                st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                return
+            
+            # Initialize session state for file management
+            if "file_mgmt_upload_key" not in st.session_state:
+                st.session_state.file_mgmt_upload_key = 0
+            
+            # Callback to clear file uploader when project or file type changes
+            def clear_file_uploader():
+                st.session_state.file_mgmt_upload_key += 1
+            
+            # ---- Project selection ----
+            available_projects = sorted(PROJECTS.keys())
+            selected_project = st.selectbox(
+                "Select Project",
+                options=available_projects,
+                index=0 if available_projects else None,
+                key="file_mgmt_project_select",
+                on_change=clear_file_uploader
+            )
+            
+            if not selected_project:
+                st.warning("No projects available.")
+                return
+            
+            # ---- File type selection ----
+            file_type_map = {
+                "CR File (Sample file)": "cr",
+                "Details File (Stops & Routes)": "details",
+                "KingElvis File (Review sheet)": "kingelvis"
+            }
+            
+            file_type_label = st.radio(
+                "Select File Type",
+                options=list(file_type_map.keys()),
+                horizontal=True,
+                key="file_mgmt_file_type_radio",
+                on_change=clear_file_uploader
+            )
+            
+            file_type = file_type_map[file_type_label]
+            
+            # Get expected filename from PROJECTS config
+            project_config = PROJECTS.get(selected_project, {})
+            expected_filename = project_config.get("files", {}).get(file_type)
+            
+            if not expected_filename:
+                st.error(f"❌ File type '{file_type}' is not configured for project '{selected_project}'.")
+                return
+            
+            # Display expected filename
+            st.info(f"📋 **Expected file name:** `{expected_filename}`")
+            
+            # ---- File uploader with dynamic key to force reset ----
+            uploaded_file = st.file_uploader(
+                "📤 Drag & drop Excel file here",
+                type=["xlsx", "xls"],
+                help="Upload the Excel file matching the expected filename",
+                key=f"file_uploader_{st.session_state.file_mgmt_upload_key}"
+            )
+            
+            if not uploaded_file:
+                st.info("👆 Please upload a file to continue.")
+                return
+            
+            # ---- Save temporarily ----
+            file_bytes = uploaded_file.read()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                tmp.write(file_bytes)
+                temp_path = tmp.name
+            
+            # Calculate file size before validation
+            file_size_mb = len(file_bytes) / (1024 * 1024)
+            
+            try:
+                # ---- Filename validation ----
+                is_valid_name, expected_name = validate_filename(
+                    selected_project, file_type, uploaded_file, PROJECTS
+                )
+                
+                if not is_valid_name:
+                    st.error(
+                        f"❌ **Incorrect file name.**\n\n"
+                        f"**Expected:** `{expected_name}`\n"
+                        f"**Uploaded:** `{uploaded_file.name}`\n\n"
+                        f"Please drag and drop the correct file."
+                    )
+                    safe_delete_file(temp_path)
+                    # Clear file from Streamlit memory on validation error
+                    st.session_state.file_mgmt_upload_key += 1
+                    time.sleep(1.5)
+                    st.rerun()
+                
+                # ---- KingElvis sheet validation ----
+                if file_type == "kingelvis":
+                    if not validate_kingelvis_sheet(temp_path):
+                        st.error(
+                            "❌ **Sheet 'Elvis_Review' not found.**\n\n"
+                            "Please upload the correct KingElvis file with the 'Elvis_Review' sheet."
+                        )
+                        safe_delete_file(temp_path)
+                        # Clear file from Streamlit memory on validation error
+                        st.session_state.file_mgmt_upload_key += 1
+                        time.sleep(1.5)
+                        st.rerun()
+                
+                # ---- CR file sheet validation ----
+                if file_type == "cr":
+                    is_valid, missing_sheets = validate_cr_sheets(temp_path)
+                    if not is_valid:
+                        missing_sheets_str = ", ".join(missing_sheets)
+                        st.error(
+                            f"❌ **Missing required sheets in CR file.**\n\n"
+                            f"**Missing sheets:** {missing_sheets_str}\n\n"
+                            f"**Required sheets:** WkDAY-Overall, WkDAY-RouteTotal, WkDAY-RAIL, WkDAY-RailTotal, "
+                            f"WkEND-Overall, WkEND-RouteTotal, WkEND-RAIL, WkEND-RailTotal, "
+                            f"o2o-overall, o2o-RouteLevel, o2o-RAIL, o2o-RailTotal\n\n"
+                            f"Please upload the correct CR file with all required sheets."
+                        )
+                        safe_delete_file(temp_path)
+                        # Clear file from Streamlit memory on validation error
+                        st.session_state.file_mgmt_upload_key += 1
+                        time.sleep(1.5)
+                        st.rerun()
+                
+                # ---- Details file sheet validation ----
+                if file_type == "details":
+                    is_valid, missing_sheets = validate_details_sheets(temp_path)
+                    if not is_valid:
+                        missing_sheets_str = ", ".join(missing_sheets)
+                        st.error(
+                            f"❌ **Missing required sheets in Details file.**\n\n"
+                            f"**Missing sheets:** {missing_sheets_str}\n\n"
+                            f"**Required sheets:** TOD, STOPS, XFER_STOPS, O2O_STOPS, XFERS, SIS_ROUTE\n\n"
+                            f"Please upload the correct Details file with all required sheets."
+                        )
+                        safe_delete_file(temp_path)
+                        # Clear file from Streamlit memory on validation error
+                        st.session_state.file_mgmt_upload_key += 1
+                        time.sleep(1.5)
+                        st.rerun()
+                
+                # ---- File validation passed ----
+                st.success("✅ **File validation passed!**")
+                st.markdown("---")
+                
+                # Display file info
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("File Name", uploaded_file.name)
+                with col2:
+                    st.metric("File Size", f"{file_size_mb:.2f} MB")
+                
+                # ---- Upload confirmation ----
+                st.markdown("### Upload to S3")
+                
+                bucket_name = os.getenv('bucket_name', 'etc-streamlit')
+                object_name = uploaded_file.name
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("🚀 Upload to S3", type="primary", use_container_width=True):
+                        with st.spinner("Uploading file to S3..."):
+                            success = upload_file_to_s3(
+                                file_path=temp_path,
+                                bucket_name=bucket_name,
+                                object_name=object_name
+                            )
+                            
+                            if success:
+                                st.success(f"✅ **Uploaded successfully!**\n\nFile `{object_name}` has been uploaded to S3 bucket `{bucket_name}`.")
+                                st.balloons()
+                                # Clean up temp file after successful upload
+                                safe_delete_file(temp_path)
+                                # Clear file from Streamlit memory by incrementing upload key
+                                st.session_state.file_mgmt_upload_key += 1
+                                # Small delay to show success message, then rerun to clear file uploader
+                                time.sleep(1.5)
+                                st.rerun()
+                            else:
+                                st.error("❌ **Upload failed.** Please check the console logs for details.")
+                                # Clean up temp file on upload failure
+                                safe_delete_file(temp_path)
+                                # Clear file from Streamlit memory
+                                st.session_state.file_mgmt_upload_key += 1
+                                time.sleep(1.5)
+                                st.rerun()
+                
+                with col2:
+                    if st.button("🔄 Cancel", use_container_width=True):
+                        safe_delete_file(temp_path)
+                        # Clear file from Streamlit memory
+                        st.session_state.file_mgmt_upload_key += 1
+                        st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ **Error processing file:** {str(e)}")
+                import traceback
+                with st.expander("🔧 Technical Details"):
+                    st.code(traceback.format_exc())
+                # Clean up temp file on error
+                safe_delete_file(temp_path)
+                # Clear file from Streamlit memory on error
+                st.session_state.file_mgmt_upload_key += 1
+                time.sleep(1.5)
+                st.rerun()
+
+        def view_s3_files_page():
+            """Page for viewing uploaded files on S3 with their metadata."""
+            st.title("📦 S3 Files Repository")
+            st.markdown("**View all uploaded files in S3 bucket with upload dates**")
+            
+            # Get current user email
+            current_user_email = st.session_state.get("user", {}).get("email", "")
+            
+            if not is_super_admin(current_user_email):
+                st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                return
+            
+            bucket_name = os.getenv('bucket_name', 'etc-streamlit')
+            
+            # Filter options
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                search_query = st.text_input(
+                    "🔍 Search files",
+                    placeholder="Search by filename...",
+                    key="s3_files_search"
+                )
+            
+            with col2:
+                file_type_filter = st.selectbox(
+                    "Filter by type",
+                    options=["All", "CR Files", "Details Files", "KingElvis Files", "Other"],
+                    key="s3_files_type_filter"
+                )
+            
+            # Load files from S3
+            with st.spinner("🔄 Loading files from S3..."):
+                files_list = list_s3_files(bucket_name)
+            
+            if not files_list:
+                st.warning("⚠️ No files found in S3 bucket or unable to connect to S3.")
+                return
+            
+            # Apply filters
+            filtered_files = files_list.copy()
+            
+            # Search filter
+            if search_query:
+                filtered_files = [
+                    f for f in filtered_files 
+                    if search_query.lower() in f['name'].lower()
+                ]
+            
+            # File type filter
+            if file_type_filter != "All":
+                if file_type_filter == "CR Files":
+                    filtered_files = [f for f in filtered_files if 'cr' in f['name'].lower() or f['name'].lower().endswith('_cr.xlsx')]
+                elif file_type_filter == "Details Files":
+                    filtered_files = [f for f in filtered_files if 'details' in f['name'].lower() or 'detail' in f['name'].lower()]
+                elif file_type_filter == "KingElvis Files":
+                    filtered_files = [f for f in filtered_files if 'kingelvis' in f['name'].lower() or 'king' in f['name'].lower()]
+                elif file_type_filter == "Other":
+                    filtered_files = [
+                        f for f in filtered_files 
+                        if not ('cr' in f['name'].lower() or 'details' in f['name'].lower() or 'kingelvis' in f['name'].lower())
+                    ]
+            
+            # Display statistics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Files", len(files_list))
+            with col2:
+                st.metric("Filtered Files", len(filtered_files))
+            with col3:
+                total_size = sum(f['size'] for f in files_list)
+                total_size_gb = round(total_size / (1024 * 1024 * 1024), 2)
+                st.metric("Total Size", f"{total_size_gb} GB")
+            with col4:
+                if files_list:
+                    latest_file = files_list[0]  # Already sorted by date
+                    st.metric("Latest Upload", latest_file['last_modified'].strftime('%Y-%m-%d'))
+            
+            st.markdown("---")
+            
+            # Display files table
+            if filtered_files:
+                # Create DataFrame for display
+                display_data = []
+                for file_info in filtered_files:
+                    display_data.append({
+                        'File Name': file_info['name'],
+                        'Size (MB)': file_info['size_mb'],
+                        'Last Uploaded': file_info['last_modified'].strftime('%Y-%m-%d %H:%M:%S'),
+                        'Last Uploaded (Date)': file_info['last_modified'].strftime('%Y-%m-%d')
+                    })
+                
+                files_df = pd.DataFrame(display_data)
+                
+                # Sort by last uploaded (newest first)
+                files_df = files_df.sort_values('Last Uploaded', ascending=False)
+                
+                st.subheader("📋 Files List")
+                st.dataframe(
+                    files_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=600
+                )
+                
+                # Download button for selected file
+                st.markdown("---")
+                st.subheader("📥 Download File")
+                
+                file_names = [f['name'] for f in filtered_files]
+                selected_file = st.selectbox(
+                    "Select a file to download",
+                    options=file_names,
+                    key="s3_download_select"
+                )
+                
+                if st.button("⬇️ Download Selected File", type="primary"):
+                    try:
+                        # Download file from S3
+                        s3_client = boto3.client(
+                            's3',
+                            aws_access_key_id=os.getenv('aws_access_key_id'),
+                            aws_secret_access_key=os.getenv('aws_secret_access_key')
+                        )
+                        
+                        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                            s3_client.download_fileobj(bucket_name, selected_file, tmp_file)
+                            tmp_file.seek(0)
+                            file_data = tmp_file.read()
+                            tmp_file_path = tmp_file.name
+                        
+                        # Get file extension
+                        file_ext = os.path.splitext(selected_file)[1] or '.bin'
+                        
+                        st.download_button(
+                            label="💾 Click to Save File",
+                            data=file_data,
+                            file_name=os.path.basename(selected_file),
+                            mime="application/octet-stream",
+                            key="s3_file_download"
+                        )
+                        
+                        # Clean up temp file
+                        if os.path.exists(tmp_file_path):
+                            try:
+                                os.remove(tmp_file_path)
+                            except:
+                                pass
+                                
+                    except Exception as e:
+                        st.error(f"❌ Error downloading file: {str(e)}")
+            else:
+                st.info("No files match the current filters.")
+            
+            # Refresh button
+            if st.button("🔄 Refresh File List", use_container_width=True):
+                st.rerun()
+
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
 
@@ -5370,11 +5788,40 @@ else:
                 if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
                    demographic_review_page(demographic_review_df)
             elif current_page == "accounts_management":
-                accounts_management_page()
+                # Super admin check in routing
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    accounts_management_page()
             elif current_page == "create_accounts":
-                create_accounts_page()
+                # Super admin check in routing
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    create_accounts_page()
             elif current_page == "password_update":
-                password_update_page()
+                # Super admin check in routing
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    password_update_page()
+            elif current_page == "file_management":
+                # Super admin check in routing
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    file_management_page()
+            elif current_page == "view_s3_files":
+                # Super admin check in routing
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    view_s3_files_page()
 
             else:
                 if 'tucson' in selected_project:

@@ -319,3 +319,266 @@ def apply_lacmta_agency_filter(
         baby_elvis_df = baby_elvis_df.drop(columns=["ROUTE_BASE"])
 
     return df, baby_elvis_df
+
+
+def validate_filename(project, file_type, uploaded_file, PROJECTS_CONFIG):
+    """
+    Validates if the uploaded file's name matches the expected filename for the project and file type.
+    
+    Args:
+        project: Project name (e.g., "LACMTA_FEEDER")
+        file_type: Type of file ("cr", "details", "kingelvis")
+        uploaded_file: Streamlit uploaded file object
+        PROJECTS_CONFIG: Dictionary containing project configurations
+    
+    Returns:
+        tuple: (is_valid, expected_filename)
+    """
+    expected_name = PROJECTS_CONFIG.get(project, {}).get("files", {}).get(file_type)
+    if not expected_name:
+        return False, "No expected filename configured."
+    return uploaded_file.name == expected_name, expected_name
+
+
+def validate_kingelvis_sheet(file_path):
+    """
+    Checks if the KingElvis Excel file contains the 'Elvis_Review' sheet.
+    
+    Args:
+        file_path: Path to the Excel file
+    
+    Returns:
+        bool: True if 'Elvis_Review' sheet exists, False otherwise
+    """
+    try:
+        with pd.ExcelFile(file_path) as xl:
+            return "Elvis_Review" in xl.sheet_names
+    except Exception as e:
+        print(f"Error reading Excel file for sheet validation: {e}")
+        return False
+
+
+def upload_file_to_s3(file_path, bucket_name, object_name=None):
+    """
+    Upload a file to an S3 bucket.
+    
+    Args:
+        file_path: Path to the file to upload
+        bucket_name: Bucket to upload to
+        object_name: S3 object name. If not specified, file_name is used
+    
+    Returns:
+        bool: True if file was uploaded, else False
+    """
+    from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+    
+    if object_name is None:
+        import os
+        object_name = os.path.basename(file_path)
+    
+    try:
+        s3_client.upload_file(file_path, bucket_name, object_name)
+        print(f"File {file_path} uploaded to {bucket_name}/{object_name}")
+        return True
+    except FileNotFoundError:
+        print(f"The file {file_path} was not found")
+        return False
+    except (NoCredentialsError, PartialCredentialsError):
+        print("AWS credentials not available or incomplete")
+        return False
+    except Exception as e:
+        print(f"An error occurred during S3 upload: {e}")
+        return False
+
+
+def validate_cr_sheets(file_path):
+    """
+    Checks if the CR Excel file contains all required sheets.
+    
+    Required sheets:
+    WkDAY-Overall, WkDAY-RouteTotal, WkDAY-RAIL, WkDAY-RailTotal, 
+    WkEND-Overall, WkEND-RouteTotal, WkEND-RAIL, WkEND-RailTotal, 
+    o2o-overall, o2o-RouteLevel, o2o-RAIL, o2o-RailTotal
+    
+    Args:
+        file_path: Path to the Excel file
+    
+    Returns:
+        tuple: (is_valid, missing_sheets_list)
+    """
+    required_sheets = [
+        'WkDAY-Overall',
+        'WkDAY-RouteTotal',
+        'WkDAY-RAIL',
+        'WkDAY-RailTotal',
+        'WkEND-Overall',
+        'WkEND-RouteTotal',
+        'WkEND-RAIL',
+        'WkEND-RailTotal',
+        'o2o-overall',
+        'o2o-RouteLevel',
+        'o2o-RAIL',
+        'o2o-RailTotal'
+    ]
+    
+    try:
+        with pd.ExcelFile(file_path) as xl:
+            available_sheets = xl.sheet_names
+            
+            # Check for missing sheets (case-insensitive comparison)
+            missing_sheets = []
+            for required_sheet in required_sheets:
+                # Try exact match first
+                if required_sheet not in available_sheets:
+                    # Try case-insensitive match
+                    found = False
+                    for sheet in available_sheets:
+                        if sheet.lower() == required_sheet.lower():
+                            found = True
+                            break
+                    if not found:
+                        missing_sheets.append(required_sheet)
+            
+            if missing_sheets:
+                return False, missing_sheets
+            return True, []
+    except Exception as e:
+        print(f"Error reading Excel file for CR sheet validation: {e}")
+        return False, required_sheets  # Return all as missing if error
+
+
+def validate_details_sheets(file_path):
+    """
+    Checks if the Details Excel file contains all required sheets.
+    
+    Required sheets:
+    TOD, STOPS, XFER_STOPS, O2O_STOPS, XFERS, SIS_ROUTE
+    
+    Args:
+        file_path: Path to the Excel file
+    
+    Returns:
+        tuple: (is_valid, missing_sheets_list)
+    """
+    required_sheets = [
+        'TOD',
+        'STOPS',
+        'XFER_STOPS',
+        'O2O_STOPS',
+        'XFERS',
+        'SIS_ROUTE'
+    ]
+    
+    try:
+        with pd.ExcelFile(file_path) as xl:
+            available_sheets = xl.sheet_names
+            
+            # Check for missing sheets (case-insensitive comparison)
+            missing_sheets = []
+            for required_sheet in required_sheets:
+                # Try exact match first
+                if required_sheet not in available_sheets:
+                    # Try case-insensitive match
+                    found = False
+                    for sheet in available_sheets:
+                        if sheet.lower() == required_sheet.lower():
+                            found = True
+                            break
+                    if not found:
+                        missing_sheets.append(required_sheet)
+            
+            if missing_sheets:
+                return False, missing_sheets
+            return True, []
+    except Exception as e:
+        print(f"Error reading Excel file for Details sheet validation: {e}")
+        return False, required_sheets  # Return all as missing if error
+
+
+def list_s3_files(bucket_name, prefix=None):
+    """
+    List all files in an S3 bucket with their metadata.
+    
+    Args:
+        bucket_name: Name of the S3 bucket
+        prefix: Optional prefix to filter files (e.g., "project_files/")
+    
+    Returns:
+        list: List of dictionaries with file information:
+            [{
+                'name': 'filename.xlsx',
+                'size': 12345,
+                'last_modified': datetime object,
+                'size_mb': 0.01
+            }, ...]
+    """
+    from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+    from datetime import datetime
+    
+    files_list = []
+    
+    try:
+        # List objects in the bucket
+        if prefix:
+            response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+        else:
+            response = s3_client.list_objects_v2(Bucket=bucket_name)
+        
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                # Skip if it's a folder (ends with /)
+                if obj['Key'].endswith('/'):
+                    continue
+                
+                file_info = {
+                    'name': obj['Key'],
+                    'size': obj['Size'],
+                    'size_mb': round(obj['Size'] / (1024 * 1024), 2),
+                    'last_modified': obj['LastModified']
+                }
+                files_list.append(file_info)
+        
+        # Sort by last modified date (newest first)
+        files_list.sort(key=lambda x: x['last_modified'], reverse=True)
+        
+        return files_list
+    except NoCredentialsError:
+        print("AWS credentials not available")
+        return []
+    except PartialCredentialsError:
+        print("AWS credentials incomplete")
+        return []
+    except Exception as e:
+        print(f"Error listing S3 files: {e}")
+        return []
+    
+import re
+def extract_race_labels_from_header(dropped_first_record):
+    """
+    Extract ONLY the last square-bracketed label from Elvis header row
+
+    '[1] What is your race...? [Asian]'
+    → Asian
+    """
+
+    race_label_map = {}
+
+    if not dropped_first_record:
+        return race_label_map
+
+    for col, value in dropped_first_record.items():
+
+        if str(col).upper().startswith("RACE"):
+
+            # Get ALL bracket contents
+            matches = re.findall(r'\[(.*?)\]', str(value))
+
+            # Always take LAST one → actual race label
+            if matches:
+                extracted_label = matches[-1].strip()
+                race_label_map[col.upper()] = extracted_label
+
+    print("✅ Clean Extracted Race Labels:")
+    print(race_label_map)
+
+    return race_label_map
