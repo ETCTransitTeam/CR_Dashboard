@@ -9,6 +9,7 @@ import math
 import random
 import streamlit as st
 from snowflake.connector.pandas_tools import write_pandas
+import re
 
 
 warnings.filterwarnings('ignore')
@@ -105,6 +106,63 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * np.arcsin(np.sqrt(a))
     R = 6371  # Earth radius in km
     return R * c
+
+
+def get_race_number(race_col):
+    """Extract number from RACE_X or RACE_OTHER for sorting purposes
+
+    Args:
+        race_col: Race column name (e.g., 'RACE_1', 'RACE_OTHER')
+
+    Returns:
+        int: The number from the race column, or 999 for RACE_OTHER/unknown
+    """
+    if str(race_col).upper() == 'RACE_OTHER':
+        return 999  # Put RACE_OTHER at the end
+    match = re.search(r'RACE[_]?(\d+)', str(race_col).upper())
+    return int(match.group(1)) if match else 999
+
+
+def add_race_metrics_to_list(metrics_list, df, race_label_map=None, column_suffix=''):
+    """Helper function to dynamically add race metrics to a metrics list
+    
+    Args:
+        metrics_list: List of (name, condition) tuples to append to
+        df: DataFrame to check for race columns
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+        column_suffix: Optional suffix to append to race column names (e.g., '_' for 'RACE_1_')
+    
+    Returns:
+        None (modifies metrics_list in place)
+    """
+    if race_label_map and len(race_label_map) > 0:
+        # Use dynamically extracted race labels
+        sorted_race_cols = sorted(race_label_map.keys(), key=get_race_number)
+        
+        for race_col in sorted_race_cols:
+            race_name = race_label_map[race_col]
+            # Add suffix if provided (e.g., 'RACE_1' -> 'RACE_1_')
+            race_col_with_suffix = race_col + column_suffix if column_suffix else race_col
+            
+            if race_col_with_suffix in df.columns:
+                metrics_list.append((
+                    race_name,
+                    df[race_col_with_suffix].astype(str).str.strip().str.upper() == 'YES'
+                ))
+    else:
+        # Fallback to hardcoded mappings for backward compatibility
+        default_race_metrics = [
+            ('Hispanic', 'RACE_6' + column_suffix),
+            ('Black', 'RACE_5' + column_suffix),
+            ('White', 'RACE_4' + column_suffix)
+        ]
+        
+        for race_name, race_col in default_race_metrics:
+            if race_col in df.columns:
+                metrics_list.append((
+                    race_name,
+                    df[race_col].astype(str).str.strip().str.upper() == 'YES'
+                ))
 
 
 def get_day_name(x):
@@ -1974,8 +2032,15 @@ def process_survey_data(df):
     return interviewer_pivot, route_pivot, detail_table
 
 
-def process_surveyor_data_transit_ls6(df, elvis_df, project=None):
-    """Process data for surveyor-level report"""
+def process_surveyor_data_transit_ls6(df, elvis_df, project=None, race_label_map=None):
+    """Process data for surveyor-level report
+    
+    Args:
+        df: DataFrame with survey data
+        elvis_df: DataFrame with elvis data
+        project: Project name (optional)
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+    """
     # Clean and filter elvis data (use elvis_df for all calculations)
     elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
     filtered_elvis = elvis_df[
@@ -2129,21 +2194,16 @@ def process_surveyor_data_transit_ls6(df, elvis_df, project=None):
         ),
     ]
     
-    # Add race metrics based on project
-    if project and project.upper() == "LACMTA_FEEDER":
-        # LACMTA_FEEDER race mappings (corrected)
-        race_metrics = [
-            ('American Indian / Alaska Native', 'RACE_1'),
-            ('Black / African American', 'RACE_2'),
-            ('Hispanic / Latino', 'RACE_3'),
-            ('Asian', 'RACE_4'),
-            ('Native Hawaiian / Pacific Islander', 'RACE_5'),
-            ('White', 'RACE_6'),
-            ('Middle Eastern or North African', 'RACE_7'),
-            ('Prefer not to say', 'RACE_8')
-        ]
+    # Add race metrics dynamically from race_label_map
+    if race_label_map and len(race_label_map) > 0:
+        print("Using dynamically extracted race labels from race_label_map.")
+        print(f"Extracted race columns: {list(race_label_map.keys())}")
+        # Use dynamically extracted race labels
+        # Sort race columns by number (RACE_1, RACE_2, etc.) for consistent ordering
+        sorted_race_cols = sorted(race_label_map.keys(), key=get_race_number)
         
-        for race_name, race_col in race_metrics:
+        for race_col in sorted_race_cols:
+            race_name = race_label_map[race_col]
             if race_col in filtered_elvis.columns:
                 metrics.append((
                     race_name,
@@ -2157,12 +2217,26 @@ def process_surveyor_data_transit_ls6(df, elvis_df, project=None):
                     pd.Series(False, index=filtered_elvis.index)
                 ))
     else:
-        # Default/legacy race mappings (for backward compatibility)
-        race_metrics = [
-            ('Hispanic', 'RACE_6'),
-            ('Black', 'RACE_5'),
-            ('White', 'RACE_4')
-        ]
+        # Fallback to hardcoded mappings for backward compatibility
+        if project and project.upper() == "LACMTA_FEEDER":
+            # LACMTA_FEEDER race mappings (corrected)
+            race_metrics = [
+                ('American Indian / Alaska Native', 'RACE_1'),
+                ('Black / African American', 'RACE_2'),
+                ('Hispanic / Latino', 'RACE_3'),
+                ('Asian', 'RACE_4'),
+                ('Native Hawaiian / Pacific Islander', 'RACE_5'),
+                ('White', 'RACE_6'),
+                ('Middle Eastern or North African', 'RACE_7'),
+                ('Prefer not to say', 'RACE_8')
+            ]
+        else:
+            # Default/legacy race mappings (for backward compatibility)
+            race_metrics = [
+                ('Hispanic', 'RACE_6'),
+                ('Black', 'RACE_5'),
+                ('White', 'RACE_4')
+            ]
         
         for race_name, race_col in race_metrics:
             if race_col in filtered_elvis.columns:
@@ -2282,30 +2356,30 @@ def process_surveyor_data_transit_ls6(df, elvis_df, project=None):
         '% of LowIncome', '% of No Income'
     ]
     
-    # Add race columns in order
-    if project and project.upper() == "LACMTA_FEEDER":
-        race_columns = [
-            '% of American Indian / Alaska Native',
-            '% of Black / African American',
-            '% of Hispanic / Latino',
-            '% of Asian',
-            '% of Native Hawaiian / Pacific Islander',
-            '% of White',
-            '% of Middle Eastern or North African',
-            '% of Prefer not to say'
-        ]
-    else:
-        race_columns = [
-            '% of Hispanic',
-            '% of Black',
-            '% of White'
-        ]
+    # Add race columns dynamically based on what was actually created
+    # Get all race percentage columns that exist in the dataframe
+    all_percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
+    # Filter to only race columns (exclude other percentage columns we know about)
+    known_non_race_cols = [
+        '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
+        '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
     
-    # For LACMTA_FEEDER, ensure all race columns exist (add missing ones with 0.0%)
-    if project and project.upper() == "LACMTA_FEEDER":
-        for race_col in race_columns:
-            if race_col not in summary_df.columns:
-                summary_df[race_col] = '0.0%'
+    # Sort race columns by the race number for consistent ordering
+    def get_race_name_for_sorting(col_name):
+        # Extract race name from '% of <Race Name>'
+        race_name = col_name.replace('% of ', '')
+        # Try to find matching race column in race_label_map
+        if race_label_map:
+            for col, label in race_label_map.items():
+                if label == race_name:
+                    return get_race_number(col)
+        # Fallback: try to extract number from common patterns
+        return 999  # Default to end
+    
+    race_columns = sorted(race_columns, key=get_race_name_for_sorting)
     
     # Filter to only include columns that exist in summary_df
     available_race_columns = [col for col in race_columns if col in summary_df.columns]
@@ -2320,7 +2394,7 @@ def process_surveyor_data_transit_ls6(df, elvis_df, project=None):
     return summary_df[final_columns]
 
 
-def process_surveyor_data(df, elvis_df):
+def process_surveyor_data(df, elvis_df, race_label_map=None):
     """Process data for surveyor-level report"""
     # Clean and filter data
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
@@ -2476,10 +2550,10 @@ def process_surveyor_data(df, elvis_df):
         ('No Income', 
          (address_filtered['INCOME_Code_'].isna()) | 
          (address_filtered['INCOME_Code_'].astype(str) == '14')),
-        ('Hispanic', address_filtered['RACE_6_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', address_filtered['RACE_5_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', address_filtered['RACE_4_'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    # Add race metrics dynamically (need to get race_label_map from function parameter)
+    # Note: This function needs to accept race_label_map parameter
+    add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
     
     for name, condition in metrics:
         metric_group = (
@@ -2611,8 +2685,14 @@ def process_surveyor_data(df, elvis_df):
     return summary_df[column_order]
 
 
-def process_route_data(df, elvis_df):
-    """Process data for route-level report"""
+def process_route_data(df, elvis_df, race_label_map=None):
+    """Process data for route-level report
+    
+    Args:
+        df: DataFrame with survey data
+        elvis_df: DataFrame with elvis data
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+    """
     # Clean route names
     df['ROUTE_ROOT'] = clean_route_name(df['ROUTE_SURVEYED'])
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
@@ -2773,10 +2853,9 @@ def process_route_data(df, elvis_df):
         ('No Income', 
          (address_filtered['INCOME_Code_'].isna()) | 
          (address_filtered['INCOME_Code_'].astype(str) == 'REFUSED')),
-        ('Hispanic', address_filtered['RACE_6_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', address_filtered['RACE_5_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', address_filtered['RACE_4_'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    # Add race metrics dynamically
+    add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
     
     for name, condition in metrics:
         metric_group = (
@@ -2900,21 +2979,56 @@ def process_route_data(df, elvis_df):
     # Rename and reorder columns
     route_report_df = route_report_df.rename(columns={'ROUTE_ROOT': 'Route'})
     
-    column_order = [
+    # Build column order dynamically - get race columns from actual dataframe
+    base_columns = [
         'Route', '# of Records', '# of Supervisor Delete', '# of Records Remove',
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of LowIncome', '% of No Income'
+    ]
+    
+    # Get all race percentage columns that exist
+    all_percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
+    known_non_race_cols = [
+        '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of No Income',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
+    race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
     
-    return route_report_df[column_order]
+    # Sort race columns
+    def get_race_name_for_sorting(col_name):
+        race_name = col_name.replace('% of ', '')
+        if race_label_map:
+            for col, label in race_label_map.items():
+                if label == race_name:
+                    return get_race_number(col)
+        return 999
+    race_columns = sorted(race_columns, key=get_race_name_for_sorting)
+    
+    # Build final column order
+    other_cols = [
+        '% of Follow-Up Survey', '% of Contest - Yes', 
+        '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    column_order = base_columns + race_columns + other_cols
+    
+    # Filter to only include columns that exist
+    final_columns = [col for col in column_order if col in route_report_df.columns]
+    
+    return route_report_df[final_columns]
 
 
-def process_route_data_transit_ls6(df, elvis_df):
-    """Process data for route-level report"""
+def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
+    """Process data for route-level report
+    
+    Args:
+        df: DataFrame with survey data
+        elvis_df: DataFrame with elvis data
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+    """
     print("Processing route-level data...")
     
     # Clean and filter elvis data (use elvis_df for all calculations)
@@ -3108,16 +3222,8 @@ def process_route_data_transit_ls6(df, elvis_df):
         ))
 
     
-    # Check race columns in filtered_elvis
-    race_metrics = [
-        ('Hispanic', 'RACE_6'),
-        ('Black', 'RACE_5'), 
-        ('White', 'RACE_4')
-    ]
-    
-    for name, race_col in race_metrics:
-        if race_col in filtered_elvis.columns:
-            metrics.append((name, filtered_elvis[race_col].astype(str).str.strip().str.upper() == 'YES'))
+    # Add race metrics dynamically using race_label_map
+    add_race_metrics_to_list(metrics, filtered_elvis, race_label_map=race_label_map, column_suffix='')
     
     # First get total records per route
     total_records_group = filtered_elvis.groupby('ROUTE_ROOT')['id'].count().reset_index()
@@ -3266,8 +3372,15 @@ def process_route_data_transit_ls6(df, elvis_df):
     
     return route_report_df[final_columns]
 
-def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
-    """Process data for surveyor-level report with date"""
+def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor, race_label_map=None):
+    """Process data for surveyor-level report with date
+    
+    Args:
+        df: DataFrame with survey data
+        elvis_df: DataFrame with elvis data
+        survey_date_surveyor: DataFrame with survey date and surveyor mappings
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+    """
     df = df.copy()
     elvis_df = elvis_df.copy()
     
@@ -3386,7 +3499,6 @@ def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
         )
     
     summary_df = summary_df.merge(survey_time_group, how='left').fillna("00:00:00")
-    print("columns address filtered:", address_filtered.columns.tolist())
     # Other metrics (0 transfers, access walk, etc.)
     metrics = [
         ('0 Transfers', 
@@ -3406,10 +3518,9 @@ def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
                 .astype(str).str.strip().str.replace('.0', '', regex=False)
                 .isin(['10'])
         ),
-        ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    # Add race metrics dynamically
+    add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='')
     
     for name, condition in metrics:
         metric_group = (
@@ -3516,20 +3627,54 @@ def process_surveyor_date_data_transit_ls6(df, elvis_df, survey_date_surveyor):
 
     # summary_df['Date'] = pd.to_datetime(summary_df['Date']).dt.date
     
-    column_order = [
+    # Build column order dynamically - get race columns from actual dataframe
+    base_columns = [
         'Date', 'INTERV_INIT', '# of Records', '# of Supervisor Delete', '# of Records Remove',
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
-        '% of Contest - Yes', 
-        '% of Contest - (Yes & Good Info)/Overall # of Records'
+        '% of LowIncome', '% of No Income'
     ]
     
-    return summary_df[column_order]
+    # Get all race percentage columns that exist
+    all_percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
+    known_non_race_cols = [
+        '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
+        '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
+    
+    # Sort race columns
+    def get_race_name_for_sorting(col_name):
+        race_name = col_name.replace('% of ', '')
+        if race_label_map:
+            for col, label in race_label_map.items():
+                if label == race_name:
+                    return get_race_number(col)
+        return 999
+    race_columns = sorted(race_columns, key=get_race_name_for_sorting)
+    
+    # Build final column order
+    other_cols = [
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    column_order = base_columns + race_columns + other_cols
+    
+    # Filter to only include columns that exist
+    final_columns = [col for col in column_order if col in summary_df.columns]
+    
+    return summary_df[final_columns]
 
-def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route):
-    """Process data for route-level report with date"""
+def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route, race_label_map=None):
+    """Process data for route-level report with date
+    
+    Args:
+        df: DataFrame with survey data
+        elvis_df: DataFrame with elvis data
+        survey_date_route: DataFrame with survey date and route mappings
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+    """
     df = df.copy()
     elvis_df = elvis_df.copy()
 
@@ -3669,10 +3814,9 @@ def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route):
                 .astype(str).str.strip().str.replace('.0', '', regex=False)
                 .isin(['10'])
         ),
-        ('Hispanic', address_filtered['RACE_6'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', address_filtered['RACE_5'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', address_filtered['RACE_4'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    # Add race metrics dynamically
+    add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='')
     
     for name, condition in metrics:
         metric_group = (
@@ -3782,22 +3926,57 @@ def process_route_date_data_transit_ls6(df, elvis_df, survey_date_route):
 
     route_report_df['Date'] = route_report_df['Date'].apply(safe_date_parse)
     
-    column_order = [
+    # Build column order dynamically - get race columns from actual dataframe
+    base_columns = [
         'Date', 'ROUTE_ROOT', '# of Records', '# of Supervisor Delete', '# of Records Remove',
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
-        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+        '% of LowIncome', '% of No Income'
     ]
     
-    return route_report_df[column_order]
+    # Get all race percentage columns that exist
+    all_percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
+    known_non_race_cols = [
+        '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
+        '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
+    
+    # Sort race columns
+    def get_race_name_for_sorting(col_name):
+        race_name = col_name.replace('% of ', '')
+        if race_label_map:
+            for col, label in race_label_map.items():
+                if label == race_name:
+                    return get_race_number(col)
+        return 999
+    race_columns = sorted(race_columns, key=get_race_name_for_sorting)
+    
+    # Build final column order
+    other_cols = [
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    column_order = base_columns + race_columns + other_cols
+    
+    # Filter to only include columns that exist
+    final_columns = [col for col in column_order if col in route_report_df.columns]
+    
+    return route_report_df[final_columns]
 
 
 
 
-def process_surveyor_date_data(df, elvis_df, survey_date_surveyor):
-    """Process data for surveyor-level report"""
+def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_map=None):
+    """Process data for surveyor-level report
+    
+    Args:
+        df: DataFrame with survey data
+        elvis_df: DataFrame with elvis data
+        survey_date_surveyor: DataFrame with survey date and surveyor mappings
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+    """
     # Clean and filter data
 
     df = df.copy()
@@ -3954,10 +4133,9 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor):
         ('No Income', 
          (address_filtered['INCOME_Code_'].isna()) | 
          (address_filtered['INCOME_Code_'].astype(str) == 'REFUSED')),
-        ('Hispanic', address_filtered['RACE_6_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', address_filtered['RACE_5_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', address_filtered['RACE_4_'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    # Add race metrics dynamically
+    add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
     
     for name, condition in metrics:
         metric_group = (
@@ -4076,20 +4254,56 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor):
         total_row[col] = format_percentage(avg)
     
     summary_df = pd.concat([summary_df, pd.DataFrame([total_row])], ignore_index=True)
-    column_order = [
+    # Build column order dynamically - get race columns from actual dataframe
+    base_columns = [
         'Date_Surveyor', '# of Records', '# of Supervisor Delete', '# of Records Remove',
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of LowIncome', '% of No Income'
+    ]
+    
+    # Get all race percentage columns that exist
+    all_percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
+    known_non_race_cols = [
+        '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of No Income',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
+    race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
     
-    return summary_df[column_order]
+    # Sort race columns
+    def get_race_name_for_sorting(col_name):
+        race_name = col_name.replace('% of ', '')
+        if race_label_map:
+            for col, label in race_label_map.items():
+                if label == race_name:
+                    return get_race_number(col)
+        return 999
+    race_columns = sorted(race_columns, key=get_race_name_for_sorting)
+    
+    # Build final column order
+    other_cols = [
+        '% of Follow-Up Survey', '% of Contest - Yes', 
+        '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    column_order = base_columns + race_columns + other_cols
+    
+    # Filter to only include columns that exist
+    final_columns = [col for col in column_order if col in summary_df.columns]
+    
+    return summary_df[final_columns]
 
-def process_route_date_data(df, elvis_df, survey_date_route):
-    """Process data for route-level report"""
+def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None):
+    """Process data for route-level report
+    
+    Args:
+        df: DataFrame with survey data
+        elvis_df: DataFrame with elvis data
+        survey_date_route: DataFrame with survey date and route mappings
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+    """
     df = df.copy()
     elvis_df = elvis_df.copy()
 
@@ -4245,10 +4459,9 @@ def process_route_date_data(df, elvis_df, survey_date_route):
         ('No Income', 
          (address_filtered['INCOME_Code_'].isna()) | 
          (address_filtered['INCOME_Code_'].astype(str) == 'REFUSED')),
-        ('Hispanic', address_filtered['RACE_6_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('Black', address_filtered['RACE_5_'].astype(str).str.strip().str.upper() == 'YES'),
-        ('White', address_filtered['RACE_4_'].astype(str).str.strip().str.upper() == 'YES')
     ]
+    # Add race metrics dynamically
+    add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
     
     for name, condition in metrics:
         metric_group = (
@@ -4371,17 +4584,46 @@ def process_route_date_data(df, elvis_df, survey_date_route):
     # Rename and reorder columns
     # route_report_df = route_report_df.rename(columns={'Date_Route': 'Route'})
     
-    column_order = [
+    # Build column order dynamically - get race columns from actual dataframe
+    base_columns = [
         'Date_Route', '# of Records', '# of Supervisor Delete', '# of Records Remove',
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of LowIncome', '% of No Income'
+    ]
+    
+    # Get all race percentage columns that exist
+    all_percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
+    known_non_race_cols = [
+        '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of No Income',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
+    race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
     
-    return route_report_df[column_order]
+    # Sort race columns
+    def get_race_name_for_sorting(col_name):
+        race_name = col_name.replace('% of ', '')
+        if race_label_map:
+            for col, label in race_label_map.items():
+                if label == race_name:
+                    return get_race_number(col)
+        return 999
+    race_columns = sorted(race_columns, key=get_race_name_for_sorting)
+    
+    # Build final column order
+    other_cols = [
+        '% of Follow-Up Survey', '% of Contest - Yes', 
+        '% of Contest - (Yes & Good Info)/Overall # of Records'
+    ]
+    column_order = base_columns + race_columns + other_cols
+    
+    # Filter to only include columns that exist
+    final_columns = [col for col in column_order if col in route_report_df.columns]
+    
+    return route_report_df[final_columns]
 
 
 
@@ -6066,10 +6308,14 @@ def create_low_response_report(elvis_df):
     
     return report_df
 
-def create_survey_stats_master_table(df):
+def create_survey_stats_master_table(df, race_label_map=None):
     """
     Create a master table with all the raw data needed for statistical analysis
     This table will be uploaded to Snowflake for use in Streamlit
+    
+    Args:
+        df: DataFrame with survey data
+        race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
     """
     # Create a copy to work with
     master_df = df.copy()
@@ -6114,18 +6360,29 @@ def create_survey_stats_master_table(df):
     })
     
     # Process race columns - create a normalized race response table
-    race_columns = ['RACE_1', 'RACE_2', 'RACE_3', 'RACE_4', 'RACE_5', 'RACE_6', 'RACE_7', 'RACE_8', 'RACE_Other']
-    race_labels = {
-        'RACE_1': 'Hispanic or Latino',
-        'RACE_2': 'Asian or Asian American',
-        'RACE_3': 'White or Caucasian',
-        'RACE_4': 'Black or African American',
-        'RACE_5': 'Native Hawaiian or Pacific Islander',
-        'RACE_6': 'American Indian / Alaska Native / Indigenous',
-        'RACE_7': 'Middle Eastern or North African',
-        'RACE_8': 'Prefer not to say',
-        'RACE_Other': 'Other'
-    }
+    # Use dynamic race_label_map if provided, otherwise fallback to hardcoded mappings
+    if race_label_map and len(race_label_map) > 0:
+        race_columns = list(race_label_map.keys())
+        race_labels = race_label_map.copy()
+        # Add RACE_Other if it exists in the dataframe but not in the map
+        if 'RACE_OTHER' in master_df.columns and 'RACE_OTHER' not in race_labels:
+            race_labels['RACE_OTHER'] = 'Other'
+            if 'RACE_OTHER' not in race_columns:
+                race_columns.append('RACE_OTHER')
+    else:
+        # Fallback to hardcoded mappings for backward compatibility
+        race_columns = ['RACE_1', 'RACE_2', 'RACE_3', 'RACE_4', 'RACE_5', 'RACE_6', 'RACE_7', 'RACE_8', 'RACE_Other']
+        race_labels = {
+            'RACE_1': 'Hispanic or Latino',
+            'RACE_2': 'Asian or Asian American',
+            'RACE_3': 'White or Caucasian',
+            'RACE_4': 'Black or African American',
+            'RACE_5': 'Native Hawaiian or Pacific Islander',
+            'RACE_6': 'American Indian / Alaska Native / Indigenous',
+            'RACE_7': 'Middle Eastern or North African',
+            'RACE_8': 'Prefer not to say',
+            'RACE_Other': 'Other'
+        }
     
     # Create race responses in long format
     race_responses = []
@@ -6134,13 +6391,15 @@ def create_survey_stats_master_table(df):
             if race_col in master_df.columns:
                 value = str(row[race_col]).strip().lower()
                 if value not in ['nan', 'n/a', 'na', '']:
-                    if race_col != 'RACE_Other' and value == 'yes':
+                    # Handle both RACE_Other and RACE_OTHER (case variations)
+                    race_col_upper = race_col.upper()
+                    if race_col_upper not in ['RACE_OTHER'] and value == 'yes':
                         race_responses.append({
                             'RESPONDENT_ID': respondent_id,
-                            'RACE_CATEGORY': race_labels[race_col],
+                            'RACE_CATEGORY': race_labels.get(race_col, race_col),
                             'RACE_RESPONSE': 'Selected'
                         })
-                    elif race_col == 'RACE_Other' and value != 'no':
+                    elif race_col_upper == 'RACE_OTHER' and value != 'no':
                         race_responses.append({
                             'RESPONDENT_ID': respondent_id,
                             'RACE_CATEGORY': 'Other',
@@ -6456,8 +6715,7 @@ def create_location_maps_interface(df):
         )
 
 ## Demographic Summary Report
-def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str):
-    print(elvis_df.columns.tolist())
+def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race_label_map=None):
     elvis_df = elvis_df.copy()
     demographic_review = []
 
@@ -6500,25 +6758,40 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str):
                              
             }
 
-        # ACT-specific multi-select fields
-        multi_select_fields = {
-            "Race": {
-                "Hispanic or Latino": "RACE_1",
-                "Asian or Asian American": "RACE_2",
-                "White or Caucasian": "RACE_3",
-                "Black or African American": "RACE_4",
-                "Native Hawaiian or Pacific Islander": "RACE_5",
-                "American Indian / Alaska Native / Indigenous": "RACE_6",
-                "Middle Eastern or North African": "RACE_7"
-            },
-            "DisabilitySpecify": {
-                "Blindness or vision impairment": "DISABILITY_SPECIFY_1",
-                "Mobility disability": "DISABILITY_SPECIFY_2",
-                "Hearing impairment": "DISABILITY_SPECIFY_4",
-                "Cognitive or intellectual impairment": "DISABILITY_SPECIFY_5",
-                "None": "DISABILITY_SPECIFY_6"
+        # Use dynamic race_label_map if provided, otherwise fallback to hardcoded mappings
+        if race_label_map and len(race_label_map) > 0:
+            # Reverse the mapping: race_label_map is {column: label}, we need {label: column}
+            race_mapping = {label: col for col, label in race_label_map.items()}
+            multi_select_fields = {
+                "Race": race_mapping,
+                "DisabilitySpecify": {
+                    "Blindness or vision impairment": "DISABILITY_SPECIFY_1",
+                    "Mobility disability": "DISABILITY_SPECIFY_2",
+                    "Hearing impairment": "DISABILITY_SPECIFY_4",
+                    "Cognitive or intellectual impairment": "DISABILITY_SPECIFY_5",
+                    "None": "DISABILITY_SPECIFY_6"
+                }
             }
-        }
+        else:
+            # Fallback to hardcoded mappings for backward compatibility
+            multi_select_fields = {
+                "Race": {
+                    "Hispanic or Latino": "RACE_1",
+                    "Asian or Asian American": "RACE_2",
+                    "White or Caucasian": "RACE_3",
+                    "Black or African American": "RACE_4",
+                    "Native Hawaiian or Pacific Islander": "RACE_5",
+                    "American Indian / Alaska Native / Indigenous": "RACE_6",
+                    "Middle Eastern or North African": "RACE_7"
+                },
+                "DisabilitySpecify": {
+                    "Blindness or vision impairment": "DISABILITY_SPECIFY_1",
+                    "Mobility disability": "DISABILITY_SPECIFY_2",
+                    "Hearing impairment": "DISABILITY_SPECIFY_4",
+                    "Cognitive or intellectual impairment": "DISABILITY_SPECIFY_5",
+                    "None": "DISABILITY_SPECIFY_6"
+                }
+            }
 
     elif project_name.upper() == "SALEM":
         question_dict = {
@@ -6591,19 +6864,28 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str):
 
         }
 
-        # Salem has no multi-select fields
-        multi_select_fields = {
-            "Race": {
-                "American Indian / Alaska Native": "RACE_1",
-                "Black / African American": "RACE_2",
-                "Hispanic / Latino": "RACE_3",
-                "Asian": "RACE_4",
-                "Native Hawaiian / Pacific Islander": "RACE_5",
-                "White": "RACE_6",
-                "Middle Eastern or North African": "RACE_7",
-                "Prefer not to say": "RACE_8"
+        # Use dynamic race_label_map if provided, otherwise fallback to hardcoded mappings
+        if race_label_map and len(race_label_map) > 0:
+            print("Using dynamic race label map for multi-select fields in demographic")
+            # Reverse the mapping: race_label_map is {column: label}, we need {label: column}
+            race_mapping = {label: col for col, label in race_label_map.items()}
+            multi_select_fields = {
+                "Race": race_mapping
             }
-        }
+        else:
+            # Fallback to hardcoded mappings for backward compatibility
+            multi_select_fields = {
+                "Race": {
+                    "American Indian / Alaska Native": "RACE_1",
+                    "Black / African American": "RACE_2",
+                    "Hispanic / Latino": "RACE_3",
+                    "Asian": "RACE_4",
+                    "Native Hawaiian / Pacific Islander": "RACE_5",
+                    "White": "RACE_6",
+                    "Middle Eastern or North African": "RACE_7",
+                    "Prefer not to say": "RACE_8"
+                }
+            }
 
     else:
         raise ValueError(f"❌ Unknown project_name '{project_name}'")

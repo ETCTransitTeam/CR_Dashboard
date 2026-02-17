@@ -1432,7 +1432,6 @@ else:
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = get_page_key(new_val)
-                    st.rerun()
 
             # --- Dashboard dropdown (NO dynamic index) ---
             st.session_state.sidebar_menu = st.session_state.selected_page

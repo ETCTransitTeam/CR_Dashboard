@@ -16,7 +16,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
-from utils import fetch_data, apply_lacmta_agency_filter
+from utils import extract_race_labels_from_header, fetch_data, apply_lacmta_agency_filter
 
 warnings.filterwarnings('ignore')
 
@@ -294,9 +294,17 @@ def fetch_and_process_data(project,schema):
     # -----------------------
     # Step 2: Apply header mapping to merged dataframe
     # -----------------------
+    dropped_first_record = None
+    race_label_map = None  # Initialize race_label_map outside the if block
     if merged_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
         merged_df.columns = merged_df.columns.str.strip()
         merged_df = merged_df.rename(columns=KCATA_HEADER_MAPPING)
+        if not merged_df.empty:
+            dropped_first_record = merged_df.iloc[0].to_dict()
+            print("⚠️ Dropping first record (Index 0):")
+            race_label_map = extract_race_labels_from_header(dropped_first_record)
+            print("race_label_map = ", race_label_map)
+
         # Remove first row if it exists (as in original code)
         merged_df = merged_df.drop(index=0).reset_index(drop=True)
 
@@ -310,7 +318,7 @@ def fetch_and_process_data(project,schema):
     if baby_elvis_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
         baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
         baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
-        baby_elvis_df = baby_elvis_df.drop(index=0).reset_index(drop=True)
+        # baby_elvis_df = baby_elvis_df.drop(index=0).reset_index(drop=True)
 
     # -----------------------
     # Step 4: Process and clean df for main analysis
@@ -364,8 +372,6 @@ def fetch_and_process_data(project,schema):
                 time_mapping = dict(zip(df1['id'], df1[time_column_df1[0]]))
                 df.loc[mask, time_column_df[0]] = df.loc[mask, 'id'].map(time_mapping)
 
-
-    print("df columns after initial cleaning:", df.columns.tolist() if df is not None else "df is None")
     
     df, baby_elvis_df = apply_lacmta_agency_filter(
         df,
@@ -375,72 +381,6 @@ def fetch_and_process_data(project,schema):
         project_config,
         baby_elvis_df
     )
-    # if project == "LACMTA_FEEDER" and agency and agency != "All":
-    #     print(f"Applying agency filter for: {agency}")
-        
-    #     # Read details file to get agency-route mapping
-    #     detail_df_stops = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'STOPS')
-        
-    #     if detail_df_stops is not None and not detail_df_stops.empty:
-    #         # Note: Column name might be 'agency' or 'AGENCY', check both
-    #         agency_col_name = None
-    #         for col in detail_df_stops.columns:
-    #             if col.lower() == 'agency':
-    #                 agency_col_name = col
-    #                 break
-            
-    #         if agency_col_name:
-    #             # Filter stops for selected agency
-    #             agency_stops = detail_df_stops[detail_df_stops[agency_col_name] == agency]
-                
-    #             if not agency_stops.empty:
-    #                 # Get unique routes for this agency
-    #                 agency_routes = agency_stops['ETC_ROUTE_ID'].dropna().unique()
-    #                 print("Agency Routes before processing:", agency_routes)
-    #                 # Extract base route code (remove direction suffix)
-    #                 agency_route_codes = []
-    #                 for route in agency_routes:
-    #                     route_str = str(route)
-    #                     route_parts = route_str.split('_')
-    #                     if len(route_parts) > 1:
-    #                         base_route = '_'.join(route_parts[:-1])  # Remove direction suffix
-    #                         agency_route_codes.append(base_route)
-    #                     else:
-    #                         agency_route_codes.append(route_str)
-                    
-    #                 # Filter df by agency routes
-    #                 if df is not None and 'ROUTE_SURVEYEDCode' in df.columns and agency_route_codes:
-    #                     before_count = len(df)
-                        
-    #                     # Extract base route from ROUTE_SURVEYEDCode
-    #                     df['ROUTE_BASE'] = df['ROUTE_SURVEYEDCode'].apply(
-    #                         lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
-    #                     )
-                        
-    #                     # Filter by agency routes
-    #                     df = df[df['ROUTE_BASE'].isin(agency_route_codes)]
-                        
-    #                     after_count = len(df)
-    #                     print(f"Agency Filter ({agency}): {before_count} -> {after_count} records")
-                        
-    #                     # Drop temporary column
-    #                     df = df.drop(columns=['ROUTE_BASE'])
-                        
-    #                     # Also filter baby_elvis_df if it exists
-    #                     if baby_elvis_df is not None and 'ROUTE_SURVEYEDCode' in baby_elvis_df.columns:
-    #                         baby_elvis_df['ROUTE_BASE'] = baby_elvis_df['ROUTE_SURVEYEDCode'].apply(
-    #                             lambda x: '_'.join(str(x).split('_')[:-1]) if pd.notna(x) else None
-    #                         )
-    #                         baby_elvis_df = baby_elvis_df[baby_elvis_df['ROUTE_BASE'].isin(agency_route_codes)]
-    #                         baby_elvis_df = baby_elvis_df.drop(columns=['ROUTE_BASE'])
-    #         else:
-    #             print(f"Warning: 'agency' column not found in stops sheet")
-    #     else:
-    #         print(f"Warning: Could not read details file for agency filtering")
-    # elif agency and agency != "All":
-    #     print(f"Note: Agency filtering is only available for LACMTA_FEEDER project")
-
-
 
     # -----------------------
     # Step 5: Create other required variables
@@ -1096,12 +1036,12 @@ def fetch_and_process_data(project,schema):
         comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_merged_df_filtered, route_level_df, project, stops_df)
         print("Route comparison data processed successfully.")
 
-        survey_report_df = process_surveyor_data_transit_ls6(ke_df, df, project)
-        route_report_df = process_route_data_transit_ls6(ke_df, df)
+        survey_report_df = process_surveyor_data_transit_ls6(ke_df, df, project, race_label_map)
+        route_report_df = process_route_data_transit_ls6(ke_df, df, race_label_map)
         low_response_questions_df = create_low_response_report(df)
-        refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df)
+        refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df, race_label_map)
 
-        demographic_review_df = generate_demographic_summary(df, project_name)
+        demographic_review_df = generate_demographic_summary(df, project_name, race_label_map)
 
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
@@ -1196,8 +1136,8 @@ def fetch_and_process_data(project,schema):
         )
 
         # Now process with the merged data
-        survey_report_by_date_df = process_surveyor_date_data_transit_ls6(ke_df, df, survey_date_surveyor)
-        route_report_by_date_df = process_route_date_data_transit_ls6(ke_df, df, survey_date_route)
+        survey_report_by_date_df = process_surveyor_date_data_transit_ls6(ke_df, df, survey_date_surveyor, race_label_map)
+        route_report_by_date_df = process_route_date_data_transit_ls6(ke_df, df, survey_date_route, race_label_map)
 
         # Final DataFrame cleanup
         wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
