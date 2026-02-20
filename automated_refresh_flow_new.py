@@ -1086,6 +1086,8 @@ def fetch_and_process_data(project,schema):
             [all_dates, all_surveyors],
             names=['Date', 'INTERV_INIT']
         ).to_frame(index=False)
+        # Ensure Date is formatted consistently as YYYY-MM-DD
+        survey_date_surveyor['Date'] = pd.to_datetime(survey_date_surveyor['Date']).dt.strftime('%Y-%m-%d')
         survey_date_surveyor['Date_Surveyor'] = (
             survey_date_surveyor['Date'].astype(str) + "_" + 
             survey_date_surveyor['INTERV_INIT']
@@ -1095,6 +1097,8 @@ def fetch_and_process_data(project,schema):
             [all_dates, all_routes],
             names=['Date', 'ROUTE_ROOT']
         ).to_frame(index=False)
+        # Ensure Date is formatted consistently as YYYY-MM-DD
+        survey_date_route['Date'] = pd.to_datetime(survey_date_route['Date']).dt.strftime('%Y-%m-%d')
         survey_date_route['Date_Route'] = (
             survey_date_route['Date'].astype(str) + "_" + 
             survey_date_route['ROUTE_ROOT']
@@ -1119,17 +1123,17 @@ def fetch_and_process_data(project,schema):
             how='left',
             suffixes=('', '_r')
         )
-
+        df['Date_only'] = pd.to_datetime(df['LocalTime'], errors='coerce').dt.normalize()
         df = df.merge(
             survey_date_surveyor,
-            left_on=['LocalTime', 'INTERV_INIT'],
+            left_on=['Date_only', 'INTERV_INIT'],
             right_on=['Date', 'INTERV_INIT'],
             how='left'
         )
 
         df = df.merge(
             survey_date_route,
-            left_on=['LocalTime', 'ROUTE_ROOT'],
+            left_on=['Date_only', 'ROUTE_ROOT'],
             right_on=['Date', 'ROUTE_ROOT'],
             how='left',
             suffixes=('', '_r')

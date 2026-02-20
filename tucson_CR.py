@@ -2830,17 +2830,15 @@ else:
         # ===============================
         # HELPERS
         # ===============================
-        def convert_percentage_columns(df: pd.DataFrame) -> pd.DataFrame:
-            df = df.copy()
-            for col in df.columns:
-                if "%" in col:
-                    df[col] = (
-                        df[col]
-                        .astype(str)
-                        .str.replace('%', '', regex=False)
-                        .replace('', None)
-                    )
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
+        def convert_percentage_columns(df):
+            percent_cols = [col for col in df.columns if '%' in col]
+
+            for col in percent_cols:
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.replace('%',''),
+                    errors='coerce'
+                )
+
             return df
 
 
@@ -2852,11 +2850,12 @@ else:
                 return None
 
 
-        def style_percentage(val, col):
+        def style_percentage(val, col, threshold_rules=None):
             if pd.isna(val):
                 return ""
 
-            rule = PERCENT_THRESHOLD_RULES.get(col)
+            # Use dynamic thresholds if provided, otherwise fall back to static rules
+            rule = threshold_rules.get(col) if threshold_rules else PERCENT_THRESHOLD_RULES.get(col)
             if not rule:
                 return ""
 
@@ -2876,8 +2875,9 @@ else:
 
 
 
-        def style_time(val, col):
-            rule = TIME_THRESHOLD_RULES.get(col)
+        def style_time(val, col, threshold_rules=None):
+            # Use dynamic thresholds if provided, otherwise fall back to static rules
+            rule = threshold_rules.get(col) if threshold_rules else TIME_THRESHOLD_RULES.get(col)
             if not rule or not isinstance(val, str):
                 return ""
             minutes = time_to_minutes(val)
@@ -2957,12 +2957,19 @@ else:
                 "# of Records Remove", "# of Records Reviewed",
                 "# of Records Not Reviewed",
                 "% of LowIncome",
-                "% of Contest - Yes",
                 "% of Follow-Up Survey",
-                "% of Contest - (Yes & Good Info)/Overall # of Records"
+                "% of Contest - (Yes & Good Info)/Overall # of Records",
+                "Date", "Date_Surveyor", "Date_Route"  # Exclude date columns from metrics display
             ]
+            # Note: "% of Contest - Yes" is now included in metrics display (shows average contest entry)
+            
+            # Create a copy of row to avoid modifying the original
+            display_row = row.copy()
+            # Rename "% of Contest - Yes" to "Average Contest Entry" for better display
+            if "% of Contest - Yes" in display_row:
+                display_row["Average Contest Entry"] = display_row.pop("% of Contest - Yes")
 
-            filtered_items = [(k, v) for k, v in row.items() if k not in excluded_columns]
+            filtered_items = [(k, v) for k, v in display_row.items() if k not in excluded_columns]
 
             for i in range(0, len(filtered_items), 4):
                 cols = st.columns(min(4, len(filtered_items) - i))
@@ -2992,27 +2999,64 @@ else:
             global _date_counter
             st.subheader(section_title)
 
-            # Convert % columns safely
-            unfiltered_df = convert_percentage_columns(unfiltered_df)
-            filtered_df = convert_percentage_columns(filtered_df)
+            # IMPORTANT: Don't convert percentage columns yet - we'll do it later after filtering
+            # This prevents data loss during filtering operations
+            unfiltered_df_orig = unfiltered_df.copy()
+            filtered_df_orig = filtered_df.copy()
+            
+            # Ensure Date column exists in unfiltered_df if it has the filter_column_name
+            if 'Date' not in unfiltered_df_orig.columns and filter_column_name in unfiltered_df_orig.columns:
+                # Extract date from Date_Surveyor or Date_Route
+                unfiltered_df_orig['Date'] = unfiltered_df_orig[filter_column_name].astype(str).str.split('_').str[0]
+                unfiltered_df_orig['Date'] = pd.to_datetime(unfiltered_df_orig['Date'], errors='coerce').dt.date
 
-            # Ensure date column exists
-            original_filter_column = filter_column_name
-            if filter_column_name not in filtered_df.columns:
-                for col in ['Date', 'DATE', 'date', 'Survey_Date']:
-                    if col in filtered_df.columns:
-                        filter_column_name = col
-                        break
+            # Ensure Date column exists in filtered_df_orig as well
+            if 'Date' not in filtered_df_orig.columns:
+                if filter_column_name in filtered_df_orig.columns:
+                    # Extract date from Date_Surveyor or Date_Route
+                    filtered_df_orig['Date'] = filtered_df_orig[filter_column_name].astype(str).str.split('_').str[0]
+                    filtered_df_orig['Date'] = pd.to_datetime(filtered_df_orig['Date'], errors='coerce').dt.date
                 else:
-                    st.error(f"Date column not found for {section_title}")
+                    st.error(f"Date column not found for {section_title}. Available columns: {list(filtered_df_orig.columns)[:10]}")
                     return
 
-            temp_df = filtered_df.copy()
-            temp_df['date'] = pd.to_datetime(temp_df[filter_column_name], errors='coerce')
-            temp_df = temp_df.dropna(subset=['date'])
-            temp_df['date'] = temp_df['date'].dt.strftime('%Y-%m-%d')
+            # Create a working copy that preserves ALL original columns
+            # Since data comes from Snowflake pre-calculated, we just need to filter rows correctly
+            temp_df = filtered_df_orig.copy(deep=True)
+            
+            # Exclude Total row first to avoid filtering issues
+            first_col = temp_df.columns[0] if len(temp_df.columns) > 0 else None
+            if first_col:
+                temp_df = temp_df[temp_df[first_col].astype(str) != 'Total'].copy()
+            
+            # Create date_for_filter column for filtering - use Date column if available
+            # The Date column from Snowflake should already be in a consistent format
+            if 'Date' in temp_df.columns:
+                # Date column exists - handle different formats (date object, string, datetime)
+                # Convert to datetime first, then format as string for consistent comparison
+                date_series = pd.to_datetime(temp_df['Date'], errors='coerce')
+                temp_df['date_for_filter'] = date_series.dt.strftime('%Y-%m-%d')
+                # Only keep rows where date conversion succeeded (exclude NaT and None)
+                temp_df = temp_df[temp_df['date_for_filter'].notna() & (temp_df['date_for_filter'] != 'NaT') & (temp_df['date_for_filter'] != '')].copy()
+            elif filter_column_name in temp_df.columns:
+                # Try to extract date from Date_Surveyor or Date_Route (format: "YYYY-MM-DD_XXX")
+                # Split by underscore and take first part
+                date_str = temp_df[filter_column_name].astype(str).str.split('_').str[0]
+                date_series = pd.to_datetime(date_str, errors='coerce')
+                temp_df['date_for_filter'] = date_series.dt.strftime('%Y-%m-%d')
+                # Exclude invalid dates
+                temp_df = temp_df[temp_df['date_for_filter'].notna() & (temp_df['date_for_filter'] != 'NaT') & (temp_df['date_for_filter'] != '')].copy()
+            else:
+                st.error(f"Date column not found for {section_title}. Available columns: {list(filtered_df_orig.columns)[:10]}")
+                return
 
-            unique_dates = sorted(temp_df['date'].unique())
+            if len(temp_df) == 0:
+                st.warning(f"No valid date data found for {section_title}")
+                df_to_show = pd.DataFrame()
+                return
+
+            # Get unique dates for the selectbox
+            unique_dates = sorted([d for d in temp_df['date_for_filter'].dropna().unique() if d and d != 'NaT'])
             
             # Create a unique key for the date selectbox
             _date_counter += 1
@@ -3025,41 +3069,267 @@ else:
             )
 
             if selected_date == "All":
-                df_to_show = unfiltered_df
+                # Convert percentage columns for unfiltered view
+                df_to_show = convert_percentage_columns(unfiltered_df_orig.copy())
+                # Ensure Date column is visible even in unfiltered view
+                if 'Date' not in df_to_show.columns and filter_column_name in df_to_show.columns:
+                    # Extract date from Date_Surveyor or Date_Route
+                    df_to_show['Date'] = df_to_show[filter_column_name].astype(str).str.split('_').str[0]
+                    df_to_show['Date'] = pd.to_datetime(df_to_show['Date'], errors='coerce').dt.date
+                
+                # Reorder columns to put Date first
+                if 'Date' in df_to_show.columns:
+                    first_cols = ['Date']
+                    if display_column_name in df_to_show.columns:
+                        first_cols.append(display_column_name)
+                    elif display_column_name.upper() in df_to_show.columns:
+                        first_cols.append(display_column_name.upper())
+                    remaining_cols = [c for c in df_to_show.columns if c not in first_cols]
+                    df_to_show = df_to_show[first_cols + remaining_cols]
             else:
-                df_to_show = temp_df[temp_df['date'] == selected_date].drop(columns=[filter_column_name])
-                df_to_show = df_to_show.rename(columns={
-                    display_column_name: display_column_name.upper(),
-                    'date': 'Date'
-                })
+                # Filter by the formatted date string using date_for_filter column
+                # Since data is pre-calculated from Snowflake, just filter rows - all columns should be preserved
+                # Use date_for_filter column directly for accurate matching (it's already in YYYY-MM-DD format)
+                selected_date_clean = str(selected_date).strip()
+                
+                # Primary filtering method: use date_for_filter column for exact match
+                if 'date_for_filter' in temp_df.columns:
+                    mask = temp_df['date_for_filter'].astype(str).str.strip() == selected_date_clean
+                    filtered_temp = temp_df.loc[mask].copy()
+                else:
+                    # Fallback: try using filter_column_name with startswith
+                    if filter_column_name in temp_df.columns:
+                        filtered_temp = temp_df[
+                            temp_df[filter_column_name].astype(str).str.startswith(selected_date)
+                        ].copy()
+                    else:
+                        st.warning("Neither date_for_filter nor filter column found")
+                        filtered_temp = pd.DataFrame()
+                
+                if filtered_temp.empty:
+                    # Try alternative matching in case of format issues
+                    # Check if selected_date matches any date_for_filter values (case-insensitive, whitespace handling)
+                    if 'date_for_filter' in temp_df.columns:
+                        # Try case-insensitive matching
+                        mask_alt = temp_df['date_for_filter'].astype(str).str.strip().str.lower() == selected_date_clean.lower()
+                        filtered_temp = temp_df.loc[mask_alt].copy()
+                    
+                    if filtered_temp.empty:
+                        st.warning(f"No data found for {date_label} Date: {selected_date}")
+                        df_to_show = pd.DataFrame()  # Return empty dataframe
+                    else:
+                        # Found data with alternative matching
+                        df_to_show = filtered_temp.reset_index(drop=True).copy()
+                else:
+                    # IMPORTANT: filtered_temp has ALL columns from temp_df with pre-calculated values from Snowflake
+                    # Reset index to ensure clean indexing
+                    df_to_show = filtered_temp.reset_index(drop=True).copy()
+                
+                if not df_to_show.empty:
+                    # IMPORTANT: The data from Snowflake should already have all calculated values
+                    # We just need to ensure we're preserving all columns and values correctly
+                    
+                    # Store original columns and data types before any modifications
+                    original_cols = list(df_to_show.columns)
+                    original_dtypes = df_to_show.dtypes.to_dict()
+                    
+                    # Ensure Date column exists and is properly formatted for display
+                    if 'Date' not in df_to_show.columns:
+                        # Create Date column from date_for_filter if it doesn't exist
+                        if 'date_for_filter' in df_to_show.columns:
+                            df_to_show['Date'] = pd.to_datetime(df_to_show['date_for_filter'], errors='coerce').dt.date
+                        elif filter_column_name in df_to_show.columns:
+                            df_to_show['Date'] = df_to_show[filter_column_name].astype(str).str.split('_').str[0]
+                            df_to_show['Date'] = pd.to_datetime(df_to_show['Date'], errors='coerce').dt.date
+                    else:
+                        # Date column exists - ensure it's a date object for display
+                        # Convert to datetime first, then to date (preserve existing values)
+                        df_to_show['Date'] = pd.to_datetime(df_to_show['Date'], errors='coerce').dt.date
+                    
+                    # Drop the temporary date_for_filter column now that we have Date
+                    if 'date_for_filter' in df_to_show.columns:
+                        df_to_show = df_to_show.drop(columns=['date_for_filter'])
+                    
+                    # Verify all important columns are still present
+                    # Check for SurveyTime columns and percentage columns
+                    survey_time_cols = [col for col in df_to_show.columns if 'SurveyTime' in col]
+                    percent_cols = [col for col in df_to_show.columns if '%' in col]
+                    
+                    # Check if SurveyTime columns have data (not all zeros/empty)
+                    for col in survey_time_cols:
+                        if col in df_to_show.columns:
+                            # Check if all values are empty/zero
+                            col_values = df_to_show[col].astype(str)
+                            non_empty = col_values[col_values.notna() & (col_values != '') & (col_values != '0') & (col_values != '0.0') & (col_values != '00:00:00')]
+                            if len(non_empty) == 0 and len(df_to_show) > 0:
+                                # All values are empty/zero - this might indicate a data issue
+                                # But don't show warning as it might be legitimate (no surveys on that date)
+                                pass
+                    
+                    # IMPORTANT: Convert percentage columns AFTER filtering
+                    # This converts string percentages like "45.5%" to numeric 45.5 for display
+                    # SurveyTime columns should remain as strings (time format like "00:05:30")
+                    # Make a copy before conversion to preserve original data types
+                    df_before_convert = df_to_show.copy()
+                    df_to_show = convert_percentage_columns(df_to_show)
+                    
+                    # CRITICAL: Verify SurveyTime columns are still strings (not converted to numeric)
+                    # SurveyTime columns from Snowflake should be time strings like "00:05:30"
+                    survey_time_cols = [col for col in df_to_show.columns if 'SurveyTime' in col]
+                    for col in survey_time_cols:
+                        if col in df_to_show.columns:
+                            # If SurveyTime column was accidentally converted to numeric, restore from original
+                            if df_to_show[col].dtype in ['float64', 'int64', 'float32', 'int32']:
+                                # Restore original string values from before conversion
+                                if col in df_before_convert.columns:
+                                    df_to_show[col] = df_before_convert[col]
+                            # Also check if values are all zeros/empty - might indicate data loss during filtering
+                            elif df_to_show[col].dtype == 'object':
+                                # Check if all values are empty/zero strings
+                                col_str = df_to_show[col].astype(str).str.strip()
+                                non_empty = col_str[col_str.notna() & (col_str != '') & (col_str != '0') & 
+                                                   (col_str != '0.0') & (col_str != '00:00:00') & (col_str != 'nan')]
+                                # If we have rows but all SurveyTime values are empty/zero, try to restore from original filtered data
+                                if len(non_empty) == 0 and len(df_to_show) > 0 and col in df_before_convert.columns:
+                                    # Check if original had non-zero values
+                                    orig_col_str = df_before_convert[col].astype(str).str.strip()
+                                    orig_non_empty = orig_col_str[orig_col_str.notna() & (orig_col_str != '') & 
+                                                                 (orig_col_str != '0') & (orig_col_str != '0.0') & 
+                                                                 (orig_col_str != '00:00:00') & (orig_col_str != 'nan')]
+                                    if len(orig_non_empty) > 0:
+                                        # Original had data, restore it
+                                        df_to_show[col] = df_before_convert[col]
+                    
+                    # Rename display column if needed
+                    if display_column_name in df_to_show.columns:
+                        df_to_show = df_to_show.rename(columns={display_column_name: display_column_name.upper()})
+                    
+                    # Reorder columns - Date should be first, but preserve ALL other columns
+                    if 'Date' in df_to_show.columns:
+                        first_cols = ['Date']
+                        if display_column_name.upper() in df_to_show.columns:
+                            first_cols.append(display_column_name.upper())
+                        # Get all remaining columns (preserve order as much as possible)
+                        remaining_cols = [c for c in df_to_show.columns if c not in first_cols]
+                        # Optionally keep filter_column_name if it's different from Date
+                        if filter_column_name in df_to_show.columns and filter_column_name != 'Date' and filter_column_name not in first_cols:
+                            # Move filter_column_name to a better position if needed
+                            if filter_column_name in remaining_cols:
+                                remaining_cols.remove(filter_column_name)
+                                remaining_cols.insert(0, filter_column_name)
+                        df_to_show = df_to_show[first_cols + remaining_cols]
 
-                first_cols = ['Date', display_column_name.upper()]
-                remaining_cols = [c for c in df_to_show.columns if c not in first_cols]
-                df_to_show = df_to_show[first_cols + remaining_cols]
-
-            # Apply sorting
+            # Apply sorting (only if dataframe is not empty)
+            if df_to_show.empty:
+                st.info(f"No data available for the selected {date_label} Date.")
+                return  # Exit early if no data to show
+            
             df_to_show = apply_column_sorting(df_to_show, section_title)
+
+            # Calculate dynamic thresholds based on column averages (±10%)
+            dynamic_percent_thresholds = {}
+            dynamic_time_thresholds = {}
+            
+            # Convert percentage columns to numeric for calculation
+            df_for_calc = convert_percentage_columns(df_to_show.copy())
+            
+            # Calculate thresholds for percentage columns
+            for col in df_to_show.columns:
+                if "%" in col and col in df_for_calc.columns:
+                    # Get numeric values (excluding Total row if present)
+                    numeric_values = df_for_calc[col].copy()
+                    # Exclude last row if it contains 'Total' in any column
+                    if len(df_to_show) > 0:
+                        # Check if last row has 'Total' in the first column (usually Date or INTERV_INIT)
+                        first_col = df_to_show.columns[0]
+                        last_row_first_val = str(df_to_show.iloc[-1][first_col]) if first_col in df_to_show.columns else ""
+                        if 'Total' in last_row_first_val:
+                            numeric_values = numeric_values.iloc[:-1]
+                    
+                    # Calculate average (excluding NaN values)
+                    numeric_values = numeric_values.dropna()
+                    if len(numeric_values) > 0:
+                        avg = numeric_values.mean()
+                        if not pd.isna(avg) and avg > 0:
+                            # Calculate ±10% thresholds
+                            low = max(0, avg * 0.9)  # 10% below average, minimum 0
+                            high = min(100, avg * 1.1)  # 10% above average, maximum 100
+                            dynamic_percent_thresholds[col] = {"low": low, "high": high}
+            
+            # Calculate thresholds for time columns
+            for col in df_to_show.columns:
+                if col in TIME_THRESHOLD_RULES:
+                    # Convert time strings to minutes
+                    time_values = []
+                    # Check if last row is a Total row
+                    is_total_row = False
+                    if len(df_to_show) > 0:
+                        first_col = df_to_show.columns[0]
+                        last_row_first_val = str(df_to_show.iloc[-1][first_col]) if first_col in df_to_show.columns else ""
+                        is_total_row = 'Total' in last_row_first_val
+                    
+                    for idx, val in enumerate(df_to_show[col]):
+                        # Skip Total row
+                        if is_total_row and idx == len(df_to_show) - 1:
+                            continue
+                        if isinstance(val, str):
+                            minutes = time_to_minutes(val)
+                            if minutes is not None:
+                                time_values.append(minutes)
+                    
+                    if len(time_values) > 0:
+                        avg_minutes = sum(time_values) / len(time_values)
+                        if avg_minutes > 0:
+                            # Calculate ±10% thresholds
+                            warn = max(0, avg_minutes * 0.9)  # 10% below average
+                            critical = avg_minutes * 1.1  # 10% above average
+                            dynamic_time_thresholds[col] = {"warn": warn, "critical": critical}
 
             # Build style matrix - FIXED: Ensure all values are properly styled
             styles = pd.DataFrame("", index=df_to_show.index, columns=df_to_show.columns)
 
             for col in df_to_show.columns:
                 if "%" in col:
-                    # Apply styling to all rows for percentage columns
-                    styles[col] = df_to_show[col].apply(lambda v: style_percentage(v, col))
+                    # Apply styling to all rows for percentage columns with dynamic thresholds
+                    threshold_rules = dynamic_percent_thresholds if col in dynamic_percent_thresholds else None
+                    styles[col] = df_to_show[col].apply(lambda v, c=col, tr=threshold_rules: style_percentage(v, c, tr))
                 elif col in TIME_THRESHOLD_RULES:
-                    # Apply styling to all rows for time columns
-                    styles[col] = df_to_show[col].apply(lambda v: style_time(v, col))
+                    # Apply styling to all rows for time columns with dynamic thresholds
+                    threshold_rules = dynamic_time_thresholds if col in dynamic_time_thresholds else None
+                    styles[col] = df_to_show[col].apply(lambda v, c=col, tr=threshold_rules: style_time(v, c, tr))
 
-            styled_df = df_to_show.style.format(
-                {col: "{:.2f}" for col in df_to_show.select_dtypes(include="number").columns}
-            )
-            # Display the dataframe with styling
+            # Format only numeric columns (exclude SurveyTime and other string columns)
+            # SurveyTime columns should remain as time strings (e.g., "00:05:30")
+            numeric_cols = [col for col in df_to_show.select_dtypes(include="number").columns 
+                           if 'SurveyTime' not in col]  # Explicitly exclude SurveyTime columns
+            
+            format_dict = {col: "{:.2f}" for col in numeric_cols}
+            styled_df = df_to_show.style.format(format_dict)
+            
+            # Remove index from display
+            # df_to_show = df_to_show.reset_index(drop=True)
+
+            pinned_config = {}
+
+            # Dynamically find actual display column name present in df
+            pin_col = None
+            for col in df_to_show.columns:
+                if col.lower() == display_column_name.lower():
+                    pin_col = col
+                    break
+
+            if pin_col:
+                pinned_config[pin_col] = st.column_config.Column(
+                    pin_col,
+                    pinned=True
+                )
+
             st.dataframe(
                 styled_df.apply(lambda _: styles, axis=None),
-                use_container_width=True
+                use_container_width=True,
+                column_config=pinned_config,
+                hide_index=True
             )
-
 
 
 
@@ -5400,196 +5670,6 @@ else:
                         time.sleep(1.5)
                         # Rerun will clear status messages and fetch fresh data from Snowflake
                         st.rerun()
-
-            
-            
-            
-            # Button to trigger the entire script
-            # if role.upper() != "CLIENT":
-            #     if st.button("Sync"):
-            #         import gc
-            #         import time
-                    
-            #         # ===== PHASE 1: MEMORY CLEANUP BEFORE STARTING =====
-            #         gc.collect()
-                    
-            #         # Delete large dataframes to free memory
-            #         large_vars = ['wkday_raw_df', 'wkend_raw_df', 'wkday_df', 'wkend_df', 
-            #                     'wkday_dir_df', 'wkend_dir_df', 'detail_df', 'wkday_stationwise_df',
-            #                     'wkend_stationwise_df', 'dataframes']
-            #         for var_name in large_vars:
-            #             if var_name in globals():
-            #                 del globals()[var_name]
-            #         gc.collect()
-                    
-            #         # ===== PHASE 2: MINIMAL PROGRESS INDICATORS =====
-            #         keep_alive_placeholder = st.empty()
-            #         progress_bar = st.progress(0)
-            #         status_text = st.empty()
-                    
-            #         def update_progress(step, total_steps, message):
-            #             progress = step / total_steps
-            #             progress_bar.progress(progress)
-            #             status_text.text(f"🔄 {message}")
-                        
-            #             # CRITICAL: Frequent session keep-alive
-            #             keep_alive_placeholder.text(f"Step {step}/{total_steps}: {message}")
-                        
-            #             # Memory cleanup every step
-            #             gc.collect()
-                        
-            #             # Keep session alive with small delay
-            #             time.sleep(0.5)
-                    
-            #         try:
-            #             # ===== PHASE 3: EXECUTE WITH MEMORY MANAGEMENT =====
-            #             update_progress(1, 5, "Starting sync process...")
-                        
-            #             update_progress(2, 5, "Processing data (this may take 3-4 minutes)...")
-            #             result = fetch_and_process_data(
-            #                 st.session_state["selected_project"], 
-            #                 st.session_state["schema"]
-            #             )
-                        
-            #             update_progress(3, 5, "Data processed, updating cache...")
-                        
-            #             # Update cache key
-            #             if "cache_key" not in st.session_state:
-            #                 st.session_state["cache_key"] = 0
-            #             st.session_state["cache_key"] += 1
-                        
-            #             # Clear memory before loading new data
-            #             gc.collect()
-                        
-            #             update_progress(4, 5, "Loading essential data from Snowflake...")
-                        
-            #             # Load only essential dataframes
-            #             dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"])
-                        
-            #             # Update only critical dataframes needed for current view
-            #             essential_df_mapping = {
-            #                 'wkday_df': 'wkday_df',
-            #                 'wkday_dir_df': 'wkday_dir_df', 
-            #                 'wkday_time_df': 'wkday_time_df',
-            #                 'wkend_df': 'wkend_df',
-            #                 'wkend_dir_df': 'wkend_dir_df',
-            #                 'wkend_time_df': 'wkend_time_df',
-            #                 'detail_df': 'detail_df'
-            #             }
-                        
-            #             for df_key, global_var in essential_df_mapping.items():
-            #                 if df_key in dataframes:
-            #                     globals()[global_var] = dataframes[df_key]
-                        
-            #             update_progress(5, 5, "Finalizing...")
-                        
-            #             # ===== PHASE 4: CLEANUP AND SUCCESS =====
-            #             progress_bar.empty()
-            #             status_text.empty()
-            #             keep_alive_placeholder.empty()
-                        
-            #             st.success("✅ Data synced successfully!")
-                        
-            #             # Small delay then rerun
-            #             time.sleep(2)
-            #             st.rerun()
-                        
-            #         except Exception as e:
-            #             # Cleanup on error
-            #             progress_bar.empty()
-            #             status_text.empty()
-            #             keep_alive_placeholder.empty()
-            #             gc.collect()
-                        
-            #             st.error(f"❌ Sync failed: {str(e)}")
-
-
-
-
-            # if "sync_in_progress" not in st.session_state:
-            #     st.session_state["sync_in_progress"] = False
-
-            # if role.upper() != "CLIENT":
-            #     # col1, col2, col3 = st.columns([1, 1, 6])
-            #     # with col1:
-            #     clicked = st.button(
-            #         "Sync",
-            #         disabled=st.session_state["sync_in_progress"]
-            #     )
-                
-
-
-
-
-
-
-            #     # if show_metrics:
-            #     #     st.markdown("---")
-            #     #     st.subheader("📊 Database Records Overview")
-            #     #     show_database_metrics_popup()
-
-            #     if st.session_state["sync_in_progress"]:
-            #         st.caption("🔄 Sync is running. Please wait…")
-
-            #     if clicked and not st.session_state["sync_in_progress"]:
-            #         st.session_state["sync_in_progress"] = True
-            #         st.session_state["run_sync"] = True
-            #         st.rerun()
-
-            # if st.session_state.get("run_sync", False):
-
-            #     import gc
-            #     import time
-
-            #     try:
-            #         gc.collect()
-
-            #         fetch_and_process_data(
-            #             st.session_state["selected_project"],
-            #             st.session_state["schema"]
-            #         )
-
-            #         st.session_state["cache_key"] = st.session_state.get("cache_key", 0) + 1
-
-            #         dataframes = fetch_dataframes_from_snowflake(
-            #             st.session_state["cache_key"]
-            #         )
-
-            #         essential_df_mapping = {
-            #             'wkday_df': 'wkday_df',
-            #             'wkday_dir_df': 'wkday_dir_df',
-            #             'wkday_time_df': 'wkday_time_df',
-            #             'wkend_df': 'wkend_df',
-            #             'wkend_dir_df': 'wkend_dir_df',
-            #             'wkend_time_df': 'wkend_time_df',
-            #             'detail_df': 'detail_df'
-            #         }
-
-            #         for df_key, global_var in essential_df_mapping.items():
-            #             if df_key in dataframes:
-            #                 globals()[global_var] = dataframes[df_key]
-
-            #         st.success("✅ Data synced successfully!")
-
-            #     except Exception as e:
-            #         st.error(f"❌ Sync failed: {str(e)}")
-
-            #     finally:
-            #         # Unlock
-            #         st.session_state["sync_in_progress"] = False
-            #         st.session_state["run_sync"] = False
-
-            #         # Trigger ONE clean rerun
-            #         st.session_state["sync_completed"] = True
-
-
-            # if st.session_state.get("sync_completed", False):
-            #     # Clear flag BEFORE rerun to avoid loop
-            #     st.session_state["sync_completed"] = False
-            #     st.rerun()
-
-
-
 
         # Button Section
         with header_col2:
