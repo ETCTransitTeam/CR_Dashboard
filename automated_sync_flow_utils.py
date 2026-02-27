@@ -6734,15 +6734,42 @@ def create_location_maps_interface(df):
         )
 
 ## Demographic Summary Report
-def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race_label_map=None):
+def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race_label_map=None, question_dict=None, multi_select_fields_override=None, multi_select_field_names=None):
+    """
+    Build demographic review DataFrame. If question_dict is provided (from Demographic Setup),
+    use it; otherwise use project-specific hardcoded questions.
+    multi_select_field_names: list of field names to treat as multi-select (e.g. Race, DisabilitySpecify);
+      used when question_dict is provided to build multi_select_fields from race_label_map and hardcoded mappings.
+    """
     elvis_df = elvis_df.copy()
     demographic_review = []
 
     # ===============================
-    # 1) DEFINE PROJECT-SPECIFIC QUESTIONS
+    # 1) DEFINE PROJECT-SPECIFIC OR CONFIGURED QUESTIONS
     # ===============================
-
-    if project_name.upper() == "ACTRANSIT":
+    if question_dict and len(question_dict) > 0:
+        # Admin-configured dictionary from Demographic Setup page (from DATA DICTIONARY)
+        if multi_select_fields_override is not None:
+            multi_select_fields = multi_select_fields_override
+        else:
+            multi_select_fields = {}
+            names = multi_select_field_names or []
+            if "Race" in names and race_label_map and len(race_label_map) > 0:
+                race_mapping = {label: col for col, label in race_label_map.items()}
+                multi_select_fields["Race"] = race_mapping
+            if "DisabilitySpecify" in names:
+                multi_select_fields["DisabilitySpecify"] = {
+                    "Blindness or vision impairment": "DISABILITY_SPECIFY_1",
+                    "Mobility disability": "DISABILITY_SPECIFY_2",
+                    "Hearing impairment": "DISABILITY_SPECIFY_4",
+                    "Cognitive or intellectual impairment": "DISABILITY_SPECIFY_5",
+                    "None": "DISABILITY_SPECIFY_6",
+                }
+            # If Race/DisabilitySpecify in question_dict but not in names, still add Race from race_label_map for backward compat
+            if "Race" in question_dict and "Race" not in multi_select_fields and race_label_map and len(race_label_map) > 0:
+                race_mapping = {label: col for col, label in race_label_map.items()}
+                multi_select_fields["Race"] = race_mapping
+    elif project_name.upper() == "ACTRANSIT":
         question_dict = {
                 "AltIncome":  "We want to make sure we get responses from ACT users with different income levels. Is your TOTAL ANNUAL HOUSEHOLD INCOME in 2024 higher than {if(HHSize.NAOK == \"1?",
                 "Assistance": "Do you or anyone in your household currently receive any government assistance or public benefits (such as CalFresh, Medi-Cal, WIC, Section 8, or similar)?",

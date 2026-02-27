@@ -1,5 +1,6 @@
 
 import os
+import re
 import datetime
 import numpy as np
 import pandas as pd
@@ -7,7 +8,8 @@ import streamlit as st
 import snowflake.connector
 import tempfile
 from automated_refresh_flow_new import fetch_and_process_data, PROJECTS
-from utils import create_csv,download_csv, render_styled_dataframe, validate_filename, validate_kingelvis_sheet, validate_cr_sheets, validate_details_sheets, upload_file_to_s3, list_s3_files
+from automated_sync_flow_utils import check_all_characters_present, clean_string
+from utils import create_csv, download_csv, render_styled_dataframe, validate_filename, validate_kingelvis_sheet, validate_cr_sheets, validate_details_sheets, upload_file_to_s3, list_s3_files, read_data_dictionary_from_s3, load_demographic_setup_from_s3, save_demographic_setup_to_s3, fetch_table_columns
 from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
@@ -726,6 +728,7 @@ else:
             "⦾  WEEKEND StationWise Comparison": "weekend_station",
             "🚫  Refusal Analysis": "refusal",
             "👥  Demographic Review": "demographic",
+            "📊  Demographic Setup": "demographic_setup",
             "⚙️  Accounts Management": "accounts_management",
             "➕  Create Accounts": "create_accounts",
             "🔐  Password Update": "password_update",
@@ -1395,7 +1398,7 @@ else:
                 st.session_state.selected_page = "🏠︎   Home"
             
             # Check if current page is a management page
-            management_page_keys = ["accounts_management", "create_accounts", "password_update", "file_management", "view_s3_files"]
+            management_page_keys = ["accounts_management", "create_accounts", "password_update", "file_management", "view_s3_files", "demographic_setup"]
             is_management_page = current_page in management_page_keys
             
             # Management page mapping
@@ -1404,7 +1407,8 @@ else:
                 "create_accounts": "➕  Create Accounts",
                 "password_update": "🔐  Password Update",
                 "file_management": "📁  File Management",
-                "view_s3_files": "📦  View S3 Files"
+                "view_s3_files": "📦  View S3 Files",
+                "demographic_setup": "📊  Demographic Setup"
             }
             
             # --- Sync state from URL/current_page BEFORE rendering widgets ---
@@ -1474,6 +1478,14 @@ else:
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = "view_s3_files"
+                    st.rerun()
+
+                # Demographic Setup button
+                if st.button("Demographic Setup", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "demographic_setup"
                     st.rerun()
 
             # --- Bottom Buttons ---
@@ -5450,6 +5462,212 @@ else:
             if st.button("🔄 Refresh File List", use_container_width=True):
                 st.rerun()
 
+        def demographic_setup_page():
+            """Page for configuring demographic fields per project from DATA DICTIONARY sheet in Details file."""
+            
+            st.title("📊 Demographic Setup")
+            st.markdown(
+                "Configure which fields appear in **Demographic Review** for each project. "
+                "Data is read from the **DATA DICTIONARY** sheet (columns: FIELD NAME, DESCRIPTION) "
+                "in the project's Details file on S3."
+            )
+
+            current_user_email = st.session_state.get("user", {}).get("email", "")
+            if not is_super_admin(current_user_email):
+                st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                return
+
+            bucket_name = os.getenv('bucket_name')
+            if not bucket_name:
+                st.error("❌ S3 bucket not configured (bucket_name).")
+                return
+
+            available_projects = sorted(PROJECTS.keys())
+            selected_project = st.selectbox(
+                "Select Project",
+                options=available_projects,
+                index=0 if available_projects else None,
+                key="demographic_setup_project"
+            )
+            if not selected_project:
+                st.warning("No projects available.")
+                return
+
+            project_config = PROJECTS.get(selected_project, {})
+            details_file = project_config.get("files", {}).get("details")
+            if not details_file:
+                st.error(f"❌ Project '{selected_project}' has no Details file configured.")
+                return
+
+            with st.spinner("Loading DATA DICTIONARY from S3..."):
+                dd_df = read_data_dictionary_from_s3(bucket_name, details_file)
+
+            if dd_df is None or dd_df.empty:
+                st.warning(
+                    f"⚠️ **DATA DICTIONARY sheet is not present** in the Details file for **{selected_project}**.\n\n"
+                    "Add a sheet named **DATA DICTIONARY** with columns **FIELD NAME** and **DESCRIPTION** "
+                    "to the project's Details file in S3 to use this page."
+                )
+                return
+
+            # -----------------------
+            # Get database columns and filter DATA DICTIONARY to only fields that have a match
+            # Match: clean both (remove _, [], spaces, #, lower) then compare (same as check_all_characters_present)
+            # -----------------------
+            def get_project_database_columns(project):
+                project_config = PROJECTS.get(project, {})
+                dbs = project_config.get("databases", {})
+                elvis_config = dbs.get("elvis")
+                if not elvis_config:
+                    return None
+                cols = fetch_table_columns(elvis_config["database"], elvis_config["table"])
+                if cols is None:
+                    return None
+                if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
+                    from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
+                    cols = [KCATA_HEADER_MAPPING.get(c, c) for c in cols]
+                return cols
+
+            with st.spinner("Loading database columns for matching..."):
+                db_columns = get_project_database_columns(selected_project)
+
+            if db_columns is not None:
+                # Keep only DATA DICTIONARY rows whose FIELD NAME matches at least one database column (after clean_string)
+                db_columns_clean_set = {clean_string(c) for c in db_columns}
+                def field_has_match(field_name):
+                    return clean_string(str(field_name).strip()) in db_columns_clean_set
+                dd_df = dd_df[dd_df["FIELD NAME"].apply(field_has_match)].reset_index(drop=True)
+                if dd_df.empty:
+                    st.warning("No DATA DICTIONARY fields match database columns for this project.")
+                    return
+            # If db_columns is None (e.g. DB unavailable), show all DATA DICTIONARY rows (no filtering)
+
+            # Load saved config (question_dict + multi_select_field_names). Order preserved as in sheet; duplicates removed in utils.
+            config = load_demographic_setup_from_s3(bucket_name, selected_project)
+            saved_question_dict = config["question_dict"] if config else {}
+            saved_multi_list = config.get("multi_select_field_names", []) if config else []
+            saved_multi = set(saved_multi_list)
+            # Treat "Race" as selected if saved has "Race" or any RACE_1, RACE_2, ... (backward compat)
+            def is_race_column(fn):
+                return bool(re.match(r"^RACE_\d+$", str(fn).strip(), re.IGNORECASE))
+            saved_has_race = "Race" in saved_question_dict or any(is_race_column(k) for k in saved_question_dict)
+            saved_race_multi = "Race" in saved_multi or any(is_race_column(k) for k in saved_multi_list)
+            saved_fields = set(saved_question_dict.keys())
+
+            # -----------------------
+            # COLLAPSE RACE_1, RACE_2, ... INTO ONE "Race" ROW (like hardcoded)
+            # display_multi: True for Race and for disability columns (auto multi-select; no user checkbox)
+            # -----------------------
+            RACE_DESCRIPTION = "What is your race / ethnicity? (check all that apply)"
+            def is_disability_column(fn):
+                return fn == "DisabilitySpecify" or "disability" in clean_string(str(fn))
+
+            display_names = []
+            display_descriptions = []
+            display_multi = []
+            race_seen = False
+            for _, row in dd_df.iterrows():
+                fn = str(row["FIELD NAME"]).strip()
+                desc = str(row["DESCRIPTION"]).strip()
+                if is_race_column(fn):
+                    if not race_seen:
+                        display_names.append("Race")
+                        display_descriptions.append(RACE_DESCRIPTION)
+                        display_multi.append(True)
+                        race_seen = True
+                else:
+                    display_names.append(fn)
+                    display_descriptions.append(desc)
+                    display_multi.append(is_disability_column(fn))
+
+            st.subheader("Select fields for Demographic Review")
+            st.caption("Check the fields you want to include. **Race** and **Disability** (if present) are shown as **(Multi-Select)** and handled automatically.")
+            st.markdown("---")
+
+            # -----------------------
+            # SESSION STATE INIT
+            # -----------------------
+            state_key_prefix = f"demographic_check_{selected_project}_"
+            init_key = "demographic_setup_init_project"
+
+            # Use display list (Race grouped as one row); multi is auto for Race/disability (no checkbox)
+            field_names_list = display_names
+            descriptions = display_descriptions
+            multi_defaults = display_multi
+
+            if st.session_state.get(init_key) != selected_project:
+                for i, fn in enumerate(field_names_list):
+                    if fn == "Race":
+                        st.session_state[f"{state_key_prefix}{i}_{fn}"] = saved_has_race
+                    else:
+                        st.session_state[f"{state_key_prefix}{i}_{fn}"] = fn in saved_fields
+                st.session_state[init_key] = selected_project
+
+            # -----------------------
+            # SELECT ALL BUTTONS
+            # -----------------------
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button("Select All"):
+                    for i, fn in enumerate(field_names_list):
+                        st.session_state[f"{state_key_prefix}{i}_{fn}"] = True
+                    st.rerun()
+
+            with col2:
+                if st.button("Deselect All"):
+                    for i, fn in enumerate(field_names_list):
+                        st.session_state[f"{state_key_prefix}{i}_{fn}"] = False
+                    st.rerun()
+
+            st.markdown("---")
+
+            # -----------------------
+            # SEARCH FILTER (VERY IMPORTANT FOR PERFORMANCE)
+            # -----------------------
+            search = st.text_input("🔍 Search Field Name")
+
+            filtered_fields = [
+                (i, fn, desc, multi_defaults[i] if i < len(multi_defaults) else False)
+                for i, (fn, desc) in enumerate(zip(field_names_list, descriptions))
+                if search.lower() in fn.lower()
+            ]
+
+            # -----------------------
+            # FORM STARTS HERE (single column; no Multi-select checkbox; Race/Disability show (Multi-Select) read-only)
+            # -----------------------
+            with st.form("demographic_setup_form"):
+
+                selected_fields = []  # (fn, desc, is_multi_select) with is_multi_select auto for Race/disability
+
+                for i, fn, desc, is_multi in filtered_fields:
+                    cb_key = f"{state_key_prefix}{i}_{fn}"
+                    # Show (Multi-Select) in brackets next to field name for Race and disability (read-only indicator)
+                    if is_multi:
+                        label = f"**{fn}** (Multi-Select) — {desc[:80]}{'…' if len(desc) > 80 else ''}"
+                    else:
+                        label = f"**{fn}** — {desc[:80]}{'…' if len(desc) > 80 else ''}"
+                    checked = st.checkbox(label, key=cb_key)
+                    if checked:
+                        selected_fields.append((fn, desc, is_multi))
+
+                submitted = st.form_submit_button("✅ Save demographic dictionary for this project")
+
+                if submitted:
+                    if selected_fields:
+                        question_dict = {fn: desc for fn, desc, _ in selected_fields}
+                        # Auto-set multi-select for Race and disability columns (no user checkbox)
+                        multi_select_field_names = [fn for fn, _, is_multi in selected_fields if is_multi]
+                        if save_demographic_setup_to_s3(bucket_name, selected_project, question_dict, multi_select_field_names):
+                            st.success(
+                                f"✅ Saved {len(question_dict)} fields for **{selected_project}**."
+                                + (f" Multi-select: {', '.join(multi_select_field_names)}." if multi_select_field_names else "")
+                            )
+                        else:
+                            st.error("❌ Failed to save to S3.")
+                    else:
+                        st.warning("Select at least one field before saving.")
+
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
 
@@ -5901,6 +6119,12 @@ else:
                     st.error("❌ Access Denied: This page is only accessible to super administrators.")
                 else:
                     view_s3_files_page()
+            elif current_page == "demographic_setup":
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    demographic_setup_page()
 
             else:
                 if 'tucson' in selected_project:

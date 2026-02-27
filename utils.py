@@ -207,6 +207,36 @@ def fetch_data(database_name, table_name):
     return None
 
 
+def fetch_table_columns(database_name, table_name):
+    """
+    Return list of column names for the given table (lightweight: LIMIT 0).
+    Returns None on error (e.g. connection failure). Does not rerun or show errors.
+    """
+    HOST = os.getenv("SQL_HOST")
+    USER = os.getenv("SQL_USER")
+    PASSWORD = os.getenv("SQL_PASSWORD")
+    if not all([HOST, database_name, table_name]):
+        return None
+    db_connector = DatabaseConnector(HOST, database_name, USER, PASSWORD)
+    try:
+        db_connector.connect()
+        if db_connector.connection is None:
+            return None
+        connection = db_connector.connection
+        cursor = connection.cursor()
+        cursor.execute(f"SELECT * FROM {table_name} LIMIT 0")
+        columns = [row[0] for row in cursor.description] if cursor.description else []
+        cursor.close()
+        return columns
+    except Exception:
+        return None
+    finally:
+        try:
+            db_connector.disconnect()
+        except Exception:
+            pass
+
+
 # -----------------------
 # Initialize S3 client for file reading
 # -----------------------
@@ -463,7 +493,6 @@ def validate_details_sheets(file_path):
     required_sheets = [
         'TOD',
         'STOPS',
-        'XFER_STOPS',
         'O2O_STOPS',
         'XFERS',
         'SIS_ROUTE'
@@ -493,6 +522,127 @@ def validate_details_sheets(file_path):
     except Exception as e:
         print(f"Error reading Excel file for Details sheet validation: {e}")
         return False, required_sheets  # Return all as missing if error
+
+
+# -----------------------
+# DATA DICTIONARY & DEMOGRAPHIC SETUP (from Details file / S3 config)
+# -----------------------
+DATA_DICTIONARY_SHEET = "DATA DICTIONARY"
+DEMOGRAPHIC_CONFIG_PREFIX = "config/"
+DEMOGRAPHIC_CONFIG_SUFFIX = "_demographic_setup.json"
+
+
+def read_data_dictionary_from_s3(bucket_name, details_file_key):
+    """
+    Read the 'DATA DICTIONARY' sheet from the project's details Excel file in S3.
+    Expected columns: FIELD NAME, DESCRIPTION (matching is case-insensitive).
+    Optional column: MULTI_SELECT (Y/Yes/True/1 = treat as multi-select, e.g. Race, Disability).
+
+    - Duplicates by FIELD NAME are removed (first occurrence kept).
+    - Row order is preserved exactly as in the sheet (no sorting).
+
+    Returns:
+        pd.DataFrame with columns 'FIELD NAME', 'DESCRIPTION', and optionally 'MULTI_SELECT' (bool).
+        None if sheet or required columns missing.
+    """
+    try:
+        df = read_excel_from_s3(bucket_name, details_file_key, DATA_DICTIONARY_SHEET)
+    except Exception as e:
+        print(f"Error reading DATA DICTIONARY sheet from S3: {e}")
+        return None
+    if df is None or df.empty:
+        return None
+    # Normalize column names (case-insensitive)
+    col_map = {}
+    for c in df.columns:
+        cstr = str(c).strip()
+        if cstr.upper() == "FIELD NAME":
+            col_map[c] = "FIELD NAME"
+        elif cstr.upper() == "DESCRIPTION":
+            col_map[c] = "DESCRIPTION"
+        elif cstr.upper() in ("MULTI_SELECT", "MULTISELECT", "MULTI SELECT"):
+            col_map[c] = "MULTI_SELECT"
+    df = df.rename(columns=col_map)
+    if "FIELD NAME" not in df.columns or "DESCRIPTION" not in df.columns:
+        return None
+    # Lock in sheet order: add row index before any ops that might reorder
+    df = df.reset_index(drop=True)
+    df["__row_order__"] = df.index
+    # Keep only columns we use; dropna on FIELD NAME
+    use_cols = ["FIELD NAME", "DESCRIPTION", "__row_order__"]
+    if "MULTI_SELECT" in df.columns:
+        use_cols.append("MULTI_SELECT")
+    df = df[use_cols].dropna(subset=["FIELD NAME"])
+    df["FIELD NAME"] = df["FIELD NAME"].astype(str).str.strip()
+    df["DESCRIPTION"] = df["DESCRIPTION"].astype(str).str.strip()
+    # Parse MULTI_SELECT to bool (Y/Yes/True/1 -> True)
+    if "MULTI_SELECT" in df.columns:
+        raw = df["MULTI_SELECT"].astype(str).str.strip().str.upper()
+        df["MULTI_SELECT"] = raw.isin(("Y", "YES", "TRUE", "1"))
+    # Remove duplicates by FIELD NAME, keep first to preserve sheet order
+    df = df.drop_duplicates(subset=["FIELD NAME"], keep="first")
+    # Restore exact original sheet order by the row index we saved
+    df = df.sort_values("__row_order__").reset_index(drop=True)
+    df = df.drop(columns=["__row_order__"])
+    return df
+
+
+def _demographic_config_key(project_key):
+    """S3 key for project demographic setup JSON."""
+    safe_key = str(project_key).replace(" ", "_").upper()
+    return f"{DEMOGRAPHIC_CONFIG_PREFIX}{safe_key}{DEMOGRAPHIC_CONFIG_SUFFIX}"
+
+
+def load_demographic_setup_from_s3(bucket_name, project_key):
+    """
+    Load saved demographic field setup for a project from S3.
+
+    Returns:
+        None if not found or error. Otherwise a dict:
+        - "question_dict": dict mapping field name -> description
+        - "multi_select_field_names": list of field names treated as multi-select (e.g. Race, DisabilitySpecify)
+        Old configs with only question_dict get multi_select_field_names = [].
+    """
+    import json
+    key = _demographic_config_key(project_key)
+    try:
+        response = s3_client.get_object(Bucket=bucket_name, Key=key)
+        body = response["Body"].read().decode("utf-8")
+        data = json.loads(body)
+        if not isinstance(data, dict):
+            return None
+        return {
+            "question_dict": data.get("question_dict") or {},
+            "multi_select_field_names": data.get("multi_select_field_names") or [],
+        }
+    except Exception as e:
+        from botocore.exceptions import ClientError
+        if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "NoSuchKey":
+            return None
+        print(f"Error loading demographic setup from S3: {e}")
+        return None
+
+
+def save_demographic_setup_to_s3(bucket_name, project_key, question_dict, multi_select_field_names=None):
+    """
+    Save demographic field setup for a project to S3.
+
+    question_dict: dict mapping field name (str) -> description (str).
+    multi_select_field_names: list of field names to treat as multi-select (e.g. Race, DisabilitySpecify).
+    """
+    import json
+    key = _demographic_config_key(project_key)
+    payload = {
+        "question_dict": question_dict,
+        "multi_select_field_names": list(multi_select_field_names or []),
+    }
+    body = json.dumps(payload, indent=2)
+    try:
+        s3_client.put_object(Bucket=bucket_name, Key=key, Body=body.encode("utf-8"), ContentType="application/json")
+        return True
+    except Exception as e:
+        print(f"Error saving demographic setup to S3: {e}")
+        return False
 
 
 def list_s3_files(bucket_name, prefix=None):

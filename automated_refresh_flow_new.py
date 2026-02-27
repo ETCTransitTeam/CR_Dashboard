@@ -16,7 +16,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
-from utils import extract_race_labels_from_header, fetch_data, apply_lacmta_agency_filter
+from utils import extract_race_labels_from_header, fetch_data, apply_lacmta_agency_filter, load_demographic_setup_from_s3
 
 warnings.filterwarnings('ignore')
 
@@ -1041,7 +1041,16 @@ def fetch_and_process_data(project,schema):
         low_response_questions_df = create_low_response_report(df)
         refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df, race_label_map)
 
-        demographic_review_df = generate_demographic_summary(df, project_name, race_label_map)
+        # Use admin-configured demographic fields from S3 if available
+        bucket_name = os.getenv('bucket_name')
+        demographic_config = load_demographic_setup_from_s3(bucket_name, project_name) if bucket_name else None
+        demographic_question_dict = demographic_config["question_dict"] if demographic_config else None
+        demographic_multi_select_names = demographic_config.get("multi_select_field_names", []) if demographic_config else []
+        demographic_review_df = generate_demographic_summary(
+            df, project_name, race_label_map,
+            question_dict=demographic_question_dict,
+            multi_select_field_names=demographic_multi_select_names if demographic_question_dict else None,
+        )
 
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
