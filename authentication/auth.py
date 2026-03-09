@@ -57,7 +57,26 @@ def user_connect_to_snowflake():
     )
 
 # schema_value = {'TUCSON': 'tucson_bus','TUCSON RAIL': 'tucson_rail','VTA': 'public', 'UTA': 'uta_rail', 'STL':'stl_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail', 'ACTRANSIT': 'actransit_bus', 'SALEM': 'salem_bus'}
-schema_value = {'LACMTA_FEEDER': 'lacmta_feeder_bus', 'SALEM': 'salem_bus', 'ACTRANSIT': 'actransit_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail'}
+# schema_value = {'LACMTA_FEEDER': 'lacmta_feeder_bus', 'SALEM': 'salem_bus', 'ACTRANSIT': 'actransit_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail'}
+def get_projects():
+    conn = user_connect_to_snowflake()
+    cur = conn.cursor()
+
+    query = """
+    SELECT PROJECT_NAME, BASE_SCHEMA
+    FROM APP_CONFIG.PROJECT_CONFIGS
+    WHERE IS_ACTIVE = TRUE
+    """
+
+    cur.execute(query)
+    projects = dict(cur.fetchall())
+
+    cur.close()
+    conn.close()
+
+    return projects
+
+
 
 # Add custom CSS for styling
 def add_custom_css():
@@ -608,11 +627,13 @@ def check_user_login(email, password):
 def login():
     """Displays a login form and handles authentication."""
     def login_content():
+
+        schema_value = get_projects()
         with st.form(key="login_form"):
             # Email and Password labels will be black if theme textColor is set to black
             email = st.text_input("Email", placeholder="Enter your email address")
             password = st.text_input("Password", type="password", placeholder="Enter your password")
-
+            print("schema_value:", schema_value )  # Debugging line to check the contents of schema_value   
             project = st.selectbox("Select a Project", list(schema_value.keys()))
             # Forgot Password link, right-aligned and red
             st.markdown(
@@ -1515,7 +1536,7 @@ def accounts_management_page():
                                     st.rerun()
                     with action_col2:
                         # Password Update button
-                        if st.button("Update Pwd", key=f"password_{idx}", use_container_width=True):
+                        if st.button("✎ Pw", key=f"password_{idx}", use_container_width=True):
                             st.session_state["password_update_target_email"] = user['email']
                             st.query_params["page"] = "password_update"
                             st.rerun()

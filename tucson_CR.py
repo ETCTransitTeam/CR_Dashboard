@@ -10,7 +10,7 @@ import tempfile
 from automated_refresh_flow_new import fetch_and_process_data, PROJECTS
 from automated_sync_flow_utils import check_all_characters_present, clean_string
 from utils import create_csv, download_csv, render_styled_dataframe, validate_filename, validate_kingelvis_sheet, validate_cr_sheets, validate_details_sheets, upload_file_to_s3, list_s3_files, read_data_dictionary_from_s3, load_demographic_setup_from_s3, save_demographic_setup_to_s3, fetch_table_columns
-from authentication.auth import schema_value,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
+from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -37,6 +37,8 @@ private_key_bytes = private_key.private_bytes(
     format=serialization.PrivateFormat.PKCS8,
     encryption_algorithm=serialization.NoEncryption(),
 )
+
+schema_value = get_projects()
 
 # Helper function to read Excel from S3
 def read_excel_from_s3(bucket_name, file_key, sheet_name):
@@ -136,6 +138,24 @@ else:
                 network_timeout=120
             )
             return conn
+
+        def schema_has_tables(schema_name):
+            """
+            Returns True if the schema has any tables, False if it's empty.
+            """
+            conn = create_snowflake_connection()
+            cur = conn.cursor()
+            
+            try:
+                cur.execute(f"SHOW TABLES IN SCHEMA {schema_name}")
+                tables = cur.fetchall()
+                return len(tables) > 0  # True if any table exists
+            except Exception as e:
+                print(f"Error checking tables in schema {schema_name}: {e}")
+                return False
+            finally:
+                cur.close()
+                conn.close()
 
         def get_agency_names(project):
             """Fetch unique agency names from details file for LACMTA_FEEDER project"""
@@ -606,6 +626,8 @@ else:
                 dict: A dictionary where keys are DataFrame names and values are DataFrames.
             """
             # Snowflake connection details
+            selected_schema = st.session_state.get("schema", None)
+            print("Connecting Snowflake using this schema",selected_schema)
             conn = create_snowflake_connection()
             cur = conn.cursor()
 
@@ -679,6 +701,9 @@ else:
             st.session_state["cache_key"] = 0
         dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"] )
 
+        has_project_data = schema_has_tables(selected_schema)
+        print(f"Dataframes fetched. Any data present? {has_project_data}")
+
         # Access DataFrames from the fetched dataframes dictionary
         wkday_df = dataframes.get('wkday_df', pd.DataFrame())
         wkday_dir_df = dataframes.get('wkday_dir_df', pd.DataFrame())
@@ -730,6 +755,7 @@ else:
             "👥  Demographic Review": "demographic",
             "📊  Demographic Setup": "demographic_setup",
             "⚙️  Accounts Management": "accounts_management",
+            "⚙️  Projects Configuration": "projects_configuration",
             "➕  Create Accounts": "create_accounts",
             "🔐  Password Update": "password_update",
         }
@@ -1404,6 +1430,7 @@ else:
             # Management page mapping
             management_mapping = {
                 "accounts_management": "⚙️  Accounts Management",
+                "projects_configuration": "⚙️  Projects Configuration",
                 "create_accounts": "➕  Create Accounts",
                 "password_update": "🔐  Password Update",
                 "file_management": "📁  File Management",
@@ -1438,14 +1465,17 @@ else:
                     st.query_params["page"] = get_page_key(new_val)
 
             # --- Dashboard dropdown (NO dynamic index) ---
-            st.session_state.sidebar_menu = st.session_state.selected_page
-            st.selectbox(
-                "",
-                menu_items,
-                key="sidebar_menu",
-                label_visibility="collapsed",
-                on_change=on_dashboard_change,
-            )
+            if not has_project_data:
+                st.warning("No data available for the selected project yet. Please check back later or run sync.")
+            else:
+                st.session_state.sidebar_menu = st.session_state.selected_page
+                st.selectbox(
+                    "",
+                    menu_items,
+                    key="sidebar_menu",
+                    label_visibility="collapsed",
+                    on_change=on_dashboard_change,
+                )
 
             # --- Management section for super admins ---
             current_user_email = st.session_state.get("user", {}).get("email", "")
@@ -1462,6 +1492,13 @@ else:
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = "accounts_management"
+                    st.rerun()
+                    
+                if st.button("Projects Configuration", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "projects_configuration"
                     st.rerun()
                 
                 # File Management button
@@ -1501,67 +1538,69 @@ else:
         # === ADD PROFESSIONAL HEADER HERE - REPLACE YOUR CURRENT HEADER ===
         def create_professional_header():
             from zoneinfo import ZoneInfo
-
-            # =====================================================
-            # GET LAST SYNC DATE FROM SNOWFLAKE
-            # =====================================================
-            # Try to get Last_Sync_Date from last_survey_date_df
-            if not last_survey_date_df.empty and 'Last_Sync_Date' in last_survey_date_df.columns:
-                last_sync_value = last_survey_date_df['Last_Sync_Date'].iloc[0]
-                if pd.notna(last_sync_value):
-                    try:
-                        # Convert to datetime - handle both string and datetime objects
-                        last_sync_datetime = pd.to_datetime(last_sync_value, errors='coerce')
-                        
-                        if pd.notna(last_sync_datetime):
-                            # If it's a pandas Timestamp, convert to datetime
-                            if isinstance(last_sync_datetime, pd.Timestamp):
-                                last_sync_datetime = last_sync_datetime.to_pydatetime()
+            if not has_project_data:
+                total_records = 0
+                formatted_date = "Awaiting Data"
+                most_recent_completed_date = None
+            else:
+                # =====================================================
+                # GET LAST SYNC DATE FROM SNOWFLAKE
+                # =====================================================
+                # Try to get Last_Sync_Date from last_survey_date_df
+                if not last_survey_date_df.empty and 'Last_Sync_Date' in last_survey_date_df.columns:
+                    last_sync_value = last_survey_date_df['Last_Sync_Date'].iloc[0]
+                    if pd.notna(last_sync_value):
+                        try:
+                            # Convert to datetime - handle both string and datetime objects
+                            last_sync_datetime = pd.to_datetime(last_sync_value, errors='coerce')
                             
-                            # Convert to America/Chicago timezone if needed
-                            if last_sync_datetime.tzinfo is None:
-                                last_sync_datetime = last_sync_datetime.replace(tzinfo=ZoneInfo("America/Chicago"))
+                            if pd.notna(last_sync_datetime):
+                                # If it's a pandas Timestamp, convert to datetime
+                                if isinstance(last_sync_datetime, pd.Timestamp):
+                                    last_sync_datetime = last_sync_datetime.to_pydatetime()
+                                
+                                # Convert to America/Chicago timezone if needed
+                                if last_sync_datetime.tzinfo is None:
+                                    last_sync_datetime = last_sync_datetime.replace(tzinfo=ZoneInfo("America/Chicago"))
+                                else:
+                                    last_sync_datetime = last_sync_datetime.astimezone(ZoneInfo("America/Chicago"))
+                                
+                                formatted_date = last_sync_datetime.strftime("%Y-%m-%d %H:%M:%S %Z")
                             else:
-                                last_sync_datetime = last_sync_datetime.astimezone(ZoneInfo("America/Chicago"))
-                            
-                            formatted_date = last_sync_datetime.strftime("%Y-%m-%d %H:%M:%S %Z")
-                        else:
-                            # Fallback to current time if parsing fails
+                                # Fallback to current time if parsing fails
+                                last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
+                                formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
+                        except Exception as e:
+                            # Fallback to current time if any error occurs
+                            print(f"Error parsing Last_Sync_Date: {e}")
                             last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
                             formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
-                    except Exception as e:
-                        # Fallback to current time if any error occurs
-                        print(f"Error parsing Last_Sync_Date: {e}")
+                    else:
+                        # Fallback to current time if value is NaN
                         last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
                         formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
                 else:
-                    # Fallback to current time if value is NaN
+                    # Fallback to current time if dataframe is empty or column doesn't exist
                     last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
                     formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
-            else:
-                # Fallback to current time if dataframe is empty or column doesn't exist
-                last_refresh_utc = datetime.datetime.now(ZoneInfo("America/Chicago"))
-                formatted_date = last_refresh_utc.strftime("%Y-%m-%d %H:%M:%S %Z")
 
-            # === DATE SETUP ===
-            current_date = datetime.datetime.now()
+                # === DATE SETUP ===
+                current_date = datetime.datetime.now()
 
-            # Get most recent "Completed" date
-            if 'kcata' in selected_project or 'kcata_rail' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
+                # Get most recent "Completed" date
                 if 'LocalTime' in wkday_raw_df.columns and 'LocalTime' in wkend_raw_df.columns:
                     completed_dates = pd.concat([wkday_raw_df['LocalTime'], wkend_raw_df['LocalTime']])
                 else:
                     # Fallback to DATE_SUBMITTED if LocalTime doesn't exist
                     completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
-            else:
-                completed_dates = pd.concat([wkday_raw_df['Completed'], wkend_raw_df['Completed']])
-            most_recent_completed_date = pd.to_datetime(completed_dates).max()
 
-            # Determine total records (based on current page)
-            if current_page == "weekend":
-                total_records = int(wkend_df["# of Surveys"].sum())
-            else:
-                total_records = int(wkday_df["# of Surveys"].sum())
+                most_recent_completed_date = pd.to_datetime(completed_dates).max()
+
+                # Determine total records (based on current page)
+                if current_page == "weekend":
+                    total_records = int(wkend_df["# of Surveys"].sum())
+                else:
+                    total_records = int(wkday_df["# of Surveys"].sum())
 
             # === STYLING ===
             st.markdown("""
@@ -1579,11 +1618,11 @@ else:
                 margin-top: -80px;
             }
            
-             .professional-header::before {
+            .professional-header::before {
                 content: '';
                 position: absolute;
                 inset: 0;
-                background: rgb(0, 104, 148);;
+                background: rgb(0, 104, 148);
                 z-index: 0;
             }
 
@@ -1691,7 +1730,9 @@ else:
                         </div>
                         <div class="metric-card">
                             <p class="metric-label">Last Completed</p>
-                            <p class="metric-value">{most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                            <p class="metric-value">
+                            {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S') if most_recent_completed_date else "Awaiting Data"}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -1712,7 +1753,6 @@ else:
                 st.success(f"✅ Successfully switched to **{success_project}**! Loading new data...")
             
             # Auto-remove after 2 seconds
-            import time
             time.sleep(2)
             success_placeholder.empty()
             
@@ -5668,6 +5708,122 @@ else:
                     else:
                         st.warning("Select at least one field before saving.")
 
+        def projects_configuration_page():
+            st.header("Add New Project")
+
+            with st.form("add_project_form"):
+                project_name = st.text_input("Project Name")
+                schema_name = st.text_input("Schema Name")
+
+                elvis_db = st.text_input("ELVIS Database")
+                elvis_table = st.text_input("ELVIS Table")
+
+                main_db = st.text_input("Main Database")
+                main_table = st.text_input("Main Table")
+
+                details_file = st.text_input("Details File")
+                cr_file = st.text_input("CR File")
+                kingelvis_file = st.text_input("KingElvis File")
+
+                submit = st.form_submit_button("Save Project")
+
+            if submit:
+                # Strip leading/trailing spaces
+                project_name = project_name.strip()
+                schema_name = schema_name.strip()
+                elvis_db = elvis_db.strip()
+                elvis_table = elvis_table.strip()
+                main_db = main_db.strip()
+                main_table = main_table.strip()
+                details_file = details_file.strip()
+                cr_file = cr_file.strip()
+                kingelvis_file = kingelvis_file.strip()
+
+                # Required fields (including main_db and main_table)
+                missing = []
+                if not project_name:
+                    missing.append("Project Name")
+                if not schema_name:
+                    missing.append("Schema Name")
+                if not elvis_db:
+                    missing.append("ELVIS Database")
+                if not elvis_table:
+                    missing.append("ELVIS Table")
+                if not main_db:
+                    missing.append("Main Database")
+                if not main_table:
+                    missing.append("Main Table")
+                if not details_file:
+                    missing.append("Details File")
+                if not cr_file:
+                    missing.append("CR File")
+                if not kingelvis_file:
+                    missing.append("KingElvis File")
+
+                if missing:
+                    st.error(
+                        "Please fill all required fields (no leading/trailing spaces): "
+                        + ", ".join(missing)
+                    )
+                    st.stop()
+
+                try:
+                    conn = create_snowflake_connection()
+                    cur = conn.cursor()
+
+                    create_schema_query = f"CREATE SCHEMA IF NOT EXISTS {schema_name}"
+                    cur.execute(create_schema_query)
+                    st.info(f"📘 Schema '{schema_name}' created at the database level")
+
+                    query = """
+                        INSERT INTO APP_CONFIG.PROJECT_CONFIGS
+                        (
+                            PROJECT_NAME,
+                            BASE_SCHEMA,
+                            ELVIS_DATABASE,
+                            ELVIS_TABLE,
+                            MAIN_DATABASE,
+                            MAIN_TABLE,
+                            DETAILS_FILE_NAME,
+                            CR_FILE_NAME,
+                            KINGELVIS_FILE_NAME
+                        )
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """
+
+                    cur.execute(
+                        query,
+                        (
+                            project_name,
+                            schema_name,
+                            elvis_db,
+                            elvis_table,
+                            main_db,
+                            main_table,
+                            details_file,
+                            cr_file,
+                            kingelvis_file,
+                        ),
+                    )
+
+                    conn.commit()
+                    cur.close()
+                    conn.close()
+
+                    st.success("✅ Project added successfully")
+                    st.balloons()  # celebratory balloons on success
+                    time.sleep(2)  # small delay to show success message before rerun
+                    st.rerun()  # rerun to refresh project list in sidebar
+                except Exception as e:
+                    # Roll back if something went wrong
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    st.error(f"❌ Failed to add project: {e}")
+
+
+
         # Layout columns
         header_col1, header_col2, header_col3 = st.columns([2, 2, 1])
 
@@ -6091,6 +6247,13 @@ else:
                     st.error("❌ Access Denied: This page is only accessible to super administrators.")
                 else:
                     accounts_management_page()
+            elif current_page == "projects_configuration":
+                # Super admin check in routing
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    projects_configuration_page()
             elif current_page == "create_accounts":
                 # Super admin check in routing
                 current_user_email = st.session_state.get("user", {}).get("email", "")
@@ -6151,10 +6314,15 @@ else:
                     wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
                 
                 try:
-                    main_page(wkday_dir_df[wkday_dir_columns],
-                            wkday_time_df[wkday_time_columns],
-                            wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
-                    
+                    if not has_project_data:
+                        st.warning("⚠️ No project data available yet.")
+                        st.info("This project schema exists but no datasets are loaded yet.")
+                        st.stop()
+                    else:
+                        main_page(wkday_dir_df[wkday_dir_columns],
+                                wkday_time_df[wkday_time_columns],
+                                wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+                        
                 except KeyError as e:
                     st.error(f"⚠️ Missing columns in data: {e}")
                     st.error("Available columns in weekday direction data:")

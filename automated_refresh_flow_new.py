@@ -36,171 +36,241 @@ private_key_bytes = private_key.private_bytes(
     encryption_algorithm=serialization.NoEncryption(),
 )
 
-PROJECTS = {
-    "TUCSON": {
-        "databases": {
-                    "main": {
-                        "database": os.getenv("TUCSON_DATABASE_NAME"),
-                        "table": os.getenv("TUCSON_TABLE_NAME")
-                    },
-                    "elvis": {
-                        "database": os.getenv("TUCSON_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("TUCSON_ELVIS_TABLE_NAME")
-                    }
+# PROJECTS = {
+#     "TUCSON": {
+#         "databases": {
+#                     "main": {
+#                         "database": os.getenv("TUCSON_DATABASE_NAME"),
+#                         "table": os.getenv("TUCSON_TABLE_NAME")
+#                     },
+#                     "elvis": {
+#                         "database": os.getenv("TUCSON_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("TUCSON_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_TUCSON_AZ_od_excel.xlsx",
+#             "cr": "TUCSON_AZ_CR.xlsx",
+#             'kingelvis':'Tucson_az_2025_KINGElvis.xlsx'
+#         }
+#     },
+#     "TUCSON RAIL": {
+#         "databases": {
+#                     "main": {
+#                         "database": os.getenv("TUCSON_DATABASE_NAME"),
+#                         "table": os.getenv("TUCSON_TABLE_NAME")
+#                     },
+#                     "elvis": {
+#                         "database": os.getenv("TUCSON_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("TUCSON_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_TUCSON_AZ_od_excel.xlsx",
+#             "cr": "TUCSON_AZ_CR.xlsx",
+#             'kingelvis':'Tucson_az_2025_KINGElvis.xlsx'
+#         }
+#     },
+#     "UTA": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("UTA_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("UTA_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_project_od_excel_UTA.xlsx",
+#             "cr": "UTA_SL_CR.xlsx"
+#         }
+#     },
+#     "VTA": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("VTA_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("VTA_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_vta_CA_od_excel.xlsx",
+#             "cr": "VTA_CA_CR.xlsx",
+#             'kingelvis':'VTA_CA_OB_KINGElvis.xlsx'
+#         }
+#     },
+#     "STL": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("STL_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("STL_ELVIS_TABLE_NAME")
+#                     },
+#                     "baby_elvis": {
+#                         "database": os.getenv("STL_BABY_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("STL_BABY_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_saint_louis_MO_od_excel.xlsx",
+#             "cr": "STL_MO_CR.xlsx",
+#             'kingelvis':'STL_MO_2025_KINGElvis.xlsx'
+#         }
+#     },
+#     "KCATA": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
+#                     },
+#                     "baby_elvis": {
+#                         "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_KCATA_od_excel.xlsx",
+#             "cr": "KCATA_MO_CR_UPDATE.xlsx",
+#             'kingelvis':'KCATA_2025_KINGElvis.xlsx'
+#         }
+#     },
+#     "KCATA RAIL": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
+#                     },
+#                     "baby_elvis": {
+#                         "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_KCATA_od_excel.xlsx",
+#             "cr": "KCATA_MO_CR_UPDATE.xlsx",
+#             'kingelvis':'KCATA_2025_KINGElvis.xlsx'
+#         }
+#     },
+#     "ACTRANSIT": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("ACTRANSIT_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("ACTRANSIT_ELVIS_TABLE_NAME")
+#                     },
+#                     "main": {
+#                         "database": os.getenv("ACTRANSIT_BABY_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("ACTRANSIT_BABY_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_AC_Transit_od_excel.xlsx",
+#             "cr": "ACTRANSIT_CA_CR.xlsx",
+#             'kingelvis':'ACT_2025_KINGElvis.xlsx'
+#         }
+#     },
+#     "SALEM": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("SALEM_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("SALEM_ELVIS_TABLE_NAME")
+#                     },
+#                     "main": {
+#                         "database": os.getenv("SALEM_BABY_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("SALEM_BABY_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_project_od_Salem.xlsx",
+#             "cr": "SALEM_OR_CR_UPDATE.xlsx",
+#             'kingelvis':'SALEM_OR_2025_KINGElvis.xlsx'
+#         }
+#     },
+#     "LACMTA_FEEDER": {
+#         "databases": {
+#                     "elvis": {
+#                         "database": os.getenv("LACMTA_FEEDER_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("LACMTA_FEEDER_ELVIS_TABLE_NAME")
+#                     },
+#                     "main": {
+#                         "database": os.getenv("LACMTA_FEEDER_BABY_ELVIS_DATABASE_NAME"),
+#                         "table": os.getenv("LACMTA_FEEDER_BABY_ELVIS_TABLE_NAME")
+#                     }
+#                 },
+#         "files": {
+#             "details": "details_lacmta-feeder_733524_od_excel.xlsx",
+#             "cr": "LACMTA_FEEDER_CR.xlsx",
+#             'kingelvis':'LACMTA_FEEDER_2025_KINGElvis.xlsx'
+#         }
+#     }
+# }
+def create_snowflake_connection(schema=None):
+
+    conn = snowflake.connector.connect(
+        user=os.getenv('SNOWFLAKE_USER'),
+        private_key=private_key_bytes,
+        account=os.getenv('SNOWFLAKE_ACCOUNT'),
+        warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
+        database=os.getenv('SNOWFLAKE_DATABASE'),
+        schema=schema,
+        authenticator="SNOWFLAKE_JWT",
+        role=os.getenv('SNOWFLAKE_ROLE'),
+        network_timeout=120
+    )
+
+    return conn
+
+def load_projects_from_db():
+    conn = create_snowflake_connection()
+    cur = conn.cursor()
+
+    query = """
+    SELECT
+        PROJECT_NAME,
+        BASE_SCHEMA,
+        ELVIS_DATABASE,
+        ELVIS_TABLE,
+        MAIN_DATABASE,
+        MAIN_TABLE,
+        DETAILS_FILE_NAME,
+        CR_FILE_NAME,
+        KINGELVIS_FILE_NAME
+    FROM APP_CONFIG.PROJECT_CONFIGS
+    WHERE IS_ACTIVE = TRUE
+    """
+    cur.execute(query)
+    projects = {}
+    for row in cur.fetchall():
+        (
+            project,
+            schema,
+            elvis_db,
+            elvis_table,
+            main_db,
+            main_table,
+            details_file,
+            cr_file,
+            king_file
+        ) = row
+
+        projects[project] = {
+            "schema": schema,
+            "databases": {
+                "elvis": {
+                    "database": elvis_db,
+                    "table": elvis_table
                 },
-        "files": {
-            "details": "details_TUCSON_AZ_od_excel.xlsx",
-            "cr": "TUCSON_AZ_CR.xlsx",
-            'kingelvis':'Tucson_az_2025_KINGElvis.xlsx'
+                "main": {
+                    "database": main_db,
+                    "table": main_table
+                }
+            },
+            "files": {
+                "details": details_file,
+                "cr": cr_file,
+                "kingelvis": king_file
+            }
         }
-    },
-    "TUCSON RAIL": {
-        "databases": {
-                    "main": {
-                        "database": os.getenv("TUCSON_DATABASE_NAME"),
-                        "table": os.getenv("TUCSON_TABLE_NAME")
-                    },
-                    "elvis": {
-                        "database": os.getenv("TUCSON_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("TUCSON_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_TUCSON_AZ_od_excel.xlsx",
-            "cr": "TUCSON_AZ_CR.xlsx",
-            'kingelvis':'Tucson_az_2025_KINGElvis.xlsx'
-        }
-    },
-    "UTA": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("UTA_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("UTA_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_project_od_excel_UTA.xlsx",
-            "cr": "UTA_SL_CR.xlsx"
-        }
-    },
-    "VTA": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("VTA_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("VTA_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_vta_CA_od_excel.xlsx",
-            "cr": "VTA_CA_CR.xlsx",
-            'kingelvis':'VTA_CA_OB_KINGElvis.xlsx'
-        }
-    },
-    "STL": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("STL_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("STL_ELVIS_TABLE_NAME")
-                    },
-                    "baby_elvis": {
-                        "database": os.getenv("STL_BABY_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("STL_BABY_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_saint_louis_MO_od_excel.xlsx",
-            "cr": "STL_MO_CR.xlsx",
-            'kingelvis':'STL_MO_2025_KINGElvis.xlsx'
-        }
-    },
-    "KCATA": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
-                    },
-                    "baby_elvis": {
-                        "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_KCATA_od_excel.xlsx",
-            "cr": "KCATA_MO_CR_UPDATE.xlsx",
-            'kingelvis':'KCATA_2025_KINGElvis.xlsx'
-        }
-    },
-    "KCATA RAIL": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("KCATA_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("KCATA_ELVIS_TABLE_NAME")
-                    },
-                    "baby_elvis": {
-                        "database": os.getenv("KCATA_BABY_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("KCATA_BABY_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_KCATA_od_excel.xlsx",
-            "cr": "KCATA_MO_CR_UPDATE.xlsx",
-            'kingelvis':'KCATA_2025_KINGElvis.xlsx'
-        }
-    },
-    "ACTRANSIT": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("ACTRANSIT_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("ACTRANSIT_ELVIS_TABLE_NAME")
-                    },
-                    "main": {
-                        "database": os.getenv("ACTRANSIT_BABY_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("ACTRANSIT_BABY_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_AC_Transit_od_excel.xlsx",
-            "cr": "ACTRANSIT_CA_CR.xlsx",
-            'kingelvis':'ACT_2025_KINGElvis.xlsx'
-        }
-    }
-    ,
-    "SALEM": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("SALEM_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("SALEM_ELVIS_TABLE_NAME")
-                    },
-                    "main": {
-                        "database": os.getenv("SALEM_BABY_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("SALEM_BABY_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_project_od_Salem.xlsx",
-            "cr": "SALEM_OR_CR_UPDATE.xlsx",
-            'kingelvis':'SALEM_OR_2025_KINGElvis.xlsx'
-        }
-    }
-    ,
-    "LACMTA_FEEDER": {
-        "databases": {
-                    "elvis": {
-                        "database": os.getenv("LACMTA_FEEDER_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("LACMTA_FEEDER_ELVIS_TABLE_NAME")
-                    },
-                    "main": {
-                        "database": os.getenv("LACMTA_FEEDER_BABY_ELVIS_DATABASE_NAME"),
-                        "table": os.getenv("LACMTA_FEEDER_BABY_ELVIS_TABLE_NAME")
-                    }
-                },
-        "files": {
-            "details": "details_lacmta-feeder_733524_od_excel.xlsx",
-            "cr": "LACMTA_FEEDER_CR.xlsx",
-            'kingelvis':'LACMTA_FEEDER_2025_KINGElvis.xlsx'
-        }
-    }
-}
+    cur.close()
+    conn.close()
+    return projects
+
+PROJECTS = load_projects_from_db()
 
 
 def fetch_and_process_data(project,schema):
@@ -1367,23 +1437,6 @@ def fetch_and_process_data(project,schema):
         add_route_and_station_info(wkend_route_direction_df, wkend_overall_df, detail_df_stops, detail_df_xfers)
         add_route_and_station_info(wkday_stationwise_route_df, wkday_overall_df, detail_df_stops, detail_df_xfers)
         add_route_and_station_info(wkend_stationwise_route_df, wkend_overall_df, detail_df_stops, detail_df_xfers)
-
-
-    def create_snowflake_connection():
-        print("Creating connection with snowflake")
-        conn = snowflake.connector.connect(
-            user=os.getenv('SNOWFLAKE_USER'),
-            private_key=private_key_bytes,
-            account=os.getenv('SNOWFLAKE_ACCOUNT'),
-            warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
-            database=os.getenv('SNOWFLAKE_DATABASE'),
-            authenticator="SNOWFLAKE_JWT",
-            schema=schema,
-            role=os.getenv('SNOWFLAKE_ROLE'),
-            network_timeout=120
-        )
-        print("Connection successfull")
-        return conn
         
 
     def create_tables_and_insert_data(dataframes, table_info):
@@ -1398,7 +1451,7 @@ def fetch_and_process_data(project,schema):
         }
         
         # Create Snowflake connection
-        conn = create_snowflake_connection()
+        conn = create_snowflake_connection(schema)
         cur = conn.cursor()
 
         for sheet_name, table_name in table_info.items():
