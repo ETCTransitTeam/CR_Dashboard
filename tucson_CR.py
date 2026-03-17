@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 import snowflake.connector
 import tempfile
-from automated_refresh_flow_new import fetch_and_process_data, PROJECTS
+from automated_refresh_flow_new import fetch_and_process_data, PROJECTS, get_frontend_time_period_columns, refresh_projects
 from automated_sync_flow_utils import check_all_characters_present, clean_string
 from utils import create_csv, download_csv, render_styled_dataframe, validate_filename, validate_kingelvis_sheet, validate_cr_sheets, validate_details_sheets, upload_file_to_s3, list_s3_files, read_data_dictionary_from_s3, load_demographic_setup_from_s3, save_demographic_setup_to_s3, fetch_table_columns
 from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 import time
 from utils import apply_lacmta_agency_filter
 import boto3
-from io import BytesIO
+from io import BytesIO, StringIO
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -139,20 +139,29 @@ else:
             )
             return conn
 
-        def schema_has_tables(schema_name):
+        def table_exists(schema_name, table_name):
             """
-            Returns True if the schema has any tables, False if it's empty.
+            Returns True if the specific table exists in the schema.
             """
             conn = create_snowflake_connection()
             cur = conn.cursor()
-            
+
             try:
-                cur.execute(f"SHOW TABLES IN SCHEMA {schema_name}")
-                tables = cur.fetchall()
-                return len(tables) > 0  # True if any table exists
+                query = f"""
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_SCHEMA = '{schema_name.upper()}'
+                AND TABLE_NAME = '{table_name.upper()}'
+                """
+                cur.execute(query)
+                result = cur.fetchone()[0]
+
+                return result > 0
+
             except Exception as e:
-                print(f"Error checking tables in schema {schema_name}: {e}")
+                print(f"Error checking table {table_name} in schema {schema_name}: {e}")
                 return False
+
             finally:
                 cur.close()
                 conn.close()
@@ -701,7 +710,7 @@ else:
             st.session_state["cache_key"] = 0
         dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"] )
 
-        has_project_data = schema_has_tables(selected_schema)
+        has_project_data = table_exists(selected_schema, "WKDAY_DIR_COMPARISON")
         print(f"Dataframes fetched. Any data present? {has_project_data}")
 
         # Access DataFrames from the fetched dataframes dictionary
@@ -1419,6 +1428,16 @@ else:
                 if 'rail' in selected_schema.lower():
                     menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
 
+                # New/unknown projects (e.g. LACMTA_TEST_4): show full dashboard menu when nothing above matched
+                if len(menu_items) == 4 and selected_project:
+                    menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
+                        "🗺️  Location Maps", "👥  Demographic Review"])
+                    if 'rail' not in selected_schema.lower():
+                        menu_items.append("↺   Clone Records")
+                    menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
+                    if 'rail' in selected_schema.lower():
+                        menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
+
             # --- Session State ---
             if "selected_page" not in st.session_state:
                 st.session_state.selected_page = "🏠︎   Home"
@@ -1809,6 +1828,62 @@ else:
 
             return matching_columns
 
+        def get_dynamic_direction_columns(dir_df):
+            """For new projects: derive direction-level columns from dataframe. Preserves order: base, optional day/station, (n) Collect/Remain, (n) Goal."""
+            base = [c for c in ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED'] if c in dir_df.columns]
+            for opt in ['STATION_ID', 'Day', 'DAY']:
+                if opt in dir_df.columns and opt not in base:
+                    base.append(opt)
+                    break
+            period_pattern = re.compile(r'^\((\d+)\) (Collect|Remain|Goal)$')
+            matches = [(c, period_pattern.match(c)) for c in dir_df.columns if period_pattern.match(c)]
+            if not matches:
+                return base
+            periods = sorted(set(int(m.group(1)) for _, m in matches))
+            ordered = []
+            for n in periods:
+                for suffix in ['Collect', 'Remain', 'Goal']:
+                    col = f'({n}) {suffix}'
+                    if col in dir_df.columns:
+                        ordered.append(col)
+            return base + ordered
+
+        def get_dynamic_time_columns(time_df):
+            """For new projects: derive time columns from time dataframe."""
+            fixed = ['Display_Text', 'Original Text', 'Time Range']
+            cols = [c for c in fixed if c in time_df.columns]
+            numeric_cols = [c for c in time_df.columns if str(c).strip().isdigit()]
+            numeric_cols.sort(key=lambda x: int(x))
+            return cols + numeric_cols
+
+        def get_dynamic_route_level_columns(route_df):
+            """For new projects: derive route-level columns (ROUTE_SURVEYEDCode, ROUTE_SURVEYED, optional day, Goal, # of Surveys, Remaining)."""
+            base = [c for c in ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED'] if c in route_df.columns]
+            for opt in ['Day', 'DAY']:
+                if opt in route_df.columns:
+                    base.append(opt)
+                    break
+            for c in ['Route Level Goal', '# of Surveys', 'Remaining']:
+                if c in route_df.columns:
+                    base.append(c)
+            return base
+
+        def get_dynamic_station_columns(station_df):
+            """For new projects: derive station-wise columns from dataframe."""
+            base = [c for c in ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'STATION_ID', 'STATION_NAME'] if c in station_df.columns]
+            period_pattern = re.compile(r'^\((\d+)\) (Collect|Remain|Goal)$')
+            matches = [(c, period_pattern.match(c)) for c in station_df.columns if period_pattern.match(c)]
+            if not matches:
+                return base
+            periods = sorted(set(int(m.group(1)) for _, m in matches))
+            ordered = []
+            for n in periods:
+                for suffix in ['Collect', 'Remain', 'Goal']:
+                    col = f'({n}) {suffix}'
+                    if col in station_df.columns:
+                        ordered.append(col)
+            return base + ordered
+
         def main_page(data1, data2, data3):
             """Main page display with dynamic data"""
             # -------------------------------
@@ -2015,34 +2090,44 @@ else:
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
                                         '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
+                wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
             elif 'tucson' in selected_project:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
             elif 'lacmta_feeder' in selected_project:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
             elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
                 wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
                                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
                                         '(5) Collect', '(5) Remain',
                                         '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
                 wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
+                wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
             else:
-                wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
+                # New/unknown projects: derive columns from data dynamically
+                wkday_dir_columns = get_dynamic_direction_columns(wkday_dir_df)
+                wkday_time_columns = get_dynamic_time_columns(wkday_time_df)
+                wkday_df_columns = get_dynamic_route_level_columns(wkday_df)
+                if not wkday_dir_columns or not wkday_time_columns:
+                    st.warning("Could not detect direction or time columns for this project. Showing available columns.")
+                    wkday_dir_columns = wkday_dir_columns or list(wkday_dir_df.columns)
+                    wkday_time_columns = wkday_time_columns or list(wkday_time_df.columns)
+                if not wkday_df_columns:
+                    wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
                 
             # day_column_present = check_all_characters_present(wkday_dir_df, ["day"])
             # if day_column_present:
             #     wkday_dir_columns.insert(2,day_column_present[0])
             main_page(wkday_dir_df[wkday_dir_columns],
                         wkday_time_df[wkday_time_columns],
-                        wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+                        wkday_df[[c for c in wkday_df_columns if c in wkday_df.columns]])
             if st.button("Home Page"):
                 st.query_params["page"] = "main"
                 st.rerun()
@@ -2105,19 +2190,16 @@ else:
                 wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
                 wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
             else:
-                if day_column_present:
-                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', day_column_present[0],'(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                            '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                else:
-                    wkend_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                        '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                        '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                wkend_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-                if route_level_day_column_present:
-                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED',route_level_day_column_present,'Route Level Goal', '# of Surveys', 'Remaining']
-                else:
-                    wkend_df_columns=['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','Route Level Goal', '# of Surveys', 'Remaining']
+                # New/unknown projects: derive columns from data dynamically
+                wkend_dir_columns = get_dynamic_direction_columns(wkend_dir_df)
+                wkend_time_columns = get_dynamic_time_columns(wkend_time_df)
+                wkend_df_columns = get_dynamic_route_level_columns(wkend_df)
+                if not wkend_dir_columns:
+                    wkend_dir_columns = list(wkend_dir_df.columns)
+                if not wkend_time_columns:
+                    wkend_time_columns = list(wkend_time_df.columns)
+                if not wkend_df_columns:
+                    wkend_df_columns = list(wkend_df.columns)
 
             main_page(wkend_dir_df[wkend_dir_columns],
                     wkend_time_df[wkend_time_columns],
@@ -2140,10 +2222,11 @@ else:
                                     '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                                      '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
             else:
-                wkday_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-                    '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-                    '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-            filtered_df = filter_dataframe(wkday_stationwise_df[wkday_stationwise_columns], search_query)
+                # New/unknown projects: derive station columns from data dynamically
+                wkday_stationwise_columns = get_dynamic_station_columns(wkday_stationwise_df)
+                if not wkday_stationwise_columns:
+                    wkday_stationwise_columns = list(wkday_stationwise_df.columns)
+            filtered_df = filter_dataframe(wkday_stationwise_df[[c for c in wkday_stationwise_columns if c in wkday_stationwise_df.columns]], search_query)
 
             # render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
             st.dataframe(filtered_df, use_container_width=True, hide_index=True)
@@ -2163,11 +2246,12 @@ else:
                                     '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
                                      '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
             else:
-                wkend_stationwise_columns=[ 'ROUTE_SURVEYEDCode','ROUTE_SURVEYED','STATION_ID','STATION_NAME', '(0) Collect', '(0) Remain', '(1) Collect', '(1) Remain',
-                    '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-                    '(0) Goal', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+                # New/unknown projects: derive station columns from data dynamically
+                wkend_stationwise_columns = get_dynamic_station_columns(wkend_stationwise_df)
+                if not wkend_stationwise_columns:
+                    wkend_stationwise_columns = list(wkend_stationwise_df.columns)
 
-            filtered_df = filter_dataframe(wkend_stationwise_df[wkend_stationwise_columns], search_query)
+            filtered_df = filter_dataframe(wkend_stationwise_df[[c for c in wkend_stationwise_columns if c in wkend_stationwise_df.columns]], search_query)
 
             # render_aggrid(filtered_df,500,'ROUTE_SURVEYEDCode',1)
             st.dataframe(filtered_df, use_container_width=True, hide_index=True)
@@ -5141,6 +5225,9 @@ else:
                 st.error("❌ Access Denied: This page is only accessible to super administrators.")
                 return
             
+            # Refresh project list from DB so newly added projects appear in dropdown
+            projects = refresh_projects()
+            
             # Initialize session state for file management
             if "file_mgmt_upload_key" not in st.session_state:
                 st.session_state.file_mgmt_upload_key = 0
@@ -5150,7 +5237,7 @@ else:
                 st.session_state.file_mgmt_upload_key += 1
             
             # ---- Project selection ----
-            available_projects = sorted(PROJECTS.keys())
+            available_projects = sorted(projects.keys())
             selected_project = st.selectbox(
                 "Select Project",
                 options=available_projects,
@@ -5180,8 +5267,8 @@ else:
             
             file_type = file_type_map[file_type_label]
             
-            # Get expected filename from PROJECTS config
-            project_config = PROJECTS.get(selected_project, {})
+            # Get expected filename from project config
+            project_config = projects.get(selected_project, {})
             expected_filename = project_config.get("files", {}).get(file_type)
             
             if not expected_filename:
@@ -5215,7 +5302,7 @@ else:
             try:
                 # ---- Filename validation ----
                 is_valid_name, expected_name = validate_filename(
-                    selected_project, file_type, uploaded_file, PROJECTS
+                    selected_project, file_type, uploaded_file, projects
                 )
                 
                 if not is_valid_name:
@@ -5522,7 +5609,10 @@ else:
                 st.error("❌ S3 bucket not configured (bucket_name).")
                 return
 
-            available_projects = sorted(PROJECTS.keys())
+            # Refresh project list from DB so newly added projects appear in dropdown
+            projects = refresh_projects()
+
+            available_projects = sorted(projects.keys())
             selected_project = st.selectbox(
                 "Select Project",
                 options=available_projects,
@@ -5533,7 +5623,7 @@ else:
                 st.warning("No projects available.")
                 return
 
-            project_config = PROJECTS.get(selected_project, {})
+            project_config = projects.get(selected_project, {})
             details_file = project_config.get("files", {}).get("details")
             if not details_file:
                 st.error(f"❌ Project '{selected_project}' has no Details file configured.")
@@ -5555,7 +5645,7 @@ else:
             # Match: clean both (remove _, [], spaces, #, lower) then compare (same as check_all_characters_present)
             # -----------------------
             def get_project_database_columns(project):
-                project_config = PROJECTS.get(project, {})
+                project_config = projects.get(project, {})
                 dbs = project_config.get("databases", {})
                 elvis_config = dbs.get("elvis")
                 if not elvis_config:
@@ -5711,6 +5801,26 @@ else:
         def projects_configuration_page():
             st.header("Add New Project")
 
+            # Time period config: Load/Clear buttons must be outside st.form (st.button not allowed inside form)
+            if "time_period_config_table" not in st.session_state:
+                st.session_state["time_period_config_table"] = None
+            st.markdown("**Time Period Config (optional)**")
+            load_ex_col, clear_col, _ = st.columns([1, 1, 2])
+            with load_ex_col:
+                if st.button("Load Example Table", key="load_time_period_example"):
+                    example_data = {
+                        "TIME_ON[Code]": ["AM1", "AM2", "AM3", "AM4", "AM5", "AM6", "MID1", "MID2", "MID3", "MID4", "MID5", "MID6", "PM1", "PM2", "PM3", "EV1", "EV2", "EV3", "EV4"],
+                        "TIME_ON": ["Before 5:00 am", "5:00 am - 6:00 am", "6:00 am - 7:00 am", "7:00 am - 8:00 am", "8:00 am - 9:00 am", "9:00 am - 10:00 am", "10:00 am - 11:00 am", "11:00 am - 12:00 pm", "12:00 pm - 1:00 pm", "1:00 pm - 2:00 pm", "2:00 pm - 3:00 pm", "3:00 pm - 4:00 pm", "4:00 pm - 5:00 pm", "5:00 pm - 6:00 pm", "6:00 pm - 7:00 pm", "7:00 pm - 8:00 pm", "8:00 pm - 9:00 pm", "9:00 pm - 10:00 pm", "After 10:00 pm"],
+                        "TIME_PERIOD[Code]": [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4],
+                        "TIME_PERIOD": ["AM PEAK", "AM PEAK", "AM PEAK", "AM PEAK", "AM PEAK", "AM PEAK", "MIDDAY", "MIDDAY", "MIDDAY", "MIDDAY", "MIDDAY", "MIDDAY", "PM PEAK", "PM PEAK", "PM PEAK", "EVENING", "EVENING", "EVENING", "EVENING"]
+                    }
+                    st.session_state["time_period_config_table"] = pd.DataFrame(example_data)
+                    st.rerun()
+            with clear_col:
+                if st.button("Clear", key="clear_time_period_table"):
+                    st.session_state["time_period_config_table"] = None
+                    st.rerun()
+
             with st.form("add_project_form"):
                 project_name = st.text_input("Project Name")
                 schema_name = st.text_input("Schema Name")
@@ -5724,6 +5834,38 @@ else:
                 details_file = st.text_input("Details File")
                 cr_file = st.text_input("CR File")
                 kingelvis_file = st.text_input("KingElvis File")
+
+                st.markdown("---")
+                st.markdown("**Time Period Config (optional)**")
+                st.caption("Paste table data with columns: TIME_ON[Code], TIME_ON, TIME_PERIOD[Code], TIME_PERIOD. OPPO_TIME[CODE] column will be ignored if present. Leave empty to use built-in defaults.")
+                
+                # Text area for pasting tab-separated or comma-separated table data
+                time_period_table_input = st.text_area(
+                    "Time period config (Table - paste tab or comma separated)",
+                    value="",
+                    height=220,
+                    placeholder="TIME_ON[Code]\tTIME_ON\tTIME_PERIOD[Code]\tTIME_PERIOD\nAM1\tBefore 5:00 am\t1\tAM PEAK\nAM2\t5:00 am - 6:00 am\t1\tAM PEAK",
+                    key="time_period_config_table_input",
+                )
+                
+                # Parse the input if provided
+                time_period_df = None
+                if time_period_table_input and time_period_table_input.strip():
+                    try:
+                        # Try tab-separated first, then comma-separated
+                        if '\t' in time_period_table_input:
+                            time_period_df = pd.read_csv(StringIO(time_period_table_input), sep='\t')
+                        else:
+                            time_period_df = pd.read_csv(StringIO(time_period_table_input), sep=',')
+                        
+                        st.session_state["time_period_config_table"] = time_period_df
+                    except Exception as e:
+                        st.warning(f"Could not parse table data: {e}. Please check the format.")
+                        time_period_df = None
+                
+                # Display parsed table if available
+                if st.session_state.get("time_period_config_table") is not None:
+                    st.dataframe(st.session_state["time_period_config_table"], use_container_width=True)
 
                 submit = st.form_submit_button("Save Project")
 
@@ -5790,7 +5932,6 @@ else:
                         )
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """
-
                     cur.execute(
                         query,
                         (
@@ -5805,6 +5946,242 @@ else:
                             kingelvis_file,
                         ),
                     )
+
+                    # Parse pasted Excel table and create TOD, PERIOD_GROUPS, and PROJECT_PERIOD_MAPPING tables
+                    time_period_df = st.session_state.get("time_period_config_table")
+                    if time_period_df is not None and not time_period_df.empty:
+                        try:
+                            # Expected columns (ignore OPPO_TIME[CODE] if present)
+                            required_columns = ["TIME_ON[Code]", "TIME_ON", "TIME_PERIOD[Code]", "TIME_PERIOD"]
+                            
+                            # Get actual column names (case-insensitive check)
+                            df_columns = [col.strip() for col in time_period_df.columns]
+                            
+                            # Check if all required columns are present
+                            missing_cols = []
+                            for req_col in required_columns:
+                                if req_col not in df_columns:
+                                    missing_cols.append(req_col)
+                            
+                            if missing_cols:
+                                st.error(f"Missing required columns: {', '.join(missing_cols)}. Found columns: {', '.join(df_columns)}")
+                                st.stop()
+                            
+                            # Remove OPPO_TIME[CODE] if present (ignore it)
+                            if "OPPO_TIME[CODE]" in df_columns:
+                                time_period_df = time_period_df.drop(columns=["OPPO_TIME[CODE]"])
+                            
+                            # Clean and prepare the TOD dataframe
+                            tod_df = time_period_df[required_columns].copy()
+                            tod_df = tod_df.rename(columns={
+                                "TIME_ON[Code]": "TIME_ON_CODE",
+                                "TIME_ON": "TIME_ON_LABEL",
+                                "TIME_PERIOD[Code]": "TIME_PERIOD_CODE",
+                                "TIME_PERIOD": "TIME_PERIOD_NAME"
+                            })
+                            
+                            # Store TOD table in the schema
+                            tod_table_name = f"{schema_name}.TOD"
+                            
+                            # Drop table if exists
+                            cur.execute(f"DROP TABLE IF EXISTS {tod_table_name}")
+                            
+                            # Create TOD table
+                            create_tod_sql = f"""
+                                CREATE TABLE {tod_table_name} (
+                                    "TIME_ON_CODE" VARCHAR NOT NULL,
+                                    "TIME_ON_LABEL" VARCHAR NOT NULL,
+                                    "TIME_PERIOD_CODE" INTEGER NOT NULL,
+                                    "TIME_PERIOD_NAME" VARCHAR NOT NULL
+                                )
+                            """
+                            cur.execute(create_tod_sql)
+                            
+                            # Insert data into TOD table using INSERT statements
+                            for _, row in tod_df.iterrows():
+                                cur.execute(
+                                    f"""
+                                    INSERT INTO {tod_table_name}
+                                    ("TIME_ON_CODE", "TIME_ON_LABEL", "TIME_PERIOD_CODE", "TIME_PERIOD_NAME")
+                                    VALUES (%s, %s, %s, %s)
+                                    """,
+                                    (
+                                        str(row["TIME_ON_CODE"]).strip(),
+                                        str(row["TIME_ON_LABEL"]).strip(),
+                                        int(row["TIME_PERIOD_CODE"]),
+                                        str(row["TIME_PERIOD_NAME"]).strip()
+                                    )
+                                )
+                            st.info(f"📊 TOD table created in schema '{schema_name}'")
+                            
+                            # Create PERIOD_GROUPS table (unique period groups)
+                            period_groups_df = tod_df[["TIME_PERIOD_CODE", "TIME_PERIOD_NAME"]].drop_duplicates().sort_values("TIME_PERIOD_CODE")
+                            period_groups_table_name = f"{schema_name}.PERIOD_GROUPS"
+                            
+                            # Drop table if exists
+                            cur.execute(f"DROP TABLE IF EXISTS {period_groups_table_name}")
+                            
+                            # Create PERIOD_GROUPS table
+                            create_period_groups_sql = f"""
+                                CREATE TABLE {period_groups_table_name} (
+                                    "PERIOD_CODE" INTEGER NOT NULL PRIMARY KEY,
+                                    "PERIOD_NAME" VARCHAR NOT NULL
+                                )
+                            """
+                            cur.execute(create_period_groups_sql)
+                            
+                            # Insert data into PERIOD_GROUPS table using INSERT statements
+                            for _, row in period_groups_df.iterrows():
+                                cur.execute(
+                                    f"""
+                                    INSERT INTO {period_groups_table_name}
+                                    ("PERIOD_CODE", "PERIOD_NAME")
+                                    VALUES (%s, %s)
+                                    """,
+                                    (
+                                        int(row["TIME_PERIOD_CODE"]),
+                                        str(row["TIME_PERIOD_NAME"]).strip()
+                                    )
+                                )
+                            st.info(f"📊 PERIOD_GROUPS table created in schema '{schema_name}'")
+                            
+                            # Create PROJECT_PERIOD_MAPPING table
+                            project_period_mapping_table_name = f"{schema_name}.PROJECT_PERIOD_MAPPING"
+                            
+                            # Drop table if exists
+                            cur.execute(f"DROP TABLE IF EXISTS {project_period_mapping_table_name}")
+                            
+                            # Create PROJECT_PERIOD_MAPPING table
+                            create_project_period_mapping_sql = f"""
+                                CREATE TABLE {project_period_mapping_table_name} (
+                                    "PROJECT_NAME" VARCHAR NOT NULL,
+                                    "TIME_ON_CODE" VARCHAR NOT NULL,
+                                    "TIME_ON_LABEL" VARCHAR NOT NULL,
+                                    "PERIOD_CODE" INTEGER NOT NULL,
+                                    "PERIOD_NAME" VARCHAR NOT NULL,
+                                    PRIMARY KEY ("PROJECT_NAME", "TIME_ON_CODE")
+                                )
+                            """
+                            cur.execute(create_project_period_mapping_sql)
+                            
+                            # Insert data into PROJECT_PERIOD_MAPPING table using INSERT statements
+                            for _, row in tod_df.iterrows():
+                                cur.execute(
+                                    f"""
+                                    INSERT INTO {project_period_mapping_table_name}
+                                    ("PROJECT_NAME", "TIME_ON_CODE", "TIME_ON_LABEL", "PERIOD_CODE", "PERIOD_NAME")
+                                    VALUES (%s, %s, %s, %s, %s)
+                                    """,
+                                    (
+                                        project_name,
+                                        str(row["TIME_ON_CODE"]).strip(),
+                                        str(row["TIME_ON_LABEL"]).strip(),
+                                        int(row["TIME_PERIOD_CODE"]),
+                                        str(row["TIME_PERIOD_NAME"]).strip()
+                                    )
+                                )
+                            st.info(f"📊 PROJECT_PERIOD_MAPPING table created in schema '{schema_name}'")
+                            
+                            # Create APP_CONFIG schema if it doesn't exist
+                            try:
+                                cur.execute("CREATE SCHEMA IF NOT EXISTS APP_CONFIG")
+                            except Exception as e:
+                                # Schema might already exist or we don't have permission, continue
+                                pass
+                            
+                            # Create APP_CONFIG.PROJECT_TIME_PERIODS table if it doesn't exist
+                            try:
+                                cur.execute("""
+                                    CREATE TABLE IF NOT EXISTS APP_CONFIG.PROJECT_TIME_PERIODS (
+                                        PROJECT_NAME    VARCHAR NOT NULL,
+                                        PERIOD_ORDER    INTEGER NOT NULL,
+                                        CR_NAME         VARCHAR NOT NULL,
+                                        DB_NAME         VARCHAR NOT NULL,
+                                        DIFF_NAME       VARCHAR NOT NULL,
+                                        CR_COL          VARCHAR NOT NULL,
+                                        CODES           VARCHAR NOT NULL,
+                                        PRIMARY KEY (PROJECT_NAME, PERIOD_ORDER)
+                                    )
+                                """)
+                            except Exception as e:
+                                # Table might already exist, continue
+                                pass
+                            
+                            # Create APP_CONFIG.PROJECT_TIME_MAPPING table if it doesn't exist
+                            try:
+                                cur.execute("""
+                                    CREATE TABLE IF NOT EXISTS APP_CONFIG.PROJECT_TIME_MAPPING (
+                                        PROJECT_NAME    VARCHAR NOT NULL,
+                                        CODE            VARCHAR NOT NULL,
+                                        DISPLAY_LABEL   VARCHAR NOT NULL,
+                                        PRIMARY KEY (PROJECT_NAME, CODE)
+                                    )
+                                """)
+                            except Exception as e:
+                                # Table might already exist, continue
+                                pass
+                            
+                            # Now populate APP_CONFIG.PROJECT_TIME_PERIODS and APP_CONFIG.PROJECT_TIME_MAPPING
+                            # Group by PERIOD_CODE to create periods
+                            periods_by_code = tod_df.groupby(["TIME_PERIOD_CODE", "TIME_PERIOD_NAME"]).agg({
+                                "TIME_ON_CODE": lambda x: list(x)
+                            }).reset_index()
+                            
+                            # Generate period names based on PERIOD_NAME
+                            period_name_mapping = {
+                                "AM PEAK": {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_PEAK_DIFFERENCE"},
+                                "MIDDAY": {"cr_name": "CR_Midday", "db_name": "DB_Midday", "diff_name": "Midday_DIFFERENCE"},
+                                "PM PEAK": {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE"},
+                                "EVENING": {"cr_name": "CR_Evening", "db_name": "DB_Evening", "diff_name": "Evening_DIFFERENCE"}
+                            }
+                            
+                            for i, row in periods_by_code.iterrows():
+                                period_code = int(row["TIME_PERIOD_CODE"])
+                                period_name = str(row["TIME_PERIOD_NAME"]).strip()
+                                codes_list = row["TIME_ON_CODE"]
+                                
+                                # Get period config (use defaults or generate from period name)
+                                period_config = period_name_mapping.get(period_name.upper(), {
+                                    "cr_name": f"CR_{period_name.replace(' ', '_')}",
+                                    "db_name": f"DB_{period_name.replace(' ', '_')}",
+                                    "diff_name": f"{period_name.replace(' ', '_')}_DIFFERENCE"
+                                })
+                                
+                                codes_str = ",".join(str(c).strip() for c in codes_list if str(c).strip())
+                                
+                                cur.execute(
+                                    """
+                                    INSERT INTO APP_CONFIG.PROJECT_TIME_PERIODS
+                                    (PROJECT_NAME, PERIOD_ORDER, CR_NAME, DB_NAME, DIFF_NAME, CR_COL, CODES)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    """,
+                                    (project_name, period_code, period_config["cr_name"], period_config["db_name"],
+                                     period_config["diff_name"], str(period_code), codes_str),
+                                )
+                            
+                            # Insert time mapping
+                            for _, row in tod_df.iterrows():
+                                code = str(row["TIME_ON_CODE"]).strip()
+                                label = str(row["TIME_ON_LABEL"]).strip()
+                                if code:
+                                    cur.execute(
+                                        """
+                                        INSERT INTO APP_CONFIG.PROJECT_TIME_MAPPING
+                                        (PROJECT_NAME, CODE, DISPLAY_LABEL)
+                                        VALUES (%s, %s, %s)
+                                        """,
+                                        (project_name, code, label),
+                                    )
+                            
+                        except Exception as te:
+                            try:
+                                conn.rollback()
+                            except Exception:
+                                pass
+                            st.error(f"Failed to process time period table: {te}")
+                            import traceback
+                            st.error(traceback.format_exc())
+                            st.stop()
 
                     conn.commit()
                     cur.close()
@@ -6107,9 +6484,15 @@ else:
                 if show_metrics:
                     show_database_metrics_popup()
 
-
-
-
+        # Show "no project data" on every page that uses data (not just main)
+        PAGES_NOT_REQUIRING_DATA = {
+            "accounts_management", "projects_configuration", "create_accounts",
+            "password_update", "file_management", "view_s3_files", "demographic_setup"
+        }
+        if current_page not in PAGES_NOT_REQUIRING_DATA and not has_project_data:
+            st.warning("⚠️ No project data available yet.")
+            st.info("This project schema exists but no datasets are loaded yet.")
+            st.stop()
 
             
         if 'rail' in selected_schema.lower():
@@ -6128,42 +6511,45 @@ else:
             elif current_page == "location_maps":  # Add this line
                 location_maps_page()
             else:
-                # wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                #                         '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                if 'uta' in selected_project:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                            '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-                elif 'tucson' in selected_project:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                
-                elif 'stl' in selected_project:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-
-                elif 'kcata' in selected_project:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-
+                # Use dynamic time period columns from config when available
+                frontend_cols = get_frontend_time_period_columns(selected_project)
+                if frontend_cols:
+                    wkday_dir_columns, wkday_time_columns = frontend_cols
+                    wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
                 else:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                            '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-            
+                    if 'uta' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                                '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
+                    elif 'tucson' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                    elif 'stl' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                    elif 'kcata' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                    else:
+                        # New/unknown projects: derive columns from data dynamically
+                        wkday_dir_columns = get_dynamic_direction_columns(wkday_dir_df)
+                        wkday_time_columns = get_dynamic_time_columns(wkday_time_df)
+                        if not wkday_dir_columns:
+                            wkday_dir_columns = list(wkday_dir_df.columns)
+                        if not wkday_time_columns:
+                            wkday_time_columns = list(wkday_time_df.columns)
+                    wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['uta', 'tucson', 'stl', 'kcata']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
 
-
-                main_page(wkday_dir_df[wkday_dir_columns],
-                                wkday_time_df[wkday_time_columns],
-                                wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
+                main_page(wkday_dir_df[[c for c in wkday_dir_columns if c in wkday_dir_df.columns]],
+                                wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
+                                wkday_df[[c for c in wkday_df_columns if c in wkday_df.columns]])
         else:
             if current_page == "weekday":
                 weekday_page()
@@ -6290,39 +6676,41 @@ else:
                     demographic_setup_page()
 
             else:
-                if 'tucson' in selected_project:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                elif 'lacmta_feeder' in selected_project:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-
-                elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4', '5']
-
+                # Use dynamic time period columns from config when available
+                frontend_cols = get_frontend_time_period_columns(selected_project)
+                if frontend_cols:
+                    wkday_dir_columns, wkday_time_columns = frontend_cols
+                    wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
                 else:
-                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                            '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-                
-                try:
-                    if not has_project_data:
-                        st.warning("⚠️ No project data available yet.")
-                        st.info("This project schema exists but no datasets are loaded yet.")
-                        st.stop()
+                    if 'tucson' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                    elif 'lacmta_feeder' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                    elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
+                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4', '5']
                     else:
-                        main_page(wkday_dir_df[wkday_dir_columns],
-                                wkday_time_df[wkday_time_columns],
-                                wkday_df[['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']])
-                        
+                        # New/unknown projects: derive columns from data dynamically
+                        wkday_dir_columns = get_dynamic_direction_columns(wkday_dir_df)
+                        wkday_time_columns = get_dynamic_time_columns(wkday_time_df)
+                        if not wkday_dir_columns:
+                            wkday_dir_columns = list(wkday_dir_df.columns)
+                        if not wkday_time_columns:
+                            wkday_time_columns = list(wkday_time_df.columns)
+                    wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['tucson', 'lacmta_feeder', 'kcata', 'actransit', 'salem']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
+
+                try:
+                    main_page(wkday_dir_df[[c for c in wkday_dir_columns if c in wkday_dir_df.columns]],
+                            wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
+                            wkday_df[[c for c in wkday_df_columns if c in wkday_df.columns]])
                 except KeyError as e:
                     st.error(f"⚠️ Missing columns in data: {e}")
                     st.error("Available columns in weekday direction data:")

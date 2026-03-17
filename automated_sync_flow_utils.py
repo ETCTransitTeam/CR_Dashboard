@@ -178,19 +178,41 @@ def get_day_name(x):
         except ValueError:
             continue
 
-def create_time_value_df_with_display(overall_df,df,time_column,project):
-
+def create_time_value_df_with_display(overall_df, df, time_column, project, time_period_config=None):
     """
     Create a time-value DataFrame summarizing counts and time ranges.
 
     Parameters:
+        overall_df: Completion report / overall dataframe.
         df (pd.DataFrame): Input DataFrame containing the time values.
-        time_column (str): Name of the column in the input DataFrame containing the time values.
+        time_column: Name of the column in the input DataFrame containing the time values (e.g. TIMEON).
+        project: Project name.
+        time_period_config: Optional. When provided with "periods" and optionally "time_mapping", uses them dynamically.
 
     Returns:
         pd.DataFrame: Processed DataFrame with counts, time ranges, and display text.
     """
-    
+    # Dynamic path: use time_period_config when provided (skip KCATA RAIL which uses different df filtering)
+    if time_period_config and time_period_config.get("periods") and project != "KCATA RAIL":
+        periods = time_period_config["periods"]
+        time_group_mapping = {i + 1: p["codes"] for i, p in enumerate(periods)}
+        time_mapping = time_period_config.get("time_mapping") or {}
+        num_periods = len(periods)
+        col_list = ["Original Text"] + list(range(1, num_periods + 1))
+        new_df = pd.DataFrame(columns=col_list)
+
+        for col_idx, codes in time_group_mapping.items():
+            for value in codes:
+                count = df[df[time_column[0]] == value].shape[0]
+                row = {"Original Text": value}
+                for c in range(1, num_periods + 1):
+                    row[c] = count if c == col_idx else 0
+                new_df = pd.concat([new_df, pd.DataFrame([row])], ignore_index=True)
+
+        new_df["Time Range"] = new_df["Original Text"].map(time_mapping).fillna(new_df["Original Text"])
+        new_df["Display_Text"] = range(1, len(new_df) + 1)
+        return new_df
+
     if project=='KCATA' or project=='ACTRANSIT':
         """
         Create a time-value DataFrame summarizing counts and time ranges.
@@ -459,11 +481,65 @@ def create_time_value_df_with_display(overall_df,df,time_column,project):
 
         # Add a display text column with sequential numbering
         new_df['Display_Text'] = range(1, len(new_df) + 1)
-    
+    else:
+        # New/unknown projects: build time-value df from data (single period column)
+        tc = time_column[0] if isinstance(time_column, (list, tuple)) else time_column
+        if tc not in df.columns:
+            new_df = pd.DataFrame(columns=["Display_Text", "Original Text", "Time Range", "1"])
+        else:
+            counts = df.groupby(tc).size().reset_index(name='1')
+            counts = counts.rename(columns={tc: "Original Text"})
+            counts["Time Range"] = counts["Original Text"]
+            counts["Display_Text"] = range(1, len(counts) + 1)
+            new_df = counts[["Display_Text", "Original Text", "Time Range", "1"]].copy()
     return new_df
 
 
-def create_route_direction_level_df(overalldf,df,time_column,project):
+def create_route_direction_level_df(overalldf, df, time_column, project, time_period_config=None):
+    # Dynamic path: use time_period_config when provided (skip KCATA RAIL which has station-level logic)
+    if time_period_config and time_period_config.get("periods") and project != "KCATA RAIL":
+        periods = time_period_config["periods"]
+        new_df = pd.DataFrame()
+        new_df["ROUTE_SURVEYEDCode"] = overalldf["LS_NAME_CODE"]
+
+        def safe_convert(x):
+            try:
+                return math.ceil(float(x)) if pd.notnull(x) else 0
+            except (ValueError, TypeError):
+                return 0
+
+        cr_cols = []
+        for p in periods:
+            cr_col = p["cr_col"]
+            cr_name = p["cr_name"]
+            overalldf[cr_col] = pd.to_numeric(overalldf[cr_col], errors="coerce").fillna(0)
+            new_df[cr_name] = overalldf[cr_col].apply(safe_convert)
+            cr_cols.append(cr_name)
+
+        new_df["CR_Total"] = new_df[cr_cols].sum(axis=1)
+
+        for index, row in new_df.iterrows():
+            route_code = row["ROUTE_SURVEYEDCode"]
+
+            def get_counts(time_values):
+                subset_df = df[(df["ROUTE_SURVEYEDCode"] == route_code) & (df[time_column[0]].isin(time_values))]
+                return subset_df.drop_duplicates(subset="id").shape[0]
+
+            db_total = 0
+            for p in periods:
+                cnt = get_counts(p["codes"])
+                new_df.at[index, p["db_name"]] = cnt
+                db_total += cnt
+            new_df.at[index, "DB_Total"] = db_total
+
+        diff_cols = []
+        for p in periods:
+            diff_name = p["diff_name"]
+            new_df[diff_name] = (new_df[p["cr_name"]] - new_df[p["db_name"]]).clip(lower=0).apply(math.ceil)
+            diff_cols.append(diff_name)
+        new_df["Total_DIFFERENCE"] = new_df[diff_cols].sum(axis=1)
+        return new_df
+
     if project=='KCATA' or project== 'ACTRANSIT':
         # Time period values
         early_am_values = ['AM1','AM2']
@@ -1297,10 +1373,143 @@ def create_station_wise_route_level_df_kcata(overall_df, df, time_column):
 #     logger.info(f"Log file created at: {os.path.abspath(log_filename)}")
 #     return logger
 
-def create_route_level_df(overall_df,route_df,df,time_column,project):
+def create_route_level_df(overall_df, route_df, df, time_column, project, time_period_config=None):
     # logger = setup_logging()
-    
+    print(f"Creating route level dataframe for project: {project} with time period config: {time_period_config}")
     try:
+        if time_period_config and time_period_config.get("periods"):
+
+            periods = time_period_config["periods"]
+            cr_cols = [p["cr_name"] for p in periods]
+            db_cols = [p["db_name"] for p in periods]
+            diff_cols = [p["diff_name"] for p in periods]
+
+            def convert_string_to_integer(x):
+                try:
+                    return float(x)
+                except (ValueError, TypeError):
+                    return 0
+
+            def safe_ceil(series):
+                return pd.to_numeric(series, errors="coerce").fillna(0).apply(lambda x: math.ceil(x))
+
+            def normalize_route_code(route_code):
+                if pd.isna(route_code):
+                    return route_code
+
+                base_code = "_".join(str(route_code).split("_")[:-1])
+
+                for suffix in ["Clockwise", "Counterclockwise"]:
+                    if base_code.endswith(suffix):
+                        base_code = base_code[: -len(suffix)]
+                        if base_code.endswith("_"):
+                            base_code = base_code[:-1]
+
+                return base_code
+
+            # -----------------------------
+            # Create CR dataframe
+            # -----------------------------
+
+            new_df = pd.DataFrame()
+            new_df["ROUTE_SURVEYEDCode"] = overall_df["LS_NAME_CODE"]
+
+            for p in periods:
+                new_df[p["cr_name"]] = safe_ceil(overall_df[p["cr_col"]])
+
+            new_df[cr_cols] = new_df[cr_cols].applymap(convert_string_to_integer)
+            new_df.fillna(0, inplace=True)
+
+            new_df["CR_Total"] = new_df[cr_cols].sum(axis=1)
+
+            # -----------------------------
+            # Calculate DB counts
+            # -----------------------------
+
+            for p in periods:
+
+                subset = df[df[time_column[0]].isin(p["codes"])]
+
+                subset = subset.drop_duplicates(subset="id")
+
+                counts = (
+                    subset.groupby("ROUTE_SURVEYEDCode")["id"]
+                    .count()
+                    .reset_index()
+                    .rename(columns={"id": p["db_name"]})
+                )
+
+                new_df = new_df.merge(counts, on="ROUTE_SURVEYEDCode", how="left")
+
+            new_df[db_cols] = new_df[db_cols].fillna(0)
+
+            new_df["DB_Total"] = new_df[db_cols].sum(axis=1)
+
+            # -----------------------------
+            # Normalize route codes
+            # -----------------------------
+
+            new_df["ROUTE_SURVEYEDCode_Splited"] = new_df["ROUTE_SURVEYEDCode"].apply(normalize_route_code)
+
+            # -----------------------------
+            # Prepare route dataframe
+            # -----------------------------
+
+            route_df_renamed = route_df.rename(
+                columns={
+                    "ROUTE_TOTAL": "CR_Overall_Goal",
+                    "SURVEY_ROUTE_CODE": "ROUTE_SURVEYEDCode",
+                    "LS_NAME_CODE": "ROUTE_SURVEYEDCode",
+                }
+            )
+
+            route_df_renamed = route_df_renamed.dropna(subset=["ROUTE_SURVEYEDCode"])
+
+            # -----------------------------
+            # Route level aggregation
+            # -----------------------------
+
+            agg_cols = cr_cols + db_cols + ["CR_Total", "DB_Total"]
+
+            route_level_df = (
+                new_df.groupby("ROUTE_SURVEYEDCode_Splited")[agg_cols]
+                .sum()
+                .reset_index()
+                .rename(columns={"ROUTE_SURVEYEDCode_Splited": "ROUTE_SURVEYEDCode"})
+            )
+
+            route_level_df = route_level_df.merge(
+                route_df_renamed[["ROUTE_SURVEYEDCode", "CR_Overall_Goal"]],
+                on="ROUTE_SURVEYEDCode",
+                how="left",
+            )
+
+            # -----------------------------
+            # Calculate differences
+            # -----------------------------
+
+            for p in periods:
+                route_level_df[p["diff_name"]] = (
+                    (route_level_df[p["cr_name"]] - route_level_df[p["db_name"]])
+                    .fillna(0)
+                    .clip(lower=0)
+                    .apply(math.ceil)
+                )
+
+            route_level_df["Total_DIFFERENCE"] = route_level_df[diff_cols].sum(axis=1)
+
+            route_level_df["Overall_Goal_DIFFERENCE"] = (
+                (route_level_df["CR_Overall_Goal"] - route_level_df["DB_Total"])
+                .fillna(0)
+                .clip(lower=0)
+                .apply(math.ceil)
+            )
+
+            return route_level_df
+
+    except Exception as e:
+        print("Error in route level dataframe creation:", e)
+
         # logger.info("\n=== KCATA ROUTE LEVEL DEBUG STARTED ===")
         # logger.info(f"Initial survey data shape: {df.shape}")
         # logger.info(f"Unique route codes in survey data: {df['ROUTE_SURVEYEDCode'].nunique()}")
@@ -4745,9 +4954,10 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
 #         new_df.loc[index, 'DB_Evening_IDS'] = ', '.join(map(str, evening_value_ids))
 
 #     return new_df
-def process_route_comparison_data(cr_df, df, ke_df, project):
+def process_route_comparison_data(cr_df, df, ke_df, project, time_period_config=None):
     """
     Process route comparison data and handle reverse direction logic
+    Uses time_period_config dynamically for new projects, falls back to hardcoded logic for old projects
     """
 
     # ---------------- FILTER KINGELVIS DATA ----------------
@@ -4763,6 +4973,55 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
     route_survey_column = check_all_characters_present(df, ['routesurveyedcode'])
 
     # ---------------- TIME PERIOD DEFINITIONS ----------------
+    # Dynamic path: use time_period_config when provided (for new projects)
+    if time_period_config and time_period_config.get("periods"):
+        periods = time_period_config["periods"]
+        
+        # ---------------- CREATE CR DATAFRAME (DYNAMIC) ----------------
+        new_df = pd.DataFrame()
+        new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
+        
+        # Create CR columns dynamically from periods
+        for p in periods:
+            cr_col = p["cr_col"]
+            cr_name = p["cr_name"]
+            new_df[cr_name] = pd.to_numeric(cr_df[cr_col], errors='coerce').fillna(0)
+        
+        # Calculate CR_Total per row
+        cr_cols = [p["cr_name"] for p in periods]
+        new_df['CR_Total'] = new_df[cr_cols].sum(axis=1)
+        
+        # ---------------- DB COUNTS (DYNAMIC) ----------------
+        for index, row in new_df.iterrows():
+            route_code = row['ROUTE_SURVEYEDCode']
+
+            def get_counts_and_ids(values):
+                subset_df = df[
+                    (df['ROUTE_SURVEYEDCode'] == route_code) &
+                    (df[time_column[0]].isin(values))
+                ]
+                return subset_df.shape[0], subset_df['id'].values
+
+            db_total = 0
+            for p in periods:
+                db_name = p["db_name"]
+                codes = p["codes"]
+                db_value, db_ids = get_counts_and_ids(codes)
+                new_df.loc[index, db_name] = db_value
+                new_df.loc[index, f'{db_name}_IDS'] = ', '.join(map(str, db_ids))
+                db_total += db_value
+            
+            new_df.loc[index, 'DB_Total'] = db_total
+        
+        # Add Early_AM columns for backward compatibility (set to 0 if not in periods)
+        if not any('Early_AM' in p.get('cr_name', '') for p in periods):
+            new_df['CR_Early_AM'] = 0
+            new_df['DB_Early_AM'] = 0
+            new_df['DB_Early_AM_IDS'] = ''
+        
+        return new_df
+
+    # ---------------- HARDCODED LOGIC FOR OLD PROJECTS (PRESERVE EXISTING BEHAVIOR) ----------------
     if project == 'SALEM':
         early_am_values = ['AM1','AM2','AM3','MID1','MID2','MID7','MID3']
         am_values = ['MID4','MID5','MID6']
@@ -4869,9 +5128,10 @@ def process_route_comparison_data(cr_df, df, ke_df, project):
     return new_df
 
 
-def create_route_level_comparison(new_df):
+def create_route_level_comparison(new_df, time_period_config=None):
     """
     Create route level comparison from the processed data
+    Dynamically handles time periods based on columns present or time_period_config
     """
     # Safely create the split route code
     new_df['ROUTE_SURVEYEDCode_Splited'] = new_df['ROUTE_SURVEYEDCode'].apply(
@@ -4885,6 +5145,22 @@ def create_route_level_comparison(new_df):
     unique_routes = new_df['ROUTE_SURVEYEDCode_Splited'].unique()
     route_level_df['ROUTE_SURVEYEDCode'] = unique_routes
     
+    # Detect CR and DB columns dynamically
+    cr_columns = [col for col in new_df.columns if col.startswith('CR_') and col != 'CR_Total']
+    db_columns = [col for col in new_df.columns if col.startswith('DB_') and col != 'DB_Total' and not col.endswith('_IDS')]
+    db_id_columns = [col for col in new_df.columns if col.startswith('DB_') and col.endswith('_IDS')]
+    
+    # If time_period_config is provided, use it to determine columns
+    if time_period_config and time_period_config.get("periods"):
+        periods = time_period_config["periods"]
+        cr_columns = [p["cr_name"] for p in periods]
+        db_columns = [p["db_name"] for p in periods]
+        db_id_columns = [f'{p["db_name"]}_IDS' for p in periods]
+    
+    # Ensure CR_Total and DB_Total are included
+    all_cr_cols = cr_columns + ['CR_Total']
+    all_db_cols = db_columns + ['DB_Total']
+    
     for index, row in route_level_df.iterrows():
         route_code = row['ROUTE_SURVEYEDCode']
         subset_df = new_df[new_df['ROUTE_SURVEYEDCode_Splited'] == route_code]
@@ -4894,66 +5170,104 @@ def create_route_level_comparison(new_df):
             continue
             
         try:
-            # Sum only numeric columns
-            sum_per_route_cr = subset_df[['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total']].sum()
-            sum_per_route_db = subset_df[['DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']].sum()
+            # Sum only numeric columns that exist
+            existing_cr_cols = [col for col in all_cr_cols if col in subset_df.columns]
+            existing_db_cols = [col for col in all_db_cols if col in subset_df.columns]
             
-            route_level_df.loc[index, 'CR_Early_AM'] = sum_per_route_cr['CR_Early_AM']
-            route_level_df.loc[index, 'CR_AM_Peak'] = sum_per_route_cr['CR_AM_Peak']
-            route_level_df.loc[index, 'CR_Midday'] = sum_per_route_cr['CR_Midday']
-            route_level_df.loc[index, 'CR_PM_Peak'] = sum_per_route_cr['CR_PM_Peak']
-            route_level_df.loc[index, 'CR_Evening'] = sum_per_route_cr['CR_Evening']
-            route_level_df.loc[index, 'CR_Total'] = sum_per_route_cr['CR_Total']
+            if existing_cr_cols:
+                sum_per_route_cr = subset_df[existing_cr_cols].sum()
+                for col in existing_cr_cols:
+                    route_level_df.loc[index, col] = sum_per_route_cr[col]
             
-            route_level_df.loc[index, 'DB_Early_AM'] = sum_per_route_db['DB_Early_AM']
-            route_level_df.loc[index, 'DB_AM_Peak'] = sum_per_route_db['DB_AM_Peak']
-            route_level_df.loc[index, 'DB_Midday'] = sum_per_route_db['DB_Midday']
-            route_level_df.loc[index, 'DB_PM_Peak'] = sum_per_route_db['DB_PM_Peak']
-            route_level_df.loc[index, 'DB_Evening'] = sum_per_route_db['DB_Evening']
-            route_level_df.loc[index, 'DB_Total'] = sum_per_route_db['DB_Total']   
+            if existing_db_cols:
+                sum_per_route_db = subset_df[existing_db_cols].sum()
+                for col in existing_db_cols:
+                    route_level_df.loc[index, col] = sum_per_route_db[col]
             
             # Handle ID columns separately (concatenate strings)
-            route_level_df.loc[index, 'DB_Early_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_Early_AM_IDS'].values if pd.notna(value) and value != '')
-            route_level_df.loc[index, 'DB_AM_IDS'] = ', '.join(str(value) for value in subset_df['DB_AM_IDS'].values if pd.notna(value) and value != '')
-            route_level_df.loc[index, 'DB_Midday_IDS'] = ', '.join(str(value) for value in subset_df['DB_Midday_IDS'].values if pd.notna(value) and value != '')    
-            route_level_df.loc[index, 'DB_PM_IDS'] = ', '.join(str(value) for value in subset_df['DB_PM_IDS'].values if pd.notna(value) and value != '')    
-            route_level_df.loc[index, 'DB_Evening_IDS'] = ', '.join(str(value) for value in subset_df['DB_Evening_IDS'].values if pd.notna(value) and value != '')
+            for id_col in db_id_columns:
+                if id_col in subset_df.columns:
+                    route_level_df.loc[index, id_col] = ', '.join(
+                        str(value) for value in subset_df[id_col].values 
+                        if pd.notna(value) and value != ''
+                    )
+                else:
+                    route_level_df.loc[index, id_col] = ""
             
         except Exception as e:
+            print(f"Error processing route {route_code}: {e}")
             # Set default values for this route
-            for col in ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total',
-                       'DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']:
+            for col in all_cr_cols + all_db_cols:
                 route_level_df.loc[index, col] = 0
-            for col in ['DB_Early_AM_IDS', 'DB_AM_IDS', 'DB_Midday_IDS', 'DB_PM_IDS', 'DB_Evening_IDS']:
+            for col in db_id_columns:
                 route_level_df.loc[index, col] = ""
     
     # Ensure all numeric columns are properly typed
-    numeric_columns = ['CR_Early_AM', 'CR_AM_Peak', 'CR_Midday', 'CR_PM_Peak', 'CR_Evening', 'CR_Total',
-                      'DB_Early_AM', 'DB_AM_Peak', 'DB_Midday', 'DB_PM_Peak', 'DB_Evening', 'DB_Total']
-    
+    numeric_columns = all_cr_cols + all_db_cols
     for col in numeric_columns:
-        route_level_df[col] = pd.to_numeric(route_level_df[col], errors='coerce').fillna(0)
+        if col in route_level_df.columns:
+            route_level_df[col] = pd.to_numeric(route_level_df[col], errors='coerce').fillna(0)
     
-    # Calculate differences
-    for index, row in route_level_df.iterrows():
-        try:
-            early_am_peak_diff = row['CR_Early_AM'] - row['DB_Early_AM']
-            am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
-            midday_diff = row['CR_Midday'] - row['DB_Midday']    
-            pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
-            evening_diff = row['CR_Evening'] - row['DB_Evening']
-            total_diff = row['CR_Total'] - row['DB_Total']
-            
-            route_level_df.loc[index, 'EARLY_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
-            route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
-            route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
-            route_level_df.loc[index, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
-            route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
-            route_level_df.loc[index, 'Total_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff)) + math.ceil(max(0, am_peak_diff)) + math.ceil(max(0, midday_diff)) + math.ceil(max(0, pm_peak_diff)) + math.ceil(max(0, evening_diff))
-        except Exception as e:
-            print(f"Error calculating differences for index {index}: {e}")
-            for col in ['EARLY_AM_DIFFERENCE', 'AM_DIFFERENCE', 'Midday_DIFFERENCE', 'PM_DIFFERENCE', 'Evening_DIFFERENCE', 'Total_DIFFERENCE']:
-                route_level_df.loc[index, col] = 0
+    # Calculate differences dynamically
+    if time_period_config and time_period_config.get("periods"):
+        periods = time_period_config["periods"]
+        for index, row in route_level_df.iterrows():
+            try:
+                total_diff_sum = 0
+                for p in periods:
+                    cr_name = p["cr_name"]
+                    db_name = p["db_name"]
+                    diff_name = p["diff_name"]
+                    
+                    if cr_name in route_level_df.columns and db_name in route_level_df.columns:
+                        diff = row[cr_name] - row[db_name]
+                        route_level_df.loc[index, diff_name] = math.ceil(max(0, diff))
+                        total_diff_sum += math.ceil(max(0, diff))
+                
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = total_diff_sum
+            except Exception as e:
+                print(f"Error calculating differences for index {index}: {e}")
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = 0
+    else:
+        # Fallback to old hardcoded logic for backward compatibility
+        for index, row in route_level_df.iterrows():
+            try:
+                early_am_peak_diff = 0
+                am_peak_diff = 0
+                midday_diff = 0
+                pm_peak_diff = 0
+                evening_diff = 0
+                
+                if 'CR_Early_AM' in route_level_df.columns and 'DB_Early_AM' in route_level_df.columns:
+                    early_am_peak_diff = row['CR_Early_AM'] - row['DB_Early_AM']
+                    route_level_df.loc[index, 'EARLY_AM_DIFFERENCE'] = math.ceil(max(0, early_am_peak_diff))
+                
+                if 'CR_AM_Peak' in route_level_df.columns and 'DB_AM_Peak' in route_level_df.columns:
+                    am_peak_diff = row['CR_AM_Peak'] - row['DB_AM_Peak']
+                    route_level_df.loc[index, 'AM_DIFFERENCE'] = math.ceil(max(0, am_peak_diff))
+                
+                if 'CR_Midday' in route_level_df.columns and 'DB_Midday' in route_level_df.columns:
+                    midday_diff = row['CR_Midday'] - row['DB_Midday']
+                    route_level_df.loc[index, 'Midday_DIFFERENCE'] = math.ceil(max(0, midday_diff))
+                
+                if 'CR_PM_Peak' in route_level_df.columns and 'DB_PM_Peak' in route_level_df.columns:
+                    pm_peak_diff = row['CR_PM_Peak'] - row['DB_PM_Peak']
+                    route_level_df.loc[index, 'PM_DIFFERENCE'] = math.ceil(max(0, pm_peak_diff))
+                
+                if 'CR_Evening' in route_level_df.columns and 'DB_Evening' in route_level_df.columns:
+                    evening_diff = row['CR_Evening'] - row['DB_Evening']
+                    route_level_df.loc[index, 'Evening_DIFFERENCE'] = math.ceil(max(0, evening_diff))
+                
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = (
+                    math.ceil(max(0, early_am_peak_diff)) + 
+                    math.ceil(max(0, am_peak_diff)) + 
+                    math.ceil(max(0, midday_diff)) + 
+                    math.ceil(max(0, pm_peak_diff)) + 
+                    math.ceil(max(0, evening_diff))
+                )
+            except Exception as e:
+                print(f"Error calculating differences for index {index}: {e}")
+                route_level_df.loc[index, 'Total_DIFFERENCE'] = 0
     
     return route_level_df
 
@@ -6934,7 +7248,29 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race
             }
 
     else:
-        raise ValueError(f"❌ Unknown project_name '{project_name}'")
+        # New/unknown projects (e.g. LACMTA_TEST_4): build question_dict dynamically from dataframe columns
+        exclude_lower = {'id', 'date', 'completed', 'localtime', 'elvisstatus', 'date_submitted'}
+        race_columns = set(race_label_map.keys()) if race_label_map else set()
+        question_dict = {}
+        for col in elvis_df.columns:
+            c = str(col).strip()
+            if not c:
+                continue
+            cl = c.lower()
+            if cl in exclude_lower:
+                continue
+            if cl in ('route_surveyedcode', 'route_surveyed'):
+                continue
+            if c in race_columns:
+                continue  # Will add synthetic "Race" below if any race columns exist
+            question_dict[c] = c.replace('_', ' ').title()
+        multi_select_fields = {}
+        if race_label_map and len(race_label_map) > 0 and any(col in elvis_df.columns for col in race_label_map):
+            race_mapping = {label: col for col, label in race_label_map.items()}
+            multi_select_fields["Race"] = race_mapping
+            question_dict["Race"] = "What is your race / ethnicity? (check all that apply)"
+        if not question_dict:
+            question_dict = {"(no demographic columns)": "No demographic question columns found in data."}
 
     # ===============================
     # 2) Helper: YES % for multi-select

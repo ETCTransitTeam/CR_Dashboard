@@ -10,6 +10,7 @@ import streamlit as st
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
 import boto3
+from botocore.exceptions import ClientError
 from io import BytesIO
 import os
 from cryptography.hazmat.backends import default_backend
@@ -236,29 +237,13 @@ def load_projects_from_db():
     cur.execute(query)
     projects = {}
     for row in cur.fetchall():
-        (
-            project,
-            schema,
-            elvis_db,
-            elvis_table,
-            main_db,
-            main_table,
-            details_file,
-            cr_file,
-            king_file
-        ) = row
-
+        (project, schema, elvis_db, elvis_table, main_db, main_table,
+         details_file, cr_file, king_file) = row
         projects[project] = {
             "schema": schema,
             "databases": {
-                "elvis": {
-                    "database": elvis_db,
-                    "table": elvis_table
-                },
-                "main": {
-                    "database": main_db,
-                    "table": main_table
-                }
+                "elvis": {"database": elvis_db, "table": elvis_table},
+                "main": {"database": main_db, "table": main_table}
             },
             "files": {
                 "details": details_file,
@@ -266,11 +251,184 @@ def load_projects_from_db():
                 "kingelvis": king_file
             }
         }
+
+    # Load time period config from PROJECT_TIME_PERIODS + PROJECT_TIME_MAPPING (if tables exist)
+    try:
+        cur.execute("""
+            SELECT PROJECT_NAME, PERIOD_ORDER, CR_NAME, DB_NAME, DIFF_NAME, CR_COL, CODES
+            FROM APP_CONFIG.PROJECT_TIME_PERIODS
+            ORDER BY PROJECT_NAME, PERIOD_ORDER
+        """)
+        period_rows = cur.fetchall()
+    except Exception:
+        period_rows = []
+    try:
+        cur.execute("""
+            SELECT PROJECT_NAME, CODE, DISPLAY_LABEL
+            FROM APP_CONFIG.PROJECT_TIME_MAPPING
+        """)
+        mapping_rows = cur.fetchall()
+    except Exception:
+        mapping_rows = []
+
+    # Build time_period_config per project from tables
+    periods_by_project = {}
+    for row in period_rows:
+        proj, order, cr_name, db_name, diff_name, cr_col, codes_str = row
+        if proj not in periods_by_project:
+            periods_by_project[proj] = []
+        codes = [c.strip() for c in str(codes_str).split(",") if c.strip()]
+        periods_by_project[proj].append({
+            "cr_name": cr_name, "db_name": db_name, "diff_name": diff_name,
+            "cr_col": str(cr_col), "codes": codes
+        })
+    mapping_by_project = {}
+    for row in mapping_rows:
+        proj, code, label = row
+        if proj not in mapping_by_project:
+            mapping_by_project[proj] = {}
+        mapping_by_project[proj][str(code).strip()] = str(label).strip()
+
+    for project in projects:
+        if project in periods_by_project and periods_by_project[project]:
+            projects[project]["time_period_config"] = {
+                "periods": periods_by_project[project],
+                "time_mapping": mapping_by_project.get(project) or {}
+            }
+
     cur.close()
     conn.close()
     return projects
 
+
+def refresh_projects():
+    """Reload PROJECTS from DB so newly added projects appear in dropdowns (File Management, Demographic Setup, etc.)."""
+    global PROJECTS
+    PROJECTS = load_projects_from_db()
+    return PROJECTS
+
+
 PROJECTS = load_projects_from_db()
+
+# Time period config: used for rename_dict, frontend columns, create_route_direction_level_df, create_route_level_df, create_time_value_df_with_display.
+# Can be overridden per project via PROJECTS[project]["time_period_config"] (e.g. from DB or Project Config page).
+#
+# Example input for project config (time_period_config):
+# {
+#   "periods": [
+#     {
+#       "cr_name": "CR_Early_AM",      # Completion Report column name (goal)
+#       "db_name": "DB_Early_AM_Peak", # DB count column name (collected)
+#       "diff_name": "Early_AM_DIFFERENCE",  # Remaining column name
+#       "cr_col": "1",                 # Column index in CR Excel (1-based, as string)
+#       "codes": ["AM1", "AM2"]        # TIMEON values in survey data that belong to this period
+#     },
+#     {
+#       "cr_name": "CR_AM_Peak",
+#       "db_name": "DB_AM_Peak",
+#       "diff_name": "AM_DIFFERENCE",
+#       "cr_col": "2",
+#       "codes": ["AM3", "MID1", "MID2", "MID7"]
+#     }
+#     // ... more periods
+#   ],
+#   "time_mapping": {                  # Optional: code -> display label for Time of Day / create_time_value_df_with_display
+#     "AM1": "Before 5:00 am",
+#     "AM2": "5:00 am - 6:00 am",
+#     "AM3": "6:00 am - 7:00 am"
+#     // ... one entry per code used in periods
+#   }
+# }
+# 4-period project (e.g. LACMTA_FEEDER): use 4 items in "periods" (no Early_AM). 5-period: use 5 items.
+#
+TIME_PERIOD_CONFIG_BY_PROJECT = {
+    "LACMTA_FEEDER": {
+        "periods": [
+            {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_PEAK_DIFFERENCE", "cr_col": "1", "codes": ["AM1", "AM2", "AM3", "MID1", "MID2"]},
+            {"cr_name": "CR_Midday", "db_name": "DB_Midday", "diff_name": "Midday_DIFFERENCE", "cr_col": "2", "codes": ["MID7", "MID3", "MID4", "MID5", "MID6"]},
+            {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE", "cr_col": "3", "codes": ["PM1", "PM2", "PM3", "PM4", "PM5"]},
+            {"cr_name": "CR_Evening", "db_name": "DB_Evening", "diff_name": "Evening_DIFFERENCE", "cr_col": "4", "codes": ["PM6", "PM7", "PM8", "PM9"]},
+        ],
+    },
+    "KCATA": {
+        "periods": [
+            {"cr_name": "CR_Early_AM", "db_name": "DB_Early_AM_Peak", "diff_name": "Early_AM_DIFFERENCE", "cr_col": "1", "codes": ["AM1", "AM2"]},
+            {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_DIFFERENCE", "cr_col": "2", "codes": ["AM3", "MID1", "MID2", "MID7"]},
+            {"cr_name": "CR_Midday", "db_name": "DB_Midday", "diff_name": "Midday_DIFFERENCE", "cr_col": "3", "codes": ["MID3", "MID4", "MID5", "MID6", "PM1"]},
+            {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE", "cr_col": "4", "codes": ["PM2", "PM3", "PM4", "PM5"]},
+            {"cr_name": "CR_Evening", "db_name": "DB_Evening", "diff_name": "Evening_DIFFERENCE", "cr_col": "5", "codes": ["PM6", "PM7", "PM8", "PM9"]},
+        ],
+    },
+    "ACTRANSIT": {
+        "periods": [
+            {"cr_name": "CR_Early_AM", "db_name": "DB_Early_AM_Peak", "diff_name": "Early_AM_DIFFERENCE", "cr_col": "1", "codes": ["AM1", "AM2"]},
+            {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_DIFFERENCE", "cr_col": "2", "codes": ["AM3", "MID1", "MID2", "MID7"]},
+            {"cr_name": "CR_Midday", "db_name": "DB_Midday", "diff_name": "Midday_DIFFERENCE", "cr_col": "3", "codes": ["MID3", "MID4", "MID5", "MID6", "PM1"]},
+            {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE", "cr_col": "4", "codes": ["PM2", "PM3", "PM4", "PM5"]},
+            {"cr_name": "CR_Evening", "db_name": "DB_Evening", "diff_name": "Evening_DIFFERENCE", "cr_col": "5", "codes": ["PM6", "PM7", "PM8", "PM9"]},
+        ],
+    },
+    "SALEM": {
+        "periods": [
+            {"cr_name": "CR_Early_AM", "db_name": "DB_Early_AM_Peak", "diff_name": "Early_AM_DIFFERENCE", "cr_col": "1", "codes": ["AM1", "AM2", "AM3", "MID1", "MID2", "MID7", "MID3"]},
+            {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_DIFFERENCE", "cr_col": "2", "codes": ["MID4", "MID5", "MID6"]},
+            {"cr_name": "CR_Midday", "db_name": "DB_Midday", "diff_name": "Midday_DIFFERENCE", "cr_col": "3", "codes": ["PM1", "PM2", "PM3"]},
+            {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE", "cr_col": "4", "codes": ["PM4", "PM5", "PM6", "PM7", "PM8", "PM9"]},
+            {"cr_name": "CR_Evening", "db_name": "DB_Evening", "diff_name": "Evening_DIFFERENCE", "cr_col": "5", "codes": ["PM10", "PM11", "PM12", "PM13", "PM14", "PM15"]},
+        ],
+    },
+}
+
+PROJECTS_USING_TIME_PERIOD_CONFIG = {"KCATA", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"}
+
+
+def get_time_period_config(project):
+    """Return time period config for project (from PROJECTS or TIME_PERIOD_CONFIG_BY_PROJECT)."""
+    try:
+        
+        proj = PROJECTS.get(project, {})
+        print(f"Project config for {project}:", proj)
+        if isinstance(proj, dict) and proj.get("time_period_config"):
+            return proj["time_period_config"]
+    except Exception:
+        pass
+    return TIME_PERIOD_CONFIG_BY_PROJECT.get(project)
+
+
+def get_time_period_rename_dict(project):
+    """Build rename_dict for Goal/Collect/Remain from time period config. Returns None if project does not use time period config."""
+    config = get_time_period_config(project)
+    print(f"Time period config for {project}:", config)
+    if not config or not config.get("periods"):
+        return None
+    rename_dict = {}
+    for i, p in enumerate(config["periods"]):
+        n = i + 1
+        rename_dict[p["cr_name"]] = f"({n}) Goal"
+        rename_dict[p["db_name"]] = f"({n}) Collect"
+        rename_dict[p["diff_name"]] = f"({n}) Remain"
+    return rename_dict
+
+
+def get_frontend_time_period_columns(project):
+    """
+    Return (wkday_dir_columns, wkday_time_columns) for main/direction/time display.
+    Uses time period config when available (including for new projects loaded from DB); otherwise returns None so caller uses project-specific or dynamic data-driven logic.
+    """
+    config = get_time_period_config(project)
+    if not config or not config.get("periods"):
+        return None
+    periods = config.get("periods", [])
+    n = len(periods)
+    base = ["ROUTE_SURVEYEDCode", "ROUTE_SURVEYED"]
+    collect_remain = []
+    goals = []
+    for i in range(n):
+        collect_remain.extend([f"({i+1}) Collect", f"({i+1}) Remain"])
+        goals.append(f"({i+1}) Goal")
+    wkday_dir_columns = base + collect_remain + goals
+    wkday_time_columns = ["Display_Text", "Original Text", "Time Range"] + [str(i + 1) for i in range(n)]
+    return (wkday_dir_columns, wkday_time_columns)
 
 
 def fetch_and_process_data(project,schema):
@@ -290,6 +448,13 @@ def fetch_and_process_data(project,schema):
     today_date = date.today()
     today_date=''.join(str(today_date).split('-'))
 
+    if project not in PROJECTS:
+        known = ", ".join(sorted(PROJECTS.keys())) if PROJECTS else "(none)"
+        raise KeyError(
+            f"Project {project!r} is not in the Projects Configuration. "
+            f"Add it in Snowflake (APP_CONFIG.PROJECT_CONFIGS with IS_ACTIVE = TRUE) or choose a configured project. "
+            f"Configured projects: {known}"
+        )
     project_config = PROJECTS[project]
     
     # -----------------------
@@ -304,9 +469,17 @@ def fetch_and_process_data(project,schema):
 
     # Function to read an Excel file from S3 into a DataFrame
     def read_excel_from_s3(bucket_name, file_key, sheet_name):
-        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        excel_data = response['Body'].read()
-        return pd.read_excel(BytesIO(excel_data), sheet_name=sheet_name)
+        try:
+            response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+            excel_data = response['Body'].read()
+            return pd.read_excel(BytesIO(excel_data), sheet_name=sheet_name)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "NoSuchKey":
+                raise FileNotFoundError(
+                    f"S3 file not found: bucket={bucket_name!r}, key={file_key!r}. "
+                    "Upload the file to S3 or fix the project file configuration (e.g. Projects Configuration page)."
+                ) from e
+            raise
 
 
     # Fetch data from both databases only once
@@ -366,7 +539,8 @@ def fetch_and_process_data(project,schema):
     # -----------------------
     dropped_first_record = None
     race_label_map = None  # Initialize race_label_map outside the if block
-    if merged_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
+    # if merged_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
+    if merged_df is not None:
         merged_df.columns = merged_df.columns.str.strip()
         merged_df = merged_df.rename(columns=KCATA_HEADER_MAPPING)
         if not merged_df.empty:
@@ -385,7 +559,8 @@ def fetch_and_process_data(project,schema):
     baby_elvis_df = merged_df.copy() if merged_df is not None else None
     
     # Apply header mapping to baby_elvis_df if needed (but NO cleaning)
-    if baby_elvis_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
+    # if baby_elvis_df is not None and project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
+    if baby_elvis_df is not None:
         baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
         baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
         # baby_elvis_df = baby_elvis_df.drop(index=0).reset_index(drop=True)
@@ -588,7 +763,18 @@ def fetch_and_process_data(project,schema):
         wkday_overall_df[[0,1,2,3,4,5]]=wkday_overall_df[[0,1,2,3,4,5]].fillna(0)
         wkend_overall_df[[0,1,2,3,4,5]]=wkend_overall_df[[0,1,2,3,4,5]].fillna(0)
 
+    else:
+        ke_df = read_excel_from_s3(bucket_name,project_config["files"]["kingelvis"], 'Elvis_Review')
 
+        detail_df_stops = read_excel_from_s3(bucket_name,project_config["files"]["details"], 'STOPS')
+        stops_df = detail_df_stops.copy()
+        detail_df_xfers = read_excel_from_s3(bucket_name, project_config["files"]["details"], 'XFERS')
+
+        wkend_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkEND-Overall')
+        wkend_route_df = read_excel_from_s3(bucket_name,project_config["files"]["cr"], 'WkEND-RouteTotal')
+
+        wkday_overall_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-Overall')
+        wkday_route_df = read_excel_from_s3(bucket_name, project_config["files"]["cr"], 'WkDAY-RouteTotal')
     print("Filtered df data =", len(df))
 
     # Safe Final_Usage filtering
@@ -915,9 +1101,10 @@ def fetch_and_process_data(project,schema):
     if wkday_overall_df is not None and 'LS_NAME_CODE' in wkday_overall_df.columns:
         wkday_overall_df.dropna(subset=['LS_NAME_CODE'], inplace=True)
  
+    time_period_config = get_time_period_config(project)
     if project not in ["KCATA RAIL"]:
-        wkend_time_value_df=create_time_value_df_with_display(wkend_overall_df,weekend_df,time_column,project)
-        wkday_time_value_df=create_time_value_df_with_display(wkday_overall_df,weekday_df,time_column,project)
+        wkend_time_value_df=create_time_value_df_with_display(wkend_overall_df,weekend_df,time_column,project,time_period_config)
+        wkday_time_value_df=create_time_value_df_with_display(wkday_overall_df,weekday_df,time_column,project,time_period_config)
     
     # ----- Route Direction DF -----
     # if project in ["ACTRANSIT", "SALEM", "KCATA", "LACMTA_FEEDER"]:
@@ -929,8 +1116,8 @@ def fetch_and_process_data(project,schema):
     # weekday_df.to_csv('weekday_df.csv')
     # weekend_df.to_csv('weekend_df.csv')
     # wkend_overall_df.to_csv('wkend_overall_df.csv')
-    wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
-    wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
+    wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project, time_period_config)
+    wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project, time_period_config)
     # wkday_route_direction_df.to_csv('wkday_route_direction_df_result.csv')
     # wkend_route_direction_df.to_csv('wkend_route_direction_df_result.csv')
 
@@ -966,15 +1153,22 @@ def fetch_and_process_data(project,schema):
         weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
         weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
     else:
+        # weekday_df.dropna(subset=[time_column[0]],inplace=True)
+        # weekday_raw_df=weekday_df[['id', 'LocalTime', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        # weekend_df.dropna(subset=[time_column[0]],inplace=True)
+        # weekend_raw_df=weekend_df[['id', 'LocalTime', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        # weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
+        # weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
         weekday_df.dropna(subset=[time_column[0]],inplace=True)
-        weekday_raw_df=weekday_df[['id', 'LocalTime', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        weekday_raw_df=weekday_df[['id', 'LocalTime', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_df.dropna(subset=[time_column[0]],inplace=True)
-        weekend_raw_df=weekend_df[['id', 'LocalTime', 'Completed', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ELVIS_STATUS']]
+        weekend_raw_df=weekend_df[['id', 'LocalTime', 'DATE_SUBMITTED', route_survey_column[0],'ROUTE_SURVEYED',stopon_clntid_column[0],stopoff_clntid_column[0],time_column[0],time_period_column[0],'Day','ElvisStatus']]
         weekend_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
         weekday_raw_df.rename(columns={stopon_clntid_column[0]:'BOARDING LOCATION',stopoff_clntid_column[0]:'ALIGHTING LOCATION'},inplace=True)
 
-    wkday_route_level =create_route_level_df(wkday_overall_df,wkday_route_df,weekday_df,time_column,project)
-    wkend_route_level =create_route_level_df(wkend_overall_df,wkend_route_df,weekend_df,time_column,project)
+    wkday_route_level =create_route_level_df(wkday_overall_df,wkday_route_df,weekday_df,time_column,project,time_period_config)
+    print("Weekday route level df created",len(wkday_route_level))
+    wkend_route_level =create_route_level_df(wkend_overall_df,wkend_route_df,weekend_df,time_column,project,time_period_config)
     wkday_comparison_df=copy.deepcopy(wkday_route_level)
     wkday_new_route_level_df=copy.deepcopy(wkday_route_level)
 
@@ -982,8 +1176,8 @@ def fetch_and_process_data(project,schema):
     wkend_new_route_level_df=copy.deepcopy(wkend_route_level)
     # this is for time value data
     if project in ["KCATA RAIL"]:
-        wkend_time_value_df = create_time_value_df_with_display(wkend_comparison_df,weekend_df,time_column,project)
-        wkday_time_value_df = create_time_value_df_with_display(wkday_comparison_df,weekday_df,time_column,project)
+        wkend_time_value_df = create_time_value_df_with_display(wkend_comparison_df,weekend_df,time_column,project,time_period_config)
+        wkday_time_value_df = create_time_value_df_with_display(wkday_comparison_df,weekday_df,time_column,project,time_period_config)
 
     if not wkday_comparison_df.empty:
         for index , row in wkday_comparison_df.iterrows():
@@ -998,45 +1192,10 @@ def fetch_and_process_data(project,schema):
     else:
         wkend_comparison_df['Total_DIFFERENCE']=0
 
-    if project == 'KCATA' or project == 'ACTRANSIT' or project == 'SALEM' or project == 'LACMTA_FEEDER':
-        if project == 'LACMTA_FEEDER':
-            rename_dict = {
-                # Goals
-                'CR_AM_Peak': '(1) Goal',
-                'CR_Midday': '(2) Goal',
-                'CR_PM_Peak': '(3) Goal',
-                'CR_Evening': '(4) Goal',
-
-                # Collected
-                'DB_AM_Peak': '(1) Collect',
-                'DB_Midday': '(2) Collect',
-                'DB_PM_Peak': '(3) Collect',
-                'DB_Evening': '(4) Collect',
-
-                # Remaining
-                'AM_PEAK_DIFFERENCE': '(1) Remain',
-                'Midday_DIFFERENCE': '(2) Remain',
-                'PM_PEAK_DIFFERENCE': '(3) Remain',
-                'Evening_DIFFERENCE': '(4) Remain'
-            }
-        else:
-            rename_dict = {
-                'CR_Early_AM': '(1) Goal',
-                'CR_AM_Peak': '(2) Goal',
-                'CR_Midday': '(3) Goal',
-                'CR_PM_Peak': '(4) Goal',
-                'CR_Evening': '(5) Goal',
-                'DB_Early_AM_Peak': '(1) Collect',
-                'DB_AM_Peak': '(2) Collect',
-                'DB_Midday': '(3) Collect',
-                'DB_PM_Peak': '(4) Collect',
-                'DB_Evening': '(5) Collect',
-                'Early_AM_DIFFERENCE': '(1) Remain',
-                'AM_DIFFERENCE': '(2) Remain',
-                'Midday_DIFFERENCE': '(3) Remain',
-                'PM_PEAK_DIFFERENCE': '(4) Remain',
-                'Evening_DIFFERENCE': '(5) Remain'
-            }
+    rename_dict = get_time_period_rename_dict(project)
+    print(f"Rename dict for project {project}:", rename_dict)
+    if rename_dict:
+        print("Processing rename dict...")
         # Check if weekend data exists using try/except for robustness
         has_weekend_data = False
         try:
@@ -1096,20 +1255,22 @@ def fetch_and_process_data(project,schema):
             'HAVE_5_MIN_FOR_SURVECode': 'HAVE_5_MIN_FOR_SURVE_Code_',
             'ROUTE_SURVEYEDCode': 'ROUTE_SURVEYED_Code_'
         })
-
         interviewer_pivot, route_pivot, detail_table = process_survey_data(df_for_processing)
 
         print("Processing route comparison data...")
         # Process the route comparison data
-        new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_merged_df_filtered, ke_df, project)
-        route_level_df = create_route_level_comparison(new_df)
+        new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_merged_df_filtered, ke_df, project, time_period_config)
+        route_level_df = create_route_level_comparison(new_df, time_period_config)
         comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_merged_df_filtered, route_level_df, project, stops_df)
         print("Route comparison data processed successfully.")
 
         survey_report_df = process_surveyor_data_transit_ls6(ke_df, df, project, race_label_map)
         route_report_df = process_route_data_transit_ls6(ke_df, df, race_label_map)
+        print("Survey and route reports processed successfully.")
         low_response_questions_df = create_low_response_report(df)
+        print("Low response questions report created successfully.")
         refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df, race_label_map)
+        print("Refusal analysis and refusal race data processed successfully.")
 
         # Use admin-configured demographic fields from S3 if available
         bucket_name = os.getenv('bucket_name')
@@ -1541,7 +1702,8 @@ def fetch_and_process_data(project,schema):
 
 
 
-    if project=='KCATA' or project=='ACTRANSIT' or project=='SALEM' or project == 'LACMTA_FEEDER':
+    # if project=='KCATA' or project=='ACTRANSIT' or project=='SALEM' or project == 'LACMTA_FEEDER':
+    if project:
         # Check if weekend data exists
         has_weekend_data = False
         weekend_dataframes = {}
