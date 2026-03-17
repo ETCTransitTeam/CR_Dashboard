@@ -292,7 +292,7 @@ def load_projects_from_db():
     for project in projects:
         if project in periods_by_project and periods_by_project[project]:
             projects[project]["time_period_config"] = {
-                "periods": periods_by_project[project],
+                "periods": deduplicate_periods(periods_by_project[project]),
                 "time_mapping": mapping_by_project.get(project) or {}
             }
 
@@ -383,16 +383,21 @@ PROJECTS_USING_TIME_PERIOD_CONFIG = {"KCATA", "ACTRANSIT", "SALEM", "LACMTA_FEED
 
 
 def get_time_period_config(project):
-    """Return time period config for project (from PROJECTS or TIME_PERIOD_CONFIG_BY_PROJECT)."""
+    """Return time period config for project (from PROJECTS or TIME_PERIOD_CONFIG_BY_PROJECT). Periods are deduplicated by (cr_name, db_name, diff_name)."""
     try:
-        
         proj = PROJECTS.get(project, {})
         print(f"Project config for {project}:", proj)
         if isinstance(proj, dict) and proj.get("time_period_config"):
-            return proj["time_period_config"]
+            config = proj["time_period_config"]
+            if config and config.get("periods"):
+                config = {**config, "periods": deduplicate_periods(config["periods"])}
+            return config
     except Exception:
         pass
-    return TIME_PERIOD_CONFIG_BY_PROJECT.get(project)
+    cfg = TIME_PERIOD_CONFIG_BY_PROJECT.get(project)
+    if cfg and cfg.get("periods"):
+        cfg = {**cfg, "periods": deduplicate_periods(cfg["periods"])}
+    return cfg
 
 
 def get_time_period_rename_dict(project):

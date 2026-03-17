@@ -44,6 +44,18 @@ def clean_string(s):
     return s.replace('_', '').replace('[', '').replace(']', '').replace(' ','').replace('#','').lower()
 
 
+def deduplicate_periods(periods):
+    """Remove duplicate time periods by (cr_name, db_name, diff_name), preserving order. Use everywhere time_period_config['periods'] is read."""
+    if not periods:
+        return []
+    seen = {}
+    for p in periods:
+        key = (p.get("cr_name"), p.get("db_name"), p.get("diff_name"))
+        if key not in seen:
+            seen[key] = p
+    return list(seen.values())
+
+
 def get_distance_between_coordinates(lat1, lon1, lat2, lon2):
     try:
         lat1 = float(lat1)
@@ -194,7 +206,7 @@ def create_time_value_df_with_display(overall_df, df, time_column, project, time
     """
     # Dynamic path: use time_period_config when provided (skip KCATA RAIL which uses different df filtering)
     if time_period_config and time_period_config.get("periods") and project != "KCATA RAIL":
-        periods = time_period_config["periods"]
+        periods = deduplicate_periods(time_period_config["periods"])
         time_group_mapping = {i + 1: p["codes"] for i, p in enumerate(periods)}
         time_mapping = time_period_config.get("time_mapping") or {}
         num_periods = len(periods)
@@ -498,7 +510,7 @@ def create_time_value_df_with_display(overall_df, df, time_column, project, time
 def create_route_direction_level_df(overalldf, df, time_column, project, time_period_config=None):
     # Dynamic path: use time_period_config when provided (skip KCATA RAIL which has station-level logic)
     if time_period_config and time_period_config.get("periods") and project != "KCATA RAIL":
-        periods = time_period_config["periods"]
+        periods = deduplicate_periods(time_period_config["periods"])
         new_df = pd.DataFrame()
         new_df["ROUTE_SURVEYEDCode"] = overalldf["LS_NAME_CODE"]
 
@@ -1374,12 +1386,10 @@ def create_station_wise_route_level_df_kcata(overall_df, df, time_column):
 #     return logger
 
 def create_route_level_df(overall_df, route_df, df, time_column, project, time_period_config=None):
-    # logger = setup_logging()
     print(f"Creating route level dataframe for project: {project} with time period config: {time_period_config}")
     try:
         if time_period_config and time_period_config.get("periods"):
-
-            periods = time_period_config["periods"]
+            periods = deduplicate_periods(time_period_config["periods"])
             cr_cols = [p["cr_name"] for p in periods]
             db_cols = [p["db_name"] for p in periods]
             diff_cols = [p["diff_name"] for p in periods]
@@ -1427,9 +1437,7 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             # -----------------------------
 
             for p in periods:
-
                 subset = df[df[time_column[0]].isin(p["codes"])]
-
                 subset = subset.drop_duplicates(subset="id")
 
                 counts = (
@@ -1442,7 +1450,6 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
                 new_df = new_df.merge(counts, on="ROUTE_SURVEYEDCode", how="left")
 
             new_df[db_cols] = new_df[db_cols].fillna(0)
-
             new_df["DB_Total"] = new_df[db_cols].sum(axis=1)
 
             # -----------------------------
@@ -4975,7 +4982,7 @@ def process_route_comparison_data(cr_df, df, ke_df, project, time_period_config=
     # ---------------- TIME PERIOD DEFINITIONS ----------------
     # Dynamic path: use time_period_config when provided (for new projects)
     if time_period_config and time_period_config.get("periods"):
-        periods = time_period_config["periods"]
+        periods = deduplicate_periods(time_period_config["periods"])
         
         # ---------------- CREATE CR DATAFRAME (DYNAMIC) ----------------
         new_df = pd.DataFrame()
@@ -5152,7 +5159,7 @@ def create_route_level_comparison(new_df, time_period_config=None):
     
     # If time_period_config is provided, use it to determine columns
     if time_period_config and time_period_config.get("periods"):
-        periods = time_period_config["periods"]
+        periods = deduplicate_periods(time_period_config["periods"])
         cr_columns = [p["cr_name"] for p in periods]
         db_columns = [p["db_name"] for p in periods]
         db_id_columns = [f'{p["db_name"]}_IDS' for p in periods]
@@ -5210,7 +5217,7 @@ def create_route_level_comparison(new_df, time_period_config=None):
     
     # Calculate differences dynamically
     if time_period_config and time_period_config.get("periods"):
-        periods = time_period_config["periods"]
+        periods = deduplicate_periods(time_period_config["periods"])
         for index, row in route_level_df.iterrows():
             try:
                 total_diff_sum = 0
