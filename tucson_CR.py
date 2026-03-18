@@ -2277,7 +2277,7 @@ else:
                 st.rerun()
 
         def daily_totals_page():
-            if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
+            if not dataframes.get('survey_detail_totals_df', pd.DataFrame()).empty:
                 st.title("Daily Totals - Interviewer and Route Level")
                 
                 # Create tabs
@@ -5653,9 +5653,9 @@ else:
                 cols = fetch_table_columns(elvis_config["database"], elvis_config["table"])
                 if cols is None:
                     return None
-                if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
-                    from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
-                    cols = [KCATA_HEADER_MAPPING.get(c, c) for c in cols]
+                # if project in ["KCATA", "KCATA RAIL", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"]:
+                from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
+                cols = [KCATA_HEADER_MAPPING.get(c, c) for c in cols]
                 return cols
 
             with st.spinner("Loading database columns for matching..."):
@@ -6558,21 +6558,20 @@ else:
             elif current_page=='timedetails':
                 time_details(detail_df)
             elif current_page == "dailytotals":
-                if 'stl' in selected_project or 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
-                    daily_totals_page()
+                daily_totals_page()
             elif current_page == "low_response_questions_tab":
-                if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:  # Add this new route
-                    low_response_questions_page()
+                low_response_questions_page()
             elif current_page == "refusal":  # ADD THIS NEW PAGE FOR REFUSAL ANALYSIS
-                if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
-                    show_refusal_analysis(refusal_analysis_df, refusal_race_df)
+                show_refusal_analysis(refusal_analysis_df, refusal_race_df)
             elif current_page == "surveyreport":
-                if any(x in selected_project for x in ['stl', 'kcata', 'actransit', 'salem', 'lacmta_feeder']):
-
+                if not surveyor_report_trends_df.empty and not route_report_trends_df.empty:
                     surveyor_last_row = surveyor_report_trends_df.iloc[-1].to_dict()
                     route_last_row = route_report_trends_df.iloc[-1].to_dict()
-
-                    filter_col = "Date_Surveyor" if 'stl' in selected_project else "Date"
+                    # Pick whichever date column exists for the survey report
+                    if "Date_Surveyor" in surveyor_report_date_trends_df.columns:
+                        filter_col = "Date_Surveyor"
+                    else:
+                        filter_col = "Date"
 
                     # ==========================
                     # CREATE TABS
@@ -6615,17 +6614,20 @@ else:
                             date_label="Route"
                         )
 
+                else:
+                    st.warning("No survey/route report data available.")
+
             elif current_page == "route_comparison":
-                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in selected_schema.lower():
-                    route_comparison_page()
+                route_comparison_page()
             elif current_page == "reverse_routes":
-                if 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in selected_schema.lower():
-                    reverse_routes_page()
+                reverse_routes_page()
             elif current_page == "location_maps":  # Add this line
                 location_maps_page()
             elif current_page == "demographic":
-                if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
-                   demographic_review_page(demographic_review_df)
+                if demographic_review_df is not None and not demographic_review_df.empty and "Question" in demographic_review_df.columns:
+                    demographic_review_page(demographic_review_df)
+                else:
+                    st.warning("No demographic data available.")
             elif current_page == "accounts_management":
                 # Super admin check in routing
                 current_user_email = st.session_state.get("user", {}).get("email", "")
