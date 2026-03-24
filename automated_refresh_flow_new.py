@@ -1084,8 +1084,10 @@ def fetch_and_process_data(project,schema):
 
     weekend_df=df[df['Day'].isin(['Saturday','Sunday'])]
     print("Weekend DF length:", len(weekend_df))
-    # weekday_df=df[~(df['Day'].isin(['Saturday','Sunday']))]
-    weekday_df = df.copy()
+    if project == "LACMTA_FEEDER":
+        weekday_df = df.copy()
+    else:
+        weekday_df=df[~(df['Day'].isin(['Saturday','Sunday']))]
     print("Weekday DF length:", len(weekday_df))
     #to get the TIMEON column
     time_column_check=['timeoncode']
