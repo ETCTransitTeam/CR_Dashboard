@@ -22,6 +22,8 @@ from utils import extract_race_labels_from_header, fetch_data, apply_lacmta_agen
 warnings.filterwarnings('ignore')
 
 load_dotenv()
+APP_CONFIG_SCHEMA = os.getenv("APP_CONFIG_SCHEMA", "APP_CONFIG").strip() or "APP_CONFIG"
+
 
 with open("path/to/key.p8", "rb") as key:
     private_key = serialization.load_pem_private_key(
@@ -220,7 +222,7 @@ def load_projects_from_db():
     conn = create_snowflake_connection()
     cur = conn.cursor()
 
-    query = """
+    query = f"""
     SELECT
         PROJECT_NAME,
         BASE_SCHEMA,
@@ -231,7 +233,7 @@ def load_projects_from_db():
         DETAILS_FILE_NAME,
         CR_FILE_NAME,
         KINGELVIS_FILE_NAME
-    FROM APP_CONFIG.PROJECT_CONFIGS
+    FROM {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
     WHERE IS_ACTIVE = TRUE
     """
     cur.execute(query)
@@ -254,18 +256,18 @@ def load_projects_from_db():
 
     # Load time period config from PROJECT_TIME_PERIODS + PROJECT_TIME_MAPPING (if tables exist)
     try:
-        cur.execute("""
+        cur.execute(f"""
             SELECT PROJECT_NAME, PERIOD_ORDER, CR_NAME, DB_NAME, DIFF_NAME, CR_COL, CODES
-            FROM APP_CONFIG.PROJECT_TIME_PERIODS
+            FROM {APP_CONFIG_SCHEMA}.PROJECT_TIME_PERIODS
             ORDER BY PROJECT_NAME, PERIOD_ORDER
         """)
         period_rows = cur.fetchall()
     except Exception:
         period_rows = []
     try:
-        cur.execute("""
+        cur.execute(f"""
             SELECT PROJECT_NAME, CODE, DISPLAY_LABEL
-            FROM APP_CONFIG.PROJECT_TIME_MAPPING
+            FROM {APP_CONFIG_SCHEMA}.PROJECT_TIME_MAPPING
         """)
         mapping_rows = cur.fetchall()
     except Exception:
@@ -380,6 +382,62 @@ TIME_PERIOD_CONFIG_BY_PROJECT = {
 }
 
 PROJECTS_USING_TIME_PERIOD_CONFIG = {"KCATA", "ACTRANSIT", "SALEM", "LACMTA_FEEDER"}
+
+DEFAULT_DAY_TYPE_MAPPING = {
+    "Monday": "Weekday",
+    "Tuesday": "Weekday",
+    "Wednesday": "Weekday",
+    "Thursday": "Weekday",
+    "Friday": "Weekday",
+    "Saturday": "Weekend",
+    "Sunday": "Weekend",
+}
+
+
+def get_day_mapping(project_name):
+    """Fetch day->type mapping from APP_CONFIG table; fallback to defaults."""
+    normalized_project = str(project_name or "").strip()
+    if not normalized_project:
+        return DEFAULT_DAY_TYPE_MAPPING.copy()
+
+    conn = None
+    cur = None
+    try:
+        conn = create_snowflake_connection()
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT DAY_NAME, DAY_TYPE
+            FROM {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS
+            WHERE UPPER(PROJECT_NAME) = UPPER(%s)
+            """,
+            (normalized_project,),
+        )
+        rows = cur.fetchall()
+    except Exception:
+        rows = []
+    finally:
+        try:
+            if cur:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+    if not rows:
+        return DEFAULT_DAY_TYPE_MAPPING.copy()
+
+    mapping = DEFAULT_DAY_TYPE_MAPPING.copy()
+    for day_name, day_type in rows:
+        day_key = str(day_name or "").strip()
+        day_value = str(day_type or "").strip().title()
+        if day_key and day_value in {"Weekday", "Weekend"}:
+            mapping[day_key] = day_value
+    return mapping
 
 
 def get_time_period_config(project):
@@ -1082,12 +1140,16 @@ def fetch_and_process_data(project,schema):
     })
 
 
-    weekend_df=df[df['Day'].isin(['Saturday','Sunday'])]
+    day_mapping = get_day_mapping(project)
+    print("Day mapping used for classification:", day_mapping)
+    df['DAY_TYPE'] = df['Day'].map(day_mapping).fillna('Weekday')
+    weekend_df = df[df['DAY_TYPE'] == 'Weekend']
     print("Weekend DF length:", len(weekend_df))
     if project == "LACMTA_FEEDER":
+        # Preserve existing behavior for feeder project
         weekday_df = df.copy()
     else:
-        weekday_df=df[~(df['Day'].isin(['Saturday','Sunday']))]
+        weekday_df = df[df['DAY_TYPE'] == 'Weekday']
     print("Weekday DF length:", len(weekday_df))
     #to get the TIMEON column
     time_column_check=['timeoncode']

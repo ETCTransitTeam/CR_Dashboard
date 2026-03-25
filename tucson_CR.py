@@ -23,6 +23,7 @@ from io import BytesIO, StringIO
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
+APP_CONFIG_SCHEMA = os.getenv("APP_CONFIG_SCHEMA", "APP_CONFIG").strip() or "APP_CONFIG"
 
 with open("path/to/key.p8", "rb") as key:
     private_key = serialization.load_pem_private_key(
@@ -1557,10 +1558,14 @@ else:
         # === ADD PROFESSIONAL HEADER HERE - REPLACE YOUR CURRENT HEADER ===
         def create_professional_header():
             from zoneinfo import ZoneInfo
+            # Safe defaults for newly created schemas with no tables/data yet
+            weekday_records = 0
+            weekend_records = 0
+            total_records = 0
+            formatted_date = "Awaiting Data"
+            most_recent_completed_date = None
             if not has_project_data:
-                total_records = 0
-                formatted_date = "Awaiting Data"
-                most_recent_completed_date = None
+                pass
             else:
                 # =====================================================
                 # GET LAST SYNC DATE FROM SNOWFLAKE
@@ -1615,11 +1620,18 @@ else:
 
                 most_recent_completed_date = pd.to_datetime(completed_dates).max()
 
-                # Determine total records (based on current page)
-                if current_page == "weekend":
-                    total_records = int(wkend_df["# of Surveys"].sum())
-                else:
-                    total_records = int(wkday_df["# of Surveys"].sum())
+                if has_project_data:
+                    try:
+                        weekday_records = int(wkday_df["# of Surveys"].sum())
+                    except:
+                        weekday_records = 0
+
+                    try:
+                        weekend_records = int(wkend_df["# of Surveys"].sum())
+                    except:
+                        weekend_records = 0
+
+                total_records = weekday_records + weekend_records
 
             # === STYLING ===
             st.markdown("""
@@ -1648,32 +1660,32 @@ else:
             .header-content {
                 display: flex;
                 justify-content: space-between;
-                align-items: center;
+                align-items: center; /* ✅ vertically center everything */
                 position: relative;
                 z-index: 1;
                 gap: 1rem;
             }
 
-            .header-left h1 {
-                font-size: 2.2rem;
-                font-weight: 700;
-                letter-spacing: -0.5px;
-                margin-bottom: 0.3rem;
-                color: #fff;
+            .header-left {
+                display: flex;
+                flex-direction: column;
+                justify-content: center; /* ✅ vertically center h1 + p relative to cards */
+                gap: 0.2rem;             /* small gap between title and subtitle */
             }
 
             .header-left p {
-                font-size: 1.05rem;
+                font-size: 0.95rem;
                 font-weight: 400;
-                opacity: 0.9;
+                opacity: 0.85;
                 margin: 0;
+                line-height: 1.3;
                 color: #fff;
             }
 
             .metric-group {
                 display: flex;
-                gap: 0.8rem;
-                flex-wrap: wrap;
+                gap: 0.6rem;
+                flex-wrap: nowrap;
                 justify-content: flex-end;
             }
 
@@ -1684,7 +1696,7 @@ else:
                 border: 1px solid rgba(180, 200, 255, 0.5);
                 padding: 0.75rem 1rem;
                 text-align: center;
-                min-width: 160px;
+                min-width: 130px;
                 transition: all 0.25s ease;
                 box-shadow: 0 2px 6px rgba(0,0,0,0.05);
         }
@@ -1714,14 +1726,14 @@ else:
             letter-spacing: -0.3px;
         }
 
-        @media (max-width: 1100px) {
+        @media (max-width: 1200px) {
             .header-content {
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 1.2rem;
             }
             .metric-group {
-                justify-content: flex-start;
+                flex-wrap: wrap;
             }
             .header-left h1 {
                 font-size: 1.9rem;
@@ -1740,8 +1752,12 @@ else:
                     </div>
                     <div class="metric-group">
                         <div class="metric-card">
-                            <p class="metric-label">Total Records</p>
-                            <p class="metric-value">{total_records:,}</p>
+                            <p class="metric-label">Weekday Records</p>
+                            <p class="metric-value">{weekday_records:,}</p>
+                        </div>
+                        <div class="metric-card">
+                            <p class="metric-label">Weekend Records</p>
+                            <p class="metric-value">{weekend_records:,}</p>
                         </div>
                         <div class="metric-card">
                             <p class="metric-label">⏱ Last Refresh</p>
@@ -5836,7 +5852,7 @@ else:
                 kingelvis_file = st.text_input("KingElvis File")
 
                 st.markdown("---")
-                st.markdown("**Time Period Config (optional)**")
+                st.markdown("**Time Period Config**")
                 st.caption("Paste table data with columns: TIME_ON[Code], TIME_ON, TIME_PERIOD[Code], TIME_PERIOD. OPPO_TIME[CODE] column will be ignored if present. Leave empty to use built-in defaults.")
                 
                 # Text area for pasting tab-separated or comma-separated table data
@@ -5866,6 +5882,41 @@ else:
                 # Display parsed table if available
                 if st.session_state.get("time_period_config_table") is not None:
                     st.dataframe(st.session_state["time_period_config_table"], use_container_width=True)
+
+                st.markdown("---")
+                st.markdown("**Day Type Assignment (Weekday / Weekend)**")
+
+                default_mapping = {
+                    "Monday": "Weekday",
+                    "Tuesday": "Weekday",
+                    "Wednesday": "Weekday",
+                    "Thursday": "Weekday",
+                    "Friday": "Weekday",
+                    "Saturday": "Weekend",
+                    "Sunday": "Weekend",
+                }
+
+                day_assignment = {}
+
+                # Header row
+                header_col1, header_col2 = st.columns([2, 3])
+                with header_col1:
+                    st.markdown("**Day**")
+                with header_col2:
+                    st.markdown("**Type**")
+
+                for day, default in default_mapping.items():
+                    col1, col2 = st.columns([2, 3])
+                    with col1:
+                        st.write(day)
+                    with col2:
+                        day_assignment[day] = st.selectbox(
+                            f"{day} Type",
+                            ["Weekday", "Weekend"],
+                            index=0 if default == "Weekday" else 1,
+                            key=f"{day}_type",
+                            label_visibility="collapsed",  # hides the redundant label
+                        )
 
                 submit = st.form_submit_button("Save Project")
 
@@ -5917,8 +5968,27 @@ else:
                     cur.execute(create_schema_query)
                     st.info(f"📘 Schema '{schema_name}' created at the database level")
 
-                    query = """
-                        INSERT INTO APP_CONFIG.PROJECT_CONFIGS
+                    duplicate_check_query = f"""
+                        SELECT
+                            MAX(CASE WHEN UPPER(PROJECT_NAME) = UPPER(%s) THEN 1 ELSE 0 END) AS PROJECT_EXISTS,
+                            MAX(CASE WHEN UPPER(BASE_SCHEMA) = UPPER(%s) THEN 1 ELSE 0 END) AS SCHEMA_EXISTS
+                        FROM {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
+                    """
+                    cur.execute(duplicate_check_query, (project_name, schema_name))
+                    duplicate_row = cur.fetchone() or (0, 0)
+                    project_exists = int(duplicate_row[0] or 0) == 1
+                    schema_exists = int(duplicate_row[1] or 0) == 1
+                    if project_exists or schema_exists:
+                        duplicate_messages = []
+                        if project_exists:
+                            duplicate_messages.append(f"Project '{project_name}' already exists")
+                        if schema_exists:
+                            duplicate_messages.append(f"Base schema '{schema_name}' is already configured")
+                        st.error("Duplicate configuration not allowed: " + "; ".join(duplicate_messages))
+                        st.stop()
+
+                    query = f"""
+                        INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
                         (
                             PROJECT_NAME,
                             BASE_SCHEMA,
@@ -6082,17 +6152,17 @@ else:
                                 )
                             st.info(f"📊 PROJECT_PERIOD_MAPPING table created in schema '{schema_name}'")
                             
-                            # Create APP_CONFIG schema if it doesn't exist
+                            # Create app-config schema if it doesn't exist
                             try:
-                                cur.execute("CREATE SCHEMA IF NOT EXISTS APP_CONFIG")
+                                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {APP_CONFIG_SCHEMA}")
                             except Exception as e:
                                 # Schema might already exist or we don't have permission, continue
                                 pass
                             
-                            # Create APP_CONFIG.PROJECT_TIME_PERIODS table if it doesn't exist
+                            # Create PROJECT_TIME_PERIODS table if it doesn't exist
                             try:
-                                cur.execute("""
-                                    CREATE TABLE IF NOT EXISTS APP_CONFIG.PROJECT_TIME_PERIODS (
+                                cur.execute(f"""
+                                    CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_TIME_PERIODS (
                                         PROJECT_NAME    VARCHAR NOT NULL,
                                         PERIOD_ORDER    INTEGER NOT NULL,
                                         CR_NAME         VARCHAR NOT NULL,
@@ -6107,10 +6177,10 @@ else:
                                 # Table might already exist, continue
                                 pass
                             
-                            # Create APP_CONFIG.PROJECT_TIME_MAPPING table if it doesn't exist
+                            # Create PROJECT_TIME_MAPPING table if it doesn't exist
                             try:
-                                cur.execute("""
-                                    CREATE TABLE IF NOT EXISTS APP_CONFIG.PROJECT_TIME_MAPPING (
+                                cur.execute(f"""
+                                    CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_TIME_MAPPING (
                                         PROJECT_NAME    VARCHAR NOT NULL,
                                         CODE            VARCHAR NOT NULL,
                                         DISPLAY_LABEL   VARCHAR NOT NULL,
@@ -6121,7 +6191,7 @@ else:
                                 # Table might already exist, continue
                                 pass
                             
-                            # Now populate APP_CONFIG.PROJECT_TIME_PERIODS and APP_CONFIG.PROJECT_TIME_MAPPING
+                            # Now populate PROJECT_TIME_PERIODS and PROJECT_TIME_MAPPING
                             # Group by PERIOD_CODE to create periods
                             periods_by_code = tod_df.groupby(["TIME_PERIOD_CODE", "TIME_PERIOD_NAME"]).agg({
                                 "TIME_ON_CODE": lambda x: list(x)
@@ -6150,8 +6220,8 @@ else:
                                 codes_str = ",".join(str(c).strip() for c in codes_list if str(c).strip())
                                 
                                 cur.execute(
-                                    """
-                                    INSERT INTO APP_CONFIG.PROJECT_TIME_PERIODS
+                                    f"""
+                                    INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_TIME_PERIODS
                                     (PROJECT_NAME, PERIOD_ORDER, CR_NAME, DB_NAME, DIFF_NAME, CR_COL, CODES)
                                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                                     """,
@@ -6165,14 +6235,14 @@ else:
                                 label = str(row["TIME_ON_LABEL"]).strip()
                                 if code:
                                     cur.execute(
-                                        """
-                                        INSERT INTO APP_CONFIG.PROJECT_TIME_MAPPING
+                                        f"""
+                                        INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_TIME_MAPPING
                                         (PROJECT_NAME, CODE, DISPLAY_LABEL)
                                         VALUES (%s, %s, %s)
                                         """,
                                         (project_name, code, label),
                                     )
-                            
+
                         except Exception as te:
                             try:
                                 conn.rollback()
@@ -6182,6 +6252,38 @@ else:
                             import traceback
                             st.error(traceback.format_exc())
                             st.stop()
+
+                    # Create and populate day assignment table (Weekday/Weekend)
+                    try:
+                        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {APP_CONFIG_SCHEMA}")
+                    except Exception:
+                        pass
+
+                    try:
+                        cur.execute(f"""
+                            CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS (
+                                PROJECT_NAME VARCHAR NOT NULL,
+                                DAY_NAME VARCHAR NOT NULL,
+                                DAY_TYPE VARCHAR NOT NULL,
+                                PRIMARY KEY (PROJECT_NAME, DAY_NAME)
+                            )
+                        """)
+                    except Exception:
+                        pass
+
+                    cur.execute(
+                        f"DELETE FROM {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS WHERE PROJECT_NAME = %s",
+                        (project_name,),
+                    )
+                    for day_name, day_type in day_assignment.items():
+                        cur.execute(
+                            f"""
+                            INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS
+                            (PROJECT_NAME, DAY_NAME, DAY_TYPE)
+                            VALUES (%s, %s, %s)
+                            """,
+                            (project_name, str(day_name).strip(), str(day_type).strip()),
+                        )
 
                     conn.commit()
                     cur.close()

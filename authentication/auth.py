@@ -20,6 +20,7 @@ import streamlit.components.v1 as components
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 load_dotenv()
+APP_CONFIG_SCHEMA = os.getenv("APP_CONFIG_SCHEMA", "APP_CONFIG").strip() or "APP_CONFIG"
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
@@ -62,9 +63,9 @@ def get_projects():
     conn = user_connect_to_snowflake()
     cur = conn.cursor()
 
-    query = """
+    query = f"""
     SELECT PROJECT_NAME, BASE_SCHEMA
-    FROM APP_CONFIG.PROJECT_CONFIGS
+    FROM {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
     WHERE IS_ACTIVE = TRUE
     """
 
