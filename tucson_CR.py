@@ -24,6 +24,8 @@ from io import BytesIO, StringIO
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
 APP_CONFIG_SCHEMA = os.getenv("APP_CONFIG_SCHEMA", "APP_CONFIG").strip() or "APP_CONFIG"
+# Unquoted Snowflake identifiers used in DDL (CREATE SCHEMA, etc.): letter or _, then letters/digits/_/$.
+_SNOWFLAKE_UNQUOTED_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 with open("path/to/key.p8", "rb") as key:
     private_key = serialization.load_pem_private_key(
@@ -5921,16 +5923,16 @@ else:
                 submit = st.form_submit_button("Save Project")
 
             if submit:
-                # Strip leading/trailing spaces
-                project_name = project_name.strip()
-                schema_name = schema_name.strip()
-                elvis_db = elvis_db.strip()
-                elvis_table = elvis_table.strip()
-                main_db = main_db.strip()
-                main_table = main_table.strip()
-                details_file = details_file.strip()
-                cr_file = cr_file.strip()
-                kingelvis_file = kingelvis_file.strip()
+                # Normalize: treat None/whitespace-only as empty (avoids SQL like CREATE SCHEMA IF NOT EXISTS <EOF>)
+                project_name = (project_name or "").strip()
+                schema_name = (schema_name or "").strip()
+                elvis_db = (elvis_db or "").strip()
+                elvis_table = (elvis_table or "").strip()
+                main_db = (main_db or "").strip()
+                main_table = (main_table or "").strip()
+                details_file = (details_file or "").strip()
+                cr_file = (cr_file or "").strip()
+                kingelvis_file = (kingelvis_file or "").strip()
 
                 # Required fields (including main_db and main_table)
                 missing = []
@@ -5960,13 +5962,44 @@ else:
                     )
                     st.stop()
 
+                if not _SNOWFLAKE_UNQUOTED_IDENTIFIER.match(schema_name):
+                    st.error(
+                        "Schema Name must be a valid Snowflake identifier: start with a letter or underscore, "
+                        "then letters, digits, underscore, or $. No spaces or special characters "
+                        "(this is required for CREATE SCHEMA)."
+                    )
+                    st.stop()
+
+                # Time Period Config is required to avoid partial project setup
+                time_period_df_required = st.session_state.get("time_period_config_table")
+                if time_period_df_required is None or time_period_df_required.empty:
+                    st.error(
+                        "Time Period Config is required. Please paste/load the table before saving the project."
+                    )
+                    st.stop()
+
+                conn = None
+                cur = None
                 try:
                     conn = create_snowflake_connection()
                     cur = conn.cursor()
 
-                    create_schema_query = f"CREATE SCHEMA IF NOT EXISTS {schema_name}"
-                    cur.execute(create_schema_query)
-                    st.info(f"📘 Schema '{schema_name}' created at the database level")
+                    # Ensure app-config schema/table exist before duplicate checks (no project schema yet)
+                    cur.execute(f"CREATE SCHEMA IF NOT EXISTS {APP_CONFIG_SCHEMA}")
+                    cur.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS (
+                            PROJECT_NAME VARCHAR NOT NULL,
+                            BASE_SCHEMA VARCHAR NOT NULL,
+                            ELVIS_DATABASE VARCHAR,
+                            ELVIS_TABLE VARCHAR,
+                            MAIN_DATABASE VARCHAR,
+                            MAIN_TABLE VARCHAR,
+                            DETAILS_FILE_NAME VARCHAR,
+                            CR_FILE_NAME VARCHAR,
+                            KINGELVIS_FILE_NAME VARCHAR,
+                            IS_ACTIVE BOOLEAN DEFAULT TRUE
+                        )
+                    """)
 
                     duplicate_check_query = f"""
                         SELECT
@@ -5984,8 +6017,17 @@ else:
                             duplicate_messages.append(f"Project '{project_name}' already exists")
                         if schema_exists:
                             duplicate_messages.append(f"Base schema '{schema_name}' is already configured")
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
                         st.error("Duplicate configuration not allowed: " + "; ".join(duplicate_messages))
                         st.stop()
+
+                    # Only create the project schema after duplicate check passes (avoids orphan schemas on reject)
+                    create_schema_query = f"CREATE SCHEMA IF NOT EXISTS {schema_name}"
+                    cur.execute(create_schema_query)
+                    st.info(f"📘 Schema '{schema_name}' created at the database level")
 
                     query = f"""
                         INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
@@ -6256,10 +6298,6 @@ else:
                     # Create and populate day assignment table (Weekday/Weekend)
                     try:
                         cur.execute(f"CREATE SCHEMA IF NOT EXISTS {APP_CONFIG_SCHEMA}")
-                    except Exception:
-                        pass
-
-                    try:
                         cur.execute(f"""
                             CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS (
                                 PROJECT_NAME VARCHAR NOT NULL,
@@ -6268,8 +6306,12 @@ else:
                                 PRIMARY KEY (PROJECT_NAME, DAY_NAME)
                             )
                         """)
-                    except Exception:
-                        pass
+                    except Exception as day_table_error:
+                        st.error(
+                            f"Could not create {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS. "
+                            f"Please verify schema name and role permissions. Error: {day_table_error}"
+                        )
+                        st.stop()
 
                     cur.execute(
                         f"DELETE FROM {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS WHERE PROJECT_NAME = %s",
@@ -6286,8 +6328,6 @@ else:
                         )
 
                     conn.commit()
-                    cur.close()
-                    conn.close()
 
                     st.success("✅ Project added successfully")
                     st.balloons()  # celebratory balloons on success
@@ -6300,6 +6340,17 @@ else:
                     except Exception:
                         pass
                     st.error(f"❌ Failed to add project: {e}")
+                finally:
+                    try:
+                        if cur:
+                            cur.close()
+                    except Exception:
+                        pass
+                    try:
+                        if conn:
+                            conn.close()
+                    except Exception:
+                        pass
 
 
 

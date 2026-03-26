@@ -1332,7 +1332,18 @@ def fetch_and_process_data(project,schema):
         route_level_df = create_route_level_comparison(new_df, time_period_config)
         comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_merged_df_filtered, route_level_df, project, stops_df)
         print("Route comparison data processed successfully.")
+        # Create a lowercase mapping of columns
+        col_map = {col.lower(): col for col in df.columns}
 
+        def clean(s):
+            return s.replace('_', '').replace('[', '').replace(']', '').replace(' ','').replace('#','').lower()
+
+        col_map = {clean(col): col for col in df.columns}
+
+        if "registertowinyncode" not in col_map and "xregistertowinyncode" in col_map:
+            df = df.rename(columns={
+                col_map["xregistertowinyncode"]: "REGISTER_TO_WIN_YNCODE"
+            })
         survey_report_df = process_surveyor_data_transit_ls6(ke_df, df, project, race_label_map)
         route_report_df = process_route_data_transit_ls6(ke_df, df, race_label_map)
         print("Survey and route reports processed successfully.")
