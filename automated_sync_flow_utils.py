@@ -5512,6 +5512,10 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/salemor-cherriots25/lime"
         elif project_name.lower() == 'lacmta_feeder':
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/lacmta25/lime"
+        elif project_name.lower() == 'parkcity':
+            return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/parkcity26/lime"
+        elif project_name.lower() == 'indygo_brt':
+            return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/indygobrt26/lime"
         else:
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/kc-streetcar25/lime"
 
