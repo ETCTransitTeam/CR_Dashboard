@@ -3884,7 +3884,8 @@ else:
                             # Show top 5 routes with highest needs
                             st.subheader("Top 5 Routes with Highest Needs")
                             top_5_df = simple_df.head(5).copy()
-                            top_5_df.index = range(1, 6)  # Show ranking numbers
+                            # Keep ranking index aligned with available rows (can be < 5)
+                            top_5_df.index = range(1, len(top_5_df) + 1)
                             
                             st.dataframe(
                                 top_5_df[['Route Code', 'What\'s Needed', 'Total Needed']],
