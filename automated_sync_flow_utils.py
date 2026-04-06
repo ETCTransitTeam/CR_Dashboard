@@ -11,6 +11,8 @@ import streamlit as st
 from snowflake.connector.pandas_tools import write_pandas
 import re
 
+from utils import extract_multi_labels_from_header, group_multi_select_columns
+
 
 warnings.filterwarnings('ignore')
 
@@ -5278,9 +5280,14 @@ def create_route_level_comparison(new_df, time_period_config=None):
     
     return route_level_df
 
-def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, project_name, stops_df=None):
+def process_reverse_direction_logic(
+    wkday_overall_df, df, route_level_df, project_name, stops_df=None, elvis_project_name=None
+):
     """
-    Process reverse direction logic for the routes with custom fallback logic per Jason's requirements
+    Process reverse direction logic for the routes with custom fallback logic per Jason's requirements.
+
+    If elvis_project_name is set (from PROJECT_CONFIGS), Clone Records URLs use that heremap path
+    segment; otherwise the previous project_name-based URL mapping is unchanged.
     """
     # Get column names
     trip_oppo_dir_column = check_all_characters_present(df, ['tripinoppodir'])
@@ -5506,6 +5513,9 @@ def process_reverse_direction_logic(wkday_overall_df, df, route_level_df, projec
         return ''
 
     def create_url(record_id):
+        slug = (elvis_project_name or "").strip() if elvis_project_name is not None else ""
+        if slug:
+            return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/{slug}/lime"
         if project_name.lower() == 'actransit':
             return f"https://elvis-wappler.etc-research.com/elvis/elvisheremap/{record_id}/ac-transit25/lime"
         elif project_name.lower() == 'salem':
@@ -7059,12 +7069,151 @@ def create_location_maps_interface(df):
         )
 
 ## Demographic Summary Report
-def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race_label_map=None, question_dict=None, multi_select_fields_override=None, multi_select_field_names=None):
+def _resolve_elvis_column_name(df, name):
     """
-    Build demographic review DataFrame. If question_dict is provided (from Demographic Setup),
-    use it; otherwise use project-specific hardcoded questions.
+    Map a DATA DICTIONARY / S3 field name to the actual column on df (exact, case-insensitive, or clean_string).
+    """
+    if df is None or name is None:
+        return None
+    s = str(name).strip()
+    if not s:
+        return None
+    cols = list(df.columns)
+    if s in cols:
+        return s
+    lower_map = {str(c).lower(): c for c in cols}
+    if s.lower() in lower_map:
+        return lower_map[s.lower()]
+    target = clean_string(s)
+    for c in cols:
+        if clean_string(str(c)) == target:
+            return str(c)
+    return None
+
+
+def _resolve_multi_select_field_columns(df, multi_select_fields):
+    """Rewrite label->column maps so column names match df exactly."""
+    if not multi_select_fields:
+        return multi_select_fields
+    out = {}
+    for field, mmap in multi_select_fields.items():
+        new_m = {}
+        for lbl, col in mmap.items():
+            rc = _resolve_elvis_column_name(df, col)
+            new_m[lbl] = rc if rc is not None else col
+        out[field] = new_m
+    return out
+
+
+def _group_option_lookup_ci(goc, key):
+    """Value from group_option_columns with case-insensitive key match."""
+    if not goc or key is None:
+        return None
+    if key in goc:
+        return goc[key]
+    kl = str(key).lower()
+    for gk, v in goc.items():
+        if str(gk).lower() == kl:
+            return v
+    return None
+
+
+def _question_dict_key_ci(question_dict, gkey):
+    """Canonical question_dict key matching gkey (exact or case-insensitive)."""
+    if not question_dict or gkey is None:
+        return None
+    g = str(gkey).strip()
+    if g in question_dict:
+        return g
+    gl = g.lower()
+    for qk in question_dict:
+        if str(qk).lower() == gl:
+            return qk
+    return None
+
+
+def _multi_select_map_for_column(multi_select_fields, column):
+    """
+    Return (canonical_multi_key, mapping) if column matches a multi-select group key (exact or CI).
+    """
+    if not multi_select_fields or column is None:
+        return None, None
+    if column in multi_select_fields:
+        return column, multi_select_fields[column]
+    cl = str(column).lower()
+    for k, v in multi_select_fields.items():
+        if str(k).lower() == cl:
+            return k, v
+    return None, None
+
+
+def _norm_demographic_cell(val):
+    """Stringify, strip, lowercase; empty for missing / NaN-like values (avoids type mismatch in YES/NO checks)."""
+    if val is None:
+        return ""
+    if isinstance(val, float) and np.isnan(val):
+        return ""
+    # Numeric 1.0 / 0.0 from Excel/DB often stringify to "1.0"/"0.0" — normalize so YES/NO logic matches.
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        if val == 1 or val == 1.0:
+            return "1"
+        if val == 0 or val == 0.0:
+            return "0"
+    s = str(val).strip().lower()
+    if s in ("nan", "none", "<na>"):
+        return ""
+    if s in ("1.0", "1.00"):
+        return "1"
+    if s in ("0.0", "0.00"):
+        return "0"
+    return s
+
+
+def _demographic_cell_is_yes(norm: str) -> bool:
+    if norm in ("yes", "y", "1", "true"):
+        return True
+    try:
+        return float(norm) == 1.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _demographic_cell_is_no(norm: str) -> bool:
+    if norm in ("no", "n", "0", "false"):
+        return True
+    try:
+        return float(norm) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _demographic_cell_answered_yes_no(norm: str) -> bool:
+    return _demographic_cell_is_yes(norm) or _demographic_cell_is_no(norm)
+
+
+## Demographic Summary Report
+def generate_demographic_summary(
+    elvis_df: pd.DataFrame,
+    project_name: str,
+    race_label_map=None,
+    question_dict=None,
+    multi_select_fields_override=None,
+    multi_select_field_names=None,
+    dropped_first_record=None,
+    group_option_columns=None,
+):
+    """
+    Build demographic review DataFrame.
+    - question_dict is None: use project-specific hardcoded questions, or for unknown projects a dynamic
+      list of columns from the dataframe (can include survey metadata like Last Page / Start Language).
+    - question_dict is a dict (including empty {}): treat as S3 Demographic Setup — only those keys are
+      used; never fall back to “all columns”.
     multi_select_field_names: list of field names to treat as multi-select (e.g. Race, DisabilitySpecify);
       used when question_dict is provided to build multi_select_fields from race_label_map and hardcoded mappings.
+    dropped_first_record: optional first row dict (Elvis header row) for bracket labels on suffixed columns;
+      used only to attach label->column maps for configured multi-select bases (never replaces Race logic).
+    group_option_columns: optional dict from Demographic Setup — group key -> {option_label: db_column}
+      built from DATA DICTIONARY **Group Name** (preferred over regex/header inference when present).
     """
     elvis_df = elvis_df.copy()
     demographic_review = []
@@ -7072,28 +7221,54 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race
     # ===============================
     # 1) DEFINE PROJECT-SPECIFIC OR CONFIGURED QUESTIONS
     # ===============================
-    if question_dict and len(question_dict) > 0:
-        # Admin-configured dictionary from Demographic Setup page (from DATA DICTIONARY)
+    # question_dict is None  → use hardcoded project dicts or dynamic “all columns” fallback below.
+    # question_dict is {}    → S3 Demographic Setup loaded but nothing selected; do NOT dump every df column.
+    if question_dict is not None:
+        # Admin-configured dictionary from Demographic Setup page (from DATA DICTIONARY / S3 JSON)
         if multi_select_fields_override is not None:
             multi_select_fields = multi_select_fields_override
         else:
             multi_select_fields = {}
-            names = multi_select_field_names or []
-            if "Race" in names and race_label_map and len(race_label_map) > 0:
-                race_mapping = {label: col for col, label in race_label_map.items()}
-                multi_select_fields["Race"] = race_mapping
-            if "DisabilitySpecify" in names:
-                multi_select_fields["DisabilitySpecify"] = {
+            names = list(multi_select_field_names or [])
+            goc = dict(group_option_columns or {})
+
+            def _names_ci_contains(lst, target_lower):
+                return any(str(x).lower() == target_lower for x in (lst or []))
+
+            race_qk = _question_dict_key_ci(question_dict, "Race")
+            goc_race = _group_option_lookup_ci(goc, "Race")
+            if (race_qk is not None or _names_ci_contains(names, "race")) and goc_race:
+                multi_select_fields[race_qk or "Race"] = dict(goc_race)
+            elif (
+                (race_qk is not None or _names_ci_contains(names, "race"))
+                and race_label_map
+                and len(race_label_map) > 0
+            ):
+                multi_select_fields[race_qk or "Race"] = {
+                    label: col for col, label in race_label_map.items()
+                }
+
+            dis_qk = _question_dict_key_ci(question_dict, "DisabilitySpecify")
+            goc_dis = _group_option_lookup_ci(goc, "DisabilitySpecify")
+            if (dis_qk is not None or _names_ci_contains(names, "disabilityspecify")) and not goc_dis:
+                multi_select_fields[dis_qk or "DisabilitySpecify"] = {
                     "Blindness or vision impairment": "DISABILITY_SPECIFY_1",
                     "Mobility disability": "DISABILITY_SPECIFY_2",
                     "Hearing impairment": "DISABILITY_SPECIFY_4",
                     "Cognitive or intellectual impairment": "DISABILITY_SPECIFY_5",
                     "None": "DISABILITY_SPECIFY_6",
                 }
-            # If Race/DisabilitySpecify in question_dict but not in names, still add Race from race_label_map for backward compat
-            if "Race" in question_dict and "Race" not in multi_select_fields and race_label_map and len(race_label_map) > 0:
-                race_mapping = {label: col for col, label in race_label_map.items()}
-                multi_select_fields["Race"] = race_mapping
+
+            # Group Name maps: align goc keys to canonical question_dict keys (case / spacing).
+            for gkey, colmap in goc.items():
+                if str(gkey).lower() == "race":
+                    continue
+                if not colmap:
+                    continue
+                canon = _question_dict_key_ci(question_dict, gkey)
+                if canon is None:
+                    continue
+                multi_select_fields[canon] = dict(colmap)
     elif project_name.upper() == "ACTRANSIT":
         question_dict = {
                 "AltIncome":  "We want to make sure we get responses from ACT users with different income levels. Is your TOTAL ANNUAL HOUSEHOLD INCOME in 2024 higher than {if(HHSize.NAOK == \"1?",
@@ -7283,26 +7458,55 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race
         if not question_dict:
             question_dict = {"(no demographic columns)": "No demographic question columns found in data."}
 
+    # Generic suffixed multi-select (e.g. HispanicLatino_01): header labels + YES/NO columns.
+    # Skips RACE* (Race remains solely on existing race_label_map / Race branch).
+    if dropped_first_record is not None and question_dict and len(question_dict) > 0:
+        grouped_cols = group_multi_select_columns(elvis_df.columns)
+        multi_label_map = extract_multi_labels_from_header(dropped_first_record, grouped_cols)
+        names = list(multi_select_field_names or [])
+        for base, mapping in multi_label_map.items():
+            if base.upper() == "RACE":
+                continue
+            if base not in question_dict and base not in names:
+                continue
+            if base in multi_select_fields:
+                continue
+            multi_select_fields[base] = mapping
+            if base not in question_dict:
+                question_dict[base] = base.replace("_", " ").title()
+
+    multi_select_fields = _resolve_multi_select_field_columns(elvis_df, multi_select_fields)
+
     # ===============================
     # 2) Helper: YES % for multi-select
     # ===============================
     def calculate_yes_percentages(df, col_map):
+        """Per option: % of respondents with explicit YES/NO on that column who answered YES (counts normalized)."""
         results = {}
         for label, col in col_map.items():
-            if col in df.columns:
-                yes = (df[col].astype(str).str.upper() == "YES").sum()
-                total = df[col].notna().sum()
-                results[label] = (yes / total * 100) if total > 0 else 0
+            if col not in df.columns:
+                results[label] = (0.0, 0)
+                continue
+            ser = df[col].map(_norm_demographic_cell)
+            answered = ser.apply(_demographic_cell_answered_yes_no)
+            yes_mask = ser.apply(_demographic_cell_is_yes)
+            total = int(answered.sum())
+            yes = int((yes_mask & answered).sum())
+            pct = (float(yes) / float(total) * 100.0) if total > 0 else 0.0
+            results[label] = (pct, yes)
         return results
 
     # ===============================
     # 3) MAIN PROCESSING LOOP
     # ===============================
+    RACE_Q_TEXT = "What is your race / ethnicity? (check all that apply)"
     for column, q_text in question_dict.items():
+        if clean_string(str(column)) == "race":
+            q_text = RACE_Q_TEXT
 
         # Special handling for Race column
-        if column in multi_select_fields and column.lower() == "race":
-            race_mapping = multi_select_fields[column]
+        _, race_mapping = _multi_select_map_for_column(multi_select_fields, column)
+        if race_mapping is not None and clean_string(str(column)) == "race":
             
             race_categories = { "Hispanic, all races": 0, "Multiple Races, non-Hispanic": 0 }
             
@@ -7312,9 +7516,13 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race
                     race_categories[f"{race_name}, non-Hispanic"] = 0
             
             for _, row in elvis_df.iterrows():
-                # Collect selected races
-                selected = [race_name for race_name, col_name in race_mapping.items()
-                            if col_name in elvis_df.columns and str(row[col_name]).strip().upper() == "YES"]
+                # Collect selected races (normalized YES so types/whitespace/case don't split counts)
+                selected = [
+                    race_name
+                    for race_name, col_name in race_mapping.items()
+                    if col_name in elvis_df.columns
+                    and _demographic_cell_is_yes(_norm_demographic_cell(row.get(col_name, "")))
+                ]
                 
                 if not selected:
                     continue
@@ -7338,29 +7546,66 @@ def generate_demographic_summary(elvis_df: pd.DataFrame, project_name: str, race
                 })
             continue
 
-        # Handle multi-select
-        if column in multi_select_fields:
-            mapping = multi_select_fields[column]
+        # Hispanic / Latino multi-select: per-option shares + Multiple Responses (no Hispanic-all-race rollup)
+        _, hl_mapping = _multi_select_map_for_column(multi_select_fields, column)
+        if hl_mapping is not None and clean_string(str(column)) == "hispaniclatino":
+            mapping = hl_mapping
+            categories = {"No": 0, "Yes (Single Response)": 0, "Multiple Responses": 0}
+            for _, row in elvis_df.iterrows():
+                selected = [
+                    label
+                    for label, col in mapping.items()
+                    if col in elvis_df.columns
+                    and _demographic_cell_is_yes(_norm_demographic_cell(row.get(col)))
+                ]
+                if not selected:
+                    continue
+                if len(selected) == 1:
+                    if selected[0].strip().lower() == "no":
+                        categories["No"] += 1
+                    else:
+                        categories["Yes (Single Response)"] += 1
+                else:
+                    categories["Multiple Responses"] += 1
+            total = sum(categories.values())
+            for cat, count in categories.items():
+                pct = (count / total * 100) if total > 0 else 0
+                demographic_review.append({
+                    "Question Column": column,
+                    "Question": q_text,
+                    "Answer Code": cat,
+                    "Answer Text": cat,
+                    "Count": count,
+                    "Percentage": round(pct, 2),
+                })
+            continue
+
+        # Handle multi-select (non-Race / non-HispanicLatino)
+        _, gen_mapping = _multi_select_map_for_column(multi_select_fields, column)
+        if gen_mapping is not None and clean_string(str(column)) not in ("race", "hispaniclatino"):
+            mapping = gen_mapping
             percentages = calculate_yes_percentages(elvis_df, mapping)
 
-            for ans, pct in percentages.items():
-                count = int(pct / 100 * len(elvis_df))
+            for ans, (pct, cnt) in percentages.items():
                 demographic_review.append({
                     "Question Column": column,
                     "Question": q_text,
                     "Answer Code": ans,
                     "Answer Text": ans,
-                    "Count": count,
+                    "Count": cnt,
                     "Percentage": round(pct, 2)
                 })
             continue
 
-        # Normal question
-        if column not in elvis_df.columns:
-            print(f"⚠️ Warning: Column '{column}' not found — skipping.")
+        # Normal question (single column)
+        resolved_col = _resolve_elvis_column_name(elvis_df, column)
+        if resolved_col is None:
+            print(f"⚠️ Warning: Column '{column}' not found in survey data — skipping.")
             continue
 
-        col_data = elvis_df[column].dropna().astype(str)
+        raw = elvis_df[resolved_col].dropna()
+        col_data = raw.map(_norm_demographic_cell)
+        col_data = col_data[col_data != ""]
         ans_counts = col_data.value_counts().sort_index()
         total = ans_counts.sum()
 

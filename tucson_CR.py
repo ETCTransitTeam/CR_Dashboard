@@ -7,9 +7,31 @@ import pandas as pd
 import streamlit as st
 import snowflake.connector
 import tempfile
-from automated_refresh_flow_new import fetch_and_process_data, PROJECTS, get_frontend_time_period_columns, refresh_projects
+from automated_refresh_flow_new import (
+    fetch_and_process_data,
+    PROJECTS,
+    get_frontend_time_period_columns,
+    refresh_projects,
+    ensure_project_configs_elvis_project_name_column,
+)
 from automated_sync_flow_utils import check_all_characters_present, clean_string
-from utils import create_csv, download_csv, render_styled_dataframe, validate_filename, validate_kingelvis_sheet, validate_cr_sheets, validate_details_sheets, upload_file_to_s3, list_s3_files, read_data_dictionary_from_s3, load_demographic_setup_from_s3, save_demographic_setup_to_s3, fetch_table_columns
+from utils import (
+    create_csv,
+    download_csv,
+    render_styled_dataframe,
+    validate_filename,
+    validate_kingelvis_sheet,
+    validate_cr_sheets,
+    validate_details_sheets,
+    upload_file_to_s3,
+    list_s3_files,
+    read_data_dictionary_from_s3,
+    load_demographic_setup_from_s3,
+    save_demographic_setup_to_s3,
+    fetch_table_columns,
+    build_group_option_column_maps,
+    demographic_display_key_for_group_name,
+)
 from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
@@ -26,6 +48,8 @@ st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
 APP_CONFIG_SCHEMA = os.getenv("APP_CONFIG_SCHEMA", "APP_CONFIG").strip() or "APP_CONFIG"
 # Unquoted Snowflake identifiers used in DDL (CREATE SCHEMA, etc.): letter or _, then letters/digits/_/$.
 _SNOWFLAKE_UNQUOTED_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+# Single path segment for elvisheremap URLs, e.g. ac-transit25
+_ELVIS_PROJECT_NAME_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 with open("path/to/key.p8", "rb") as key:
     private_key = serialization.load_pem_private_key(
@@ -5133,8 +5157,6 @@ else:
                 st.rerun()
 
         def demographic_review_page(df: pd.DataFrame):
-            # --- PAGE CONFIG ---
-            st.set_page_config(page_title="Demographic Review", layout="wide")
             st.title("🧭 Demographic Review")
 
             # --- MAIN LAYOUT ---
@@ -5614,8 +5636,10 @@ else:
             st.title("📊 Demographic Setup")
             st.markdown(
                 "Configure which fields appear in **Demographic Review** for each project. "
-                "Data is read from the **DATA DICTIONARY** sheet (columns: FIELD NAME, DESCRIPTION) "
-                "in the project's Details file on S3."
+                "Data is read from the **DATA DICTIONARY** sheet (columns: **FIELD NAME**, **DESCRIPTION**, "
+                "optional **GROUP NAME**) in the project's Details file on S3. "
+                "Rows that share the same **Group Name** appear as one **(Multi-Select)** question "
+                "(same idea as Race)."
             )
 
             current_user_email = st.session_state.get("user", {}).get("email", "")
@@ -5655,6 +5679,7 @@ else:
                 st.warning(
                     f"⚠️ **DATA DICTIONARY sheet is not present** in the Details file for **{selected_project}**.\n\n"
                     "Add a sheet named **DATA DICTIONARY** with columns **FIELD NAME** and **DESCRIPTION** "
+                    "(optional **GROUP NAME** to combine multi-select columns) "
                     "to the project's Details file in S3 to use this page."
                 )
                 return
@@ -5691,11 +5716,14 @@ else:
                     return
             # If db_columns is None (e.g. DB unavailable), show all DATA DICTIONARY rows (no filtering)
 
-            # Load saved config (question_dict + multi_select_field_names). Order preserved as in sheet; duplicates removed in utils.
+            # Load saved config (question_dict + multi_select_field_names + group_option_columns).
             config = load_demographic_setup_from_s3(bucket_name, selected_project)
             saved_question_dict = config["question_dict"] if config else {}
             saved_multi_list = config.get("multi_select_field_names", []) if config else []
             saved_multi = set(saved_multi_list)
+
+            has_group_name_col = "GROUP NAME" in dd_df.columns
+            full_group_option_maps = build_group_option_column_maps(dd_df, db_columns)
             # Treat "Race" as selected if saved has "Race" or any RACE_1, RACE_2, ... (backward compat)
             def is_race_column(fn):
                 return bool(re.match(r"^RACE_\d+$", str(fn).strip(), re.IGNORECASE))
@@ -5714,23 +5742,48 @@ else:
             display_names = []
             display_descriptions = []
             display_multi = []
-            race_seen = False
+            seen_group_names = set()
+            legacy_race_row_added = False
+
             for _, row in dd_df.iterrows():
                 fn = str(row["FIELD NAME"]).strip()
                 desc = str(row["DESCRIPTION"]).strip()
-                if is_race_column(fn):
-                    if not race_seen:
-                        display_names.append("Race")
+                raw_gn = row.get("GROUP NAME", "") if has_group_name_col else ""
+                gn = str(raw_gn).strip() if has_group_name_col and pd.notna(raw_gn) and str(raw_gn).strip() else ""
+
+                if gn:
+                    if gn in seen_group_names:
+                        continue
+                    seen_group_names.add(gn)
+                    disp = demographic_display_key_for_group_name(gn)
+                    display_names.append(disp)
+                    # RACE group: always use standard race wording (first row in sheet may be Hispanic, etc.)
+                    if disp == "Race":
                         display_descriptions.append(RACE_DESCRIPTION)
-                        display_multi.append(True)
-                        race_seen = True
-                else:
-                    display_names.append(fn)
-                    display_descriptions.append(desc)
-                    display_multi.append(is_disability_column(fn))
+                    else:
+                        display_descriptions.append(desc)
+                    display_multi.append(True)
+                    continue
+
+                if is_race_column(fn):
+                    if legacy_race_row_added or "RACE" in seen_group_names:
+                        continue
+                    display_names.append("Race")
+                    display_descriptions.append(RACE_DESCRIPTION)
+                    display_multi.append(True)
+                    legacy_race_row_added = True
+                    continue
+
+                display_names.append(fn)
+                display_descriptions.append(desc)
+                display_multi.append(is_disability_column(fn))
 
             st.subheader("Select fields for Demographic Review")
-            st.caption("Check the fields you want to include. **Race** and **Disability** (if present) are shown as **(Multi-Select)** and handled automatically.")
+            st.caption(
+                "Check the fields you want to include. "
+                "Any field with **(Multi-Select)** is stored as one question (Group Name in the dictionary, "
+                "or legacy Race / Disability heuristics)."
+            )
             st.markdown("---")
 
             # -----------------------
@@ -5803,14 +5856,41 @@ else:
                 submitted = st.form_submit_button("✅ Save demographic dictionary for this project")
 
                 if submitted:
-                    if selected_fields:
-                        question_dict = {fn: desc for fn, desc, _ in selected_fields}
-                        # Auto-set multi-select for Race and disability columns (no user checkbox)
-                        multi_select_field_names = [fn for fn, _, is_multi in selected_fields if is_multi]
-                        if save_demographic_setup_to_s3(bucket_name, selected_project, question_dict, multi_select_field_names):
+                    # Build from the FULL dictionary list (session state), not only search-filtered rows.
+                    # Otherwise saving with a non-empty search drops every field hidden by the filter from S3
+                    # and breaks alignment with group_option_columns.
+                    merged_selected = []
+                    for i, fn in enumerate(field_names_list):
+                        desc = descriptions[i] if i < len(descriptions) else ""
+                        is_multi = multi_defaults[i] if i < len(multi_defaults) else False
+                        cb_key = f"{state_key_prefix}{i}_{fn}"
+                        if st.session_state.get(cb_key, False):
+                            merged_selected.append((fn, desc, is_multi))
+
+                    if merged_selected:
+                        question_dict = {fn: desc for fn, desc, _ in merged_selected}
+                        multi_select_field_names = [fn for fn, _, is_multi in merged_selected if is_multi]
+                        # Persist group maps for any selected group key in question_dict (keys must match display keys).
+                        group_option_columns = {
+                            k: dict(v)
+                            for k, v in full_group_option_maps.items()
+                            if k in question_dict
+                        }
+                        if save_demographic_setup_to_s3(
+                            bucket_name,
+                            selected_project,
+                            question_dict,
+                            multi_select_field_names,
+                            group_option_columns=group_option_columns,
+                        ):
                             st.success(
                                 f"✅ Saved {len(question_dict)} fields for **{selected_project}**."
                                 + (f" Multi-select: {', '.join(multi_select_field_names)}." if multi_select_field_names else "")
+                                + (
+                                    f" Group column maps: {len(group_option_columns)}."
+                                    if group_option_columns
+                                    else ""
+                                )
                             )
                         else:
                             st.error("❌ Failed to save to S3.")
@@ -5841,18 +5921,27 @@ else:
                     st.rerun()
 
             with st.form("add_project_form"):
-                project_name = st.text_input("Project Name")
-                schema_name = st.text_input("Schema Name")
+                st.caption("All fields in this form are required (trim spaces before save).")
+                project_name = st.text_input("Project Name *")
+                schema_name = st.text_input("Schema Name *")
 
-                elvis_db = st.text_input("ELVIS Database")
-                elvis_table = st.text_input("ELVIS Table")
+                elvis_db = st.text_input("ELVIS Database *")
+                elvis_table = st.text_input("ELVIS Table *")
 
-                main_db = st.text_input("Main Database")
-                main_table = st.text_input("Main Table")
+                main_db = st.text_input("Main Database *")
+                main_table = st.text_input("Main Table *")
 
-                details_file = st.text_input("Details File")
-                cr_file = st.text_input("CR File")
-                kingelvis_file = st.text_input("KingElvis File")
+                details_file = st.text_input("Details File *")
+                cr_file = st.text_input("CR File *")
+                kingelvis_file = st.text_input("KingElvis File *")
+                elvis_project_name = st.text_input(
+                    "Elvis project name (Clone Records URL segment) *",
+                    help=(
+                        "The path segment in the Elvis heremap URL after the record id, e.g. "
+                        "`ac-transit25` in .../elvisheremap/{id}/ac-transit25/lime. "
+                        "Letters, digits, period, underscore, hyphen only."
+                    ),
+                )
 
                 st.markdown("---")
                 st.markdown("**Time Period Config**")
@@ -5934,6 +6023,7 @@ else:
                 details_file = (details_file or "").strip()
                 cr_file = (cr_file or "").strip()
                 kingelvis_file = (kingelvis_file or "").strip()
+                elvis_project_name = (elvis_project_name or "").strip()
 
                 # Required fields (including main_db and main_table)
                 missing = []
@@ -5955,11 +6045,20 @@ else:
                     missing.append("CR File")
                 if not kingelvis_file:
                     missing.append("KingElvis File")
+                if not elvis_project_name:
+                    missing.append("Elvis project name (Clone Records URL segment)")
 
                 if missing:
                     st.error(
                         "Please fill all required fields (no leading/trailing spaces): "
                         + ", ".join(missing)
+                    )
+                    st.stop()
+
+                if not _ELVIS_PROJECT_NAME_SLUG.match(elvis_project_name):
+                    st.error(
+                        "Elvis project name must be one URL path segment: start with a letter or digit, "
+                        "then only letters, digits, period, underscore, or hyphen (no spaces or /)."
                     )
                     st.stop()
 
@@ -5998,9 +6097,11 @@ else:
                             DETAILS_FILE_NAME VARCHAR,
                             CR_FILE_NAME VARCHAR,
                             KINGELVIS_FILE_NAME VARCHAR,
+                            ELVIS_PROJECT_NAME VARCHAR,
                             IS_ACTIVE BOOLEAN DEFAULT TRUE
                         )
                     """)
+                    ensure_project_configs_elvis_project_name_column(cur)
 
                     duplicate_check_query = f"""
                         SELECT
@@ -6041,9 +6142,10 @@ else:
                             MAIN_TABLE,
                             DETAILS_FILE_NAME,
                             CR_FILE_NAME,
-                            KINGELVIS_FILE_NAME
+                            KINGELVIS_FILE_NAME,
+                            ELVIS_PROJECT_NAME
                         )
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """
                     cur.execute(
                         query,
@@ -6057,6 +6159,7 @@ else:
                             details_file,
                             cr_file,
                             kingelvis_file,
+                            elvis_project_name,
                         ),
                     )
 
@@ -6329,6 +6432,7 @@ else:
                         )
 
                     conn.commit()
+                    refresh_projects()
 
                     st.success("✅ Project added successfully")
                     st.balloons()  # celebratory balloons on success
@@ -6352,7 +6456,6 @@ else:
                             conn.close()
                     except Exception:
                         pass
-
 
 
         # Layout columns
@@ -6778,10 +6881,38 @@ else:
             elif current_page == "location_maps":  # Add this line
                 location_maps_page()
             elif current_page == "demographic":
-                if demographic_review_df is not None and not demographic_review_df.empty and "Question" in demographic_review_df.columns:
+                bucket_name = os.getenv("bucket_name")
+                proj = st.session_state.get("selected_project")
+                demographic_setup = (
+                    load_demographic_setup_from_s3(bucket_name, proj) if bucket_name and proj else None
+                )
+                if demographic_setup is None:
+                    st.title("🧭 Demographic Review")
+                    st.info(
+                        "**Demographics are not configured for this project yet.**\n\n"
+                        "There is no demographic setup file in storage, so nothing is shown here on purpose. "
+                        "Charts will appear after a super administrator completes **Demographic Setup** and the "
+                        "survey refresh runs. If you need this turned on, contact your administrator "
+                        "— setup is not available to all users."
+                    )
+                elif not (demographic_setup.get("question_dict") or {}):
+                    st.title("🧭 Demographic Review")
+                    st.warning(
+                        "A demographic setup file exists, but no survey fields are selected yet. "
+                        "Ask a super administrator to open **Demographic Setup** and choose fields from the DATA DICTIONARY."
+                    )
+                elif (
+                    demographic_review_df is not None
+                    and not demographic_review_df.empty
+                    and "Question" in demographic_review_df.columns
+                ):
                     demographic_review_page(demographic_review_df)
                 else:
-                    st.warning("No demographic data available.")
+                    st.title("🧭 Demographic Review")
+                    st.warning(
+                        "No demographic breakdown is in the database yet. "
+                        "After an administrator saves **Demographic Setup** and the pipeline runs, results will appear here."
+                    )
             elif current_page == "accounts_management":
                 # Super admin check in routing
                 current_user_email = st.session_state.get("user", {}).get("email", "")

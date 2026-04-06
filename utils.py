@@ -537,12 +537,15 @@ def read_data_dictionary_from_s3(bucket_name, details_file_key):
     Read the 'DATA DICTIONARY' sheet from the project's details Excel file in S3.
     Expected columns: FIELD NAME, DESCRIPTION (matching is case-insensitive).
     Optional column: MULTI_SELECT (Y/Yes/True/1 = treat as multi-select, e.g. Race, Disability).
+    Optional column: GROUP NAME — rows sharing the same non-empty value are one multi-select
+    (e.g. RACE, CLIPPER_SPECIFY, HISPANIC_LATINO). Use \"Race\" as the saved key when GROUP NAME is RACE.
 
     - Duplicates by FIELD NAME are removed (first occurrence kept).
     - Row order is preserved exactly as in the sheet (no sorting).
 
     Returns:
-        pd.DataFrame with columns 'FIELD NAME', 'DESCRIPTION', and optionally 'MULTI_SELECT' (bool).
+        pd.DataFrame with columns 'FIELD NAME', 'DESCRIPTION', and optionally 'MULTI_SELECT' (bool),
+        'GROUP NAME' (str).
         None if sheet or required columns missing.
     """
     try:
@@ -562,6 +565,8 @@ def read_data_dictionary_from_s3(bucket_name, details_file_key):
             col_map[c] = "DESCRIPTION"
         elif cstr.upper() in ("MULTI_SELECT", "MULTISELECT", "MULTI SELECT"):
             col_map[c] = "MULTI_SELECT"
+        elif cstr.upper() in ("GROUP NAME", "GROUP_NAME", "GROUPNAME"):
+            col_map[c] = "GROUP NAME"
     df = df.rename(columns=col_map)
     if "FIELD NAME" not in df.columns or "DESCRIPTION" not in df.columns:
         return None
@@ -572,6 +577,8 @@ def read_data_dictionary_from_s3(bucket_name, details_file_key):
     use_cols = ["FIELD NAME", "DESCRIPTION", "__row_order__"]
     if "MULTI_SELECT" in df.columns:
         use_cols.append("MULTI_SELECT")
+    if "GROUP NAME" in df.columns:
+        use_cols.append("GROUP NAME")
     df = df[use_cols].dropna(subset=["FIELD NAME"])
     df["FIELD NAME"] = df["FIELD NAME"].astype(str).str.strip()
     df["DESCRIPTION"] = df["DESCRIPTION"].astype(str).str.strip()
@@ -579,6 +586,10 @@ def read_data_dictionary_from_s3(bucket_name, details_file_key):
     if "MULTI_SELECT" in df.columns:
         raw = df["MULTI_SELECT"].astype(str).str.strip().str.upper()
         df["MULTI_SELECT"] = raw.isin(("Y", "YES", "TRUE", "1"))
+    if "GROUP NAME" in df.columns:
+        df["GROUP NAME"] = df["GROUP NAME"].apply(
+            lambda x: str(x).strip() if pd.notna(x) and str(x).strip() else ""
+        )
     # Remove duplicates by FIELD NAME, keep first to preserve sheet order
     df = df.drop_duplicates(subset=["FIELD NAME"], keep="first")
     # Restore exact original sheet order by the row index we saved
@@ -593,6 +604,48 @@ def _demographic_config_key(project_key):
     return f"{DEMOGRAPHIC_CONFIG_PREFIX}{safe_key}{DEMOGRAPHIC_CONFIG_SUFFIX}"
 
 
+def _normalize_demographic_setup_payload(data):
+    """
+    Normalize JSON from S3 so keys line up with dataframe / UI: strip whitespace, sane types.
+    """
+    qd = data.get("question_dict") or {}
+    if not isinstance(qd, dict):
+        qd = {}
+    question_dict = {}
+    for k, v in qd.items():
+        ks = str(k).strip()
+        if not ks:
+            continue
+        if isinstance(v, str):
+            question_dict[ks] = v.strip()
+        else:
+            question_dict[ks] = v
+
+    names_raw = data.get("multi_select_field_names") or []
+    if not isinstance(names_raw, list):
+        names_raw = []
+    multi_select_field_names = [str(x).strip() for x in names_raw if str(x).strip()]
+
+    goc_raw = data.get("group_option_columns") or {}
+    if not isinstance(goc_raw, dict):
+        goc_raw = {}
+    group_option_columns = {}
+    for gk, gval in goc_raw.items():
+        gks = str(gk).strip()
+        if not gks or not isinstance(gval, dict):
+            continue
+        inner = {}
+        for lk, col in gval.items():
+            lab = str(lk).strip()
+            coln = str(col).strip() if col is not None else ""
+            if lab and coln:
+                inner[lab] = coln
+        if inner:
+            group_option_columns[gks] = inner
+
+    return question_dict, multi_select_field_names, group_option_columns
+
+
 def load_demographic_setup_from_s3(bucket_name, project_key):
     """
     Load saved demographic field setup for a project from S3.
@@ -601,7 +654,7 @@ def load_demographic_setup_from_s3(bucket_name, project_key):
         None if not found or error. Otherwise a dict:
         - "question_dict": dict mapping field name -> description
         - "multi_select_field_names": list of field names treated as multi-select (e.g. Race, DisabilitySpecify)
-        Old configs with only question_dict get multi_select_field_names = [].
+        Old configs with only question_dict get multi_select_field_names = [] and group_option_columns = {}.
     """
     import json
     key = _demographic_config_key(project_key)
@@ -611,9 +664,11 @@ def load_demographic_setup_from_s3(bucket_name, project_key):
         data = json.loads(body)
         if not isinstance(data, dict):
             return None
+        qd, msn, goc = _normalize_demographic_setup_payload(data)
         return {
-            "question_dict": data.get("question_dict") or {},
-            "multi_select_field_names": data.get("multi_select_field_names") or [],
+            "question_dict": qd,
+            "multi_select_field_names": msn,
+            "group_option_columns": goc,
         }
     except Exception as e:
         from botocore.exceptions import ClientError
@@ -623,18 +678,27 @@ def load_demographic_setup_from_s3(bucket_name, project_key):
         return None
 
 
-def save_demographic_setup_to_s3(bucket_name, project_key, question_dict, multi_select_field_names=None):
+def save_demographic_setup_to_s3(
+    bucket_name,
+    project_key,
+    question_dict,
+    multi_select_field_names=None,
+    group_option_columns=None,
+):
     """
     Save demographic field setup for a project to S3.
 
     question_dict: dict mapping field name (str) -> description (str).
     multi_select_field_names: list of field names to treat as multi-select (e.g. Race, DisabilitySpecify).
+    group_option_columns: optional dict group_display_key -> {option_label: actual_db_column_name}
+        (from DATA DICTIONARY Group Name + FIELD NAME rows).
     """
     import json
     key = _demographic_config_key(project_key)
     payload = {
         "question_dict": question_dict,
         "multi_select_field_names": list(multi_select_field_names or []),
+        "group_option_columns": dict(group_option_columns or {}),
     }
     body = json.dumps(payload, indent=2)
     try:
@@ -732,3 +796,134 @@ def extract_race_labels_from_header(dropped_first_record):
     print(race_label_map)
 
     return race_label_map
+
+
+def clean_string_for_demographic_match(s):
+    """Match DATA DICTIONARY FIELD NAME to DB column (same idea as automated_sync_flow_utils.clean_string)."""
+    return (
+        str(s)
+        .replace("_", "")
+        .replace("[", "")
+        .replace("]", "")
+        .replace(" ", "")
+        .replace("#", "")
+        .lower()
+    )
+
+
+def demographic_display_key_for_group_name(group_name: str) -> str:
+    """Canonical question_dict / multi-select key for a DATA DICTIONARY Group Name value."""
+    g = str(group_name).strip()
+    if g.upper() == "RACE":
+        return "Race"
+    return g
+
+
+def option_label_from_dictionary_description(desc: str) -> str:
+    """
+    Option label for a DATA DICTIONARY row (multi-select option).
+    Prefer text after the last '...' (Qualtrics-style), else last [...] segment.
+    """
+    s = str(desc).strip() if desc is not None else ""
+    if not s:
+        return "Option"
+    if "..." in s:
+        tail = s.split("...")[-1].strip()
+        if tail:
+            tail = re.split(r"\$\(|</", tail)[0].strip()
+            if tail:
+                return tail[:500]
+    matches = re.findall(r"\[(.*?)\]", s)
+    if matches:
+        return matches[-1].strip()[:500]
+    return s[:500]
+
+
+def resolve_field_name_to_db_column(field_name, db_columns):
+    """
+    Return the actual column name from db_columns matching FIELD NAME (clean match), or None.
+    If db_columns is None, returns stripped field_name (best effort).
+    """
+    fn = str(field_name).strip()
+    if not fn:
+        return None
+    if db_columns is None:
+        return fn
+    cf = clean_string_for_demographic_match(fn)
+    for c in db_columns:
+        if clean_string_for_demographic_match(str(c).strip()) == cf:
+            return str(c).strip()
+    return None
+
+
+def build_group_option_column_maps(dd_df, db_columns=None):
+    """
+    From DATA DICTIONARY rows with GROUP NAME set, build:
+    { display_key: { option_label: resolved_db_column_name } }
+    display_key is \"Race\" for group RACE, else the Group Name string.
+    """
+    if dd_df is None or dd_df.empty or "GROUP NAME" not in dd_df.columns:
+        return {}
+    out = {}
+    for _, row in dd_df.iterrows():
+        gname = row.get("GROUP NAME", "")
+        if pd.isna(gname) or not str(gname).strip():
+            continue
+        gname = str(gname).strip()
+        display_key = demographic_display_key_for_group_name(gname)
+        fn = str(row["FIELD NAME"]).strip()
+        resolved = resolve_field_name_to_db_column(fn, db_columns)
+        if resolved is None:
+            continue
+        desc = row["DESCRIPTION"]
+        desc = str(desc).strip() if pd.notna(desc) else ""
+        label = option_label_from_dictionary_description(desc)
+        bucket = out.setdefault(display_key, {})
+        base_label = label
+        suff = 2
+        while label in bucket:
+            label = f"{base_label} ({suff})"
+            suff += 1
+        bucket[label] = resolved
+    return out
+
+
+def group_multi_select_columns(columns):
+    """
+    Group column names that share a numeric suffix (e.g. HispanicLatino_01, RACE_1).
+    Same pattern as agreed for multi-select fields; RACE_* is grouped but merged
+    separately from Race logic via caller skipping base 'RACE'.
+    """
+    grouped = {}
+    for col in columns:
+        m = re.match(r"^([A-Za-z]+)[_\s]?(\d+)$", str(col))
+        if m:
+            base = m.group(1)
+            grouped.setdefault(base, []).append(col)
+    for base in list(grouped.keys()):
+        grouped[base] = sorted(
+            grouped[base],
+            key=lambda c: int(re.match(r"^([A-Za-z]+)[_\s]?(\d+)$", str(c)).group(2)),
+        )
+    return grouped
+
+
+def extract_multi_labels_from_header(dropped_first_record, grouped_cols):
+    """
+    For each grouped base, map human-readable label (last [...] in header cell) -> column name.
+    """
+    label_map = {}
+    if not dropped_first_record:
+        return label_map
+    for base, cols in grouped_cols.items():
+        temp = {}
+        for col in cols:
+            raw = dropped_first_record.get(col)
+            if raw is None:
+                continue
+            matches = re.findall(r"\[(.*?)\]", str(raw))
+            if matches:
+                temp[matches[-1].strip()] = col
+        if temp:
+            label_map[base] = temp
+    return label_map

@@ -218,9 +218,33 @@ def create_snowflake_connection(schema=None):
 
     return conn
 
+
+def ensure_project_configs_elvis_project_name_column(cur):
+    """
+    Add ELVIS_PROJECT_NAME to PROJECT_CONFIGS when missing.
+    Existing rows keep NULL until backfilled or set via Projects Configuration.
+    """
+    try:
+        cur.execute(
+            f"ALTER TABLE {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS ADD COLUMN ELVIS_PROJECT_NAME VARCHAR"
+        )
+    except Exception as e:
+        low = str(e).lower()
+        if (
+            "already exists" in low
+            or "duplicate column" in low
+            or "already contains" in low
+        ):
+            return
+        if "does not exist" in low and "table" in low:
+            return
+        raise
+
+
 def load_projects_from_db():
     conn = create_snowflake_connection()
     cur = conn.cursor()
+    ensure_project_configs_elvis_project_name_column(cur)
 
     query = f"""
     SELECT
@@ -232,7 +256,8 @@ def load_projects_from_db():
         MAIN_TABLE,
         DETAILS_FILE_NAME,
         CR_FILE_NAME,
-        KINGELVIS_FILE_NAME
+        KINGELVIS_FILE_NAME,
+        ELVIS_PROJECT_NAME
     FROM {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
     WHERE IS_ACTIVE = TRUE
     """
@@ -240,7 +265,8 @@ def load_projects_from_db():
     projects = {}
     for row in cur.fetchall():
         (project, schema, elvis_db, elvis_table, main_db, main_table,
-         details_file, cr_file, king_file) = row
+         details_file, cr_file, king_file, elvis_project_name) = row
+        slug = (elvis_project_name or "").strip() if elvis_project_name is not None else ""
         projects[project] = {
             "schema": schema,
             "databases": {
@@ -251,7 +277,8 @@ def load_projects_from_db():
                 "details": details_file,
                 "cr": cr_file,
                 "kingelvis": king_file
-            }
+            },
+            "elvis_project_name": slug or None,
         }
 
     # Load time period config from PROJECT_TIME_PERIODS + PROJECT_TIME_MAPPING (if tables exist)
@@ -1330,7 +1357,15 @@ def fetch_and_process_data(project,schema):
         # Process the route comparison data
         new_df = process_route_comparison_data(wkday_overall_df, baby_elvis_merged_df_filtered, ke_df, project, time_period_config)
         route_level_df = create_route_level_comparison(new_df, time_period_config)
-        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(wkday_overall_df ,baby_elvis_merged_df_filtered, route_level_df, project, stops_df)
+        elvis_slug = (PROJECTS.get(project) or {}).get("elvis_project_name")
+        comparison_df, all_type_df, reverse_df = process_reverse_direction_logic(
+            wkday_overall_df,
+            baby_elvis_merged_df_filtered,
+            route_level_df,
+            project,
+            stops_df,
+            elvis_project_name=elvis_slug,
+        )
         print("Route comparison data processed successfully.")
         # Create a lowercase mapping of columns
         col_map = {col.lower(): col for col in df.columns}
@@ -1352,16 +1387,26 @@ def fetch_and_process_data(project,schema):
         refusal_analysis_df, refusal_race_df = create_survey_stats_master_table(baby_elvis_df, race_label_map)
         print("Refusal analysis and refusal race data processed successfully.")
 
-        # Use admin-configured demographic fields from S3 if available
+        # Use admin-configured demographic fields from S3 only. No JSON file → no demographic rows (dashboard shows setup message).
         bucket_name = os.getenv('bucket_name')
         demographic_config = load_demographic_setup_from_s3(bucket_name, project_name) if bucket_name else None
-        demographic_question_dict = demographic_config["question_dict"] if demographic_config else None
-        demographic_multi_select_names = demographic_config.get("multi_select_field_names", []) if demographic_config else []
-        demographic_review_df = generate_demographic_summary(
-            df, project_name, race_label_map,
-            question_dict=demographic_question_dict,
-            multi_select_field_names=demographic_multi_select_names if demographic_question_dict else None,
-        )
+        if demographic_config is not None:
+            demographic_question_dict = demographic_config.get("question_dict") or {}
+            demographic_multi_select_names = demographic_config.get("multi_select_field_names") or []
+            demographic_group_option_columns = demographic_config.get("group_option_columns") or {}
+
+            demographic_review_df = generate_demographic_summary(
+                df,
+                project_name,
+                race_label_map,
+                question_dict=demographic_question_dict,
+                multi_select_field_names=demographic_multi_select_names,
+                dropped_first_record=dropped_first_record,
+                group_option_columns=demographic_group_option_columns,
+            )
+        else:
+            print("No demographic setup JSON in S3 for this project — skipping demographic summary.")
+            demographic_review_df = pd.DataFrame()
 
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
