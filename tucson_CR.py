@@ -42,6 +42,7 @@ import time
 from utils import apply_lacmta_agency_filter
 import boto3
 from io import BytesIO, StringIO
+from public_survey_tracker import render_public_survey_tracker_page, survey_tracker_setup_page
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -64,6 +65,20 @@ private_key_bytes = private_key.private_bytes(
     format=serialization.PrivateFormat.PKCS8,
     encryption_algorithm=serialization.NoEncryption(),
 )
+
+# Public survey tracker for surveyors (no login): ?page=tracker&project_code=CODE
+def _tracker_project_code_param():
+    v = st.query_params.get("project_code")
+    if v is None:
+        return ""
+    if isinstance(v, (list, tuple)):
+        return str(v[0]).strip() if v else ""
+    return str(v).strip()
+
+
+if str(st.query_params.get("page") or "").lower() == "tracker":
+    render_public_survey_tracker_page(private_key_bytes, _tracker_project_code_param())
+    st.stop()
 
 schema_value = get_projects()
 
@@ -1470,7 +1485,7 @@ else:
                 st.session_state.selected_page = "🏠︎   Home"
             
             # Check if current page is a management page
-            management_page_keys = ["accounts_management", "create_accounts", "password_update", "file_management", "view_s3_files", "demographic_setup"]
+            management_page_keys = ["accounts_management", "create_accounts", "password_update", "file_management", "view_s3_files", "demographic_setup", "survey_tracker_setup"]
             is_management_page = current_page in management_page_keys
             
             # Management page mapping
@@ -1481,7 +1496,8 @@ else:
                 "password_update": "🔐  Password Update",
                 "file_management": "📁  File Management",
                 "view_s3_files": "📦  View S3 Files",
-                "demographic_setup": "📊  Demographic Setup"
+                "demographic_setup": "📊  Demographic Setup",
+                "survey_tracker_setup": "📋  Survey Tracker Setup",
             }
             
             # --- Sync state from URL/current_page BEFORE rendering widgets ---
@@ -1571,6 +1587,13 @@ else:
                     st.query_params["page"] = "demographic_setup"
                     st.rerun()
 
+                if st.button("Survey Tracker Setup", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "survey_tracker_setup"
+                    st.rerun()
+
             # --- Bottom Buttons ---
             st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 0;">', unsafe_allow_html=True)
             st.markdown('<div class="bottom-buttons">', unsafe_allow_html=True)
@@ -1637,14 +1660,30 @@ else:
                 # === DATE SETUP ===
                 current_date = datetime.datetime.now()
 
-                # Get most recent "Completed" date
-                if 'LocalTime' in wkday_raw_df.columns and 'LocalTime' in wkend_raw_df.columns:
-                    completed_dates = pd.concat([wkday_raw_df['LocalTime'], wkend_raw_df['LocalTime']])
-                else:
-                    # Fallback to DATE_SUBMITTED if LocalTime doesn't exist
-                    completed_dates = pd.concat([wkday_raw_df['DATE_SUBMITTED'], wkend_raw_df['DATE_SUBMITTED']])
+                # Get most recent "Completed" date (each raw table may use LocalTime or DATE_SUBMITTED; schemas can differ)
+                def _completion_series(df):
+                    if df is None or df.empty or len(df.columns) == 0:
+                        return None
+                    lower = {str(c).lower(): c for c in df.columns}
+                    for name in ("localtime", "date_submitted"):
+                        col = lower.get(name)
+                        if col is not None:
+                            return df[col]
+                    return None
 
-                most_recent_completed_date = pd.to_datetime(completed_dates).max()
+                _parts = []
+                for _raw in (wkday_raw_df, wkend_raw_df):
+                    _s = _completion_series(_raw)
+                    if _s is not None:
+                        _parts.append(_s)
+                if _parts:
+                    _combined = pd.concat(_parts, ignore_index=True)
+                    _parsed = pd.to_datetime(_combined, errors="coerce")
+                    most_recent_completed_date = _parsed.max()
+                    if pd.isna(most_recent_completed_date):
+                        most_recent_completed_date = None
+                else:
+                    most_recent_completed_date = None
 
                 if has_project_data:
                     try:
@@ -6744,7 +6783,8 @@ else:
         # Show "no project data" on every page that uses data (not just main)
         PAGES_NOT_REQUIRING_DATA = {
             "accounts_management", "projects_configuration", "create_accounts",
-            "password_update", "file_management", "view_s3_files", "demographic_setup"
+            "password_update", "file_management", "view_s3_files", "demographic_setup",
+            "survey_tracker_setup",
         }
         if current_page not in PAGES_NOT_REQUIRING_DATA and not has_project_data:
             st.warning("⚠️ No project data available yet.")
@@ -6961,6 +7001,12 @@ else:
                     st.error("❌ Access Denied: This page is only accessible to super administrators.")
                 else:
                     demographic_setup_page()
+            elif current_page == "survey_tracker_setup":
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    survey_tracker_setup_page(private_key_bytes)
 
             else:
                 # Use dynamic time period columns from config when available

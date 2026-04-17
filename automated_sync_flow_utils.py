@@ -7191,6 +7191,17 @@ def _demographic_cell_answered_yes_no(norm: str) -> bool:
     return _demographic_cell_is_yes(norm) or _demographic_cell_is_no(norm)
 
 
+# Columns for demographic_review Snowflake table (must match CREATE TABLE from sync pipeline).
+DEMOGRAPHIC_REVIEW_COLUMNS = [
+    "Question Column",
+    "Question",
+    "Answer Code",
+    "Answer Text",
+    "Count",
+    "Percentage",
+]
+
+
 ## Demographic Summary Report
 def generate_demographic_summary(
     elvis_df: pd.DataFrame,
@@ -7620,5 +7631,7 @@ def generate_demographic_summary(
                 "Percentage": round(pct, 2)
             })
 
+    if not demographic_review:
+        return pd.DataFrame(columns=DEMOGRAPHIC_REVIEW_COLUMNS)
     return pd.DataFrame(demographic_review)
 

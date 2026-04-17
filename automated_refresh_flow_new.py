@@ -1406,7 +1406,7 @@ def fetch_and_process_data(project,schema):
             )
         else:
             print("No demographic setup JSON in S3 for this project — skipping demographic summary.")
-            demographic_review_df = pd.DataFrame()
+            demographic_review_df = pd.DataFrame(columns=DEMOGRAPHIC_REVIEW_COLUMNS)
 
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
@@ -1744,6 +1744,12 @@ def fetch_and_process_data(project,schema):
             print(f"Processing {sheet_name} into {table_name}")
             df = dataframes.get(sheet_name)
             if df is not None:
+                if len(df.columns) == 0:
+                    print(
+                        f"Skipping {sheet_name}: DataFrame has no columns "
+                        f"(would produce invalid CREATE TABLE). Table {table_name} left unchanged."
+                    )
+                    continue
                 # Drop duplicate columns before creating table
                 df = df.loc[:, ~df.columns.duplicated()]
                 
