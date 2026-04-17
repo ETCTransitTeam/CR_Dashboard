@@ -14,8 +14,13 @@ from __future__ import annotations
 
 import os
 import re
+from html import escape as html_escape
 from datetime import date, datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+# Same timezone as `tucson_cr.py` header Last_Sync_Date display (America/Chicago).
+TRACKER_SYNC_TZ = ZoneInfo("America/Chicago")
 
 import pandas as pd
 import streamlit as st
@@ -287,7 +292,7 @@ def dataframe_for_snowflake(df: pd.DataFrame, project_code: str) -> pd.DataFrame
             "LOCAL_TIME": _to_snowflake_datetime_string_series(col("LocalTime")),
             "DEVICE_TIME": _to_snowflake_datetime_string_series(col("DeviceTime")),
             "SYNCED_AT": pd.Series(
-                [datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")] * len(df),
+                [datetime.now(TRACKER_SYNC_TZ).strftime("%Y-%m-%d %H:%M:%S")] * len(df),
                 index=df.index,
             ),
         }
@@ -582,10 +587,13 @@ def apply_filters(
     df: pd.DataFrame,
     route_sel: str,
     initials_sel: str,
-    day: Optional[date],
-    match_date_on: str,
-    use_date_filter: bool,
+    survey_day: Optional[date],
 ) -> pd.DataFrame:
+    """
+    Filter tracker rows. When ``survey_day`` is set, keep rows whose **LocalTime** calendar
+    date equals that day (same moment as the ``Local time`` column). When ``survey_day`` is
+    None, no date filter is applied (e.g. for an all-time total).
+    """
     if df.empty:
         return df.iloc[0:0]
     out = df.copy()
@@ -597,39 +605,52 @@ def apply_filters(
         out = out[out["ROUTE_SURVEYED"].astype(str).str.strip() == route_sel]
     if initials_sel and initials_sel != "All":
         out = out[out["INTERV_INIT"].astype(str).str.strip() == initials_sel]
-    if use_date_filter and day is not None:
-        def day_ok(r) -> bool:
-            if match_date_on == "LocalTime":
-                lt = r.get("LOCAL_TIME")
-                if lt is not None and not (isinstance(lt, float) and pd.isna(lt)):
-                    t = pd.to_datetime(lt, errors="coerce")
-                    if not pd.isna(t) and t.date() == day:
-                        return True
-                return False
-            if match_date_on == "Date_submitted":
-                ds = r.get("DATE_SUBMITTED")
-                if ds is not None and not (isinstance(ds, float) and pd.isna(ds)):
-                    t = pd.to_datetime(ds, errors="coerce")
-                    if not pd.isna(t) and t.date() == day:
-                        return True
-                return False
-            # Both: match if either local date or submitted date equals day (per user note)
+    if survey_day is not None:
+        def local_day_ok(r) -> bool:
             lt = r.get("LOCAL_TIME")
-            if lt is not None and not (isinstance(lt, float) and pd.isna(lt)):
-                t = pd.to_datetime(lt, errors="coerce")
-                if not pd.isna(t) and t.date() == day:
-                    return True
-            ds = r.get("DATE_SUBMITTED")
-            if ds is not None and not (isinstance(ds, float) and pd.isna(ds)):
-                t = pd.to_datetime(ds, errors="coerce")
-                if not pd.isna(t) and t.date() == day:
-                    return True
-            return False
+            if lt is None or (isinstance(lt, float) and pd.isna(lt)):
+                return False
+            t = pd.to_datetime(lt, errors="coerce")
+            if pd.isna(t):
+                return False
+            return t.date() == survey_day
 
-        out = out[out.apply(day_ok, axis=1)]
+        out = out[out.apply(local_day_ok, axis=1)]
     if out.empty:
         return df.iloc[0:0]
     return out
+
+
+def _last_sync_display(df: pd.DataFrame) -> Optional[str]:
+    """
+    Max SYNCED_AT from cached rows (set at MySQL→Snowflake refresh).
+    Same formatting approach as ``tucson_cr.py`` ``create_professional_header`` for
+    Last_Sync_Date: America/Chicago, ``%Y-%m-%d %H:%M:%S %Z``.
+    Naive timestamps are treated as wall time in America/Chicago (matches main app).
+    """
+    if df is None or df.empty:
+        return None
+    s = _col(df, "SYNCED_AT")
+    if s is None:
+        return None
+    parsed = pd.to_datetime(s.astype(str).str.strip(), errors="coerce")
+    if parsed.isna().all():
+        return None
+    ts = parsed.max()
+    if pd.isna(ts):
+        return None
+    try:
+        if isinstance(ts, pd.Timestamp):
+            last_sync_dt = ts.to_pydatetime()
+        else:
+            last_sync_dt = ts
+        if last_sync_dt.tzinfo is None:
+            last_sync_dt = last_sync_dt.replace(tzinfo=TRACKER_SYNC_TZ)
+        else:
+            last_sync_dt = last_sync_dt.astimezone(TRACKER_SYNC_TZ)
+        return last_sync_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+    except Exception:
+        return None
 
 
 def _combined_oride(row: pd.Series) -> str:
@@ -643,8 +664,77 @@ def render_public_survey_tracker_page(private_key_bytes: bytes, project_code: st
     st.markdown(
         """
         <style>
-        .metric-big { font-size: clamp(2rem, 8vw, 3.5rem); font-weight: 700; color: #0f172a; }
-        .tracker-wrap { max-width: 1200px; margin: 0 auto; padding: 0.5rem 1rem 2rem; }
+        .tracker-page-outer {
+            max-width: 1100px;
+            margin: -2rem auto 0 auto;
+            padding: 0 0 2.5rem 0;
+        }
+        .tracker-head {
+            margin: 0 0 0.85rem 0;
+            padding: 0 0.15rem 0.85rem 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .tracker-head h1.tracker-page-title {
+            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+            font-size: clamp(2.15rem, 6vw, 3.15rem);
+            font-weight: 800;
+            color: #0f172a;
+            margin: 0 0 0.45rem 0;
+            padding: 0;
+            border: none;
+            letter-spacing: -0.045em;
+            line-height: 1.05;
+        }
+        .tracker-project-line {
+            font-size: 1.12rem;
+            font-weight: 600;
+            color: #0c4a6e;
+            margin: 0 0 0.45rem 0;
+            letter-spacing: -0.02em;
+        }
+        .tracker-blurb {
+            font-size: 0.95rem;
+            color: #64748b;
+            margin: 0 0 0.5rem 0;
+            line-height: 1.45;
+            max-width: 40rem;
+        }
+        .tracker-code-chip {
+            display: inline-block;
+            font-family: ui-monospace, monospace;
+            font-size: 0.78rem;
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            padding: 0.2rem 0.55rem;
+            border-radius: 8px;
+            color: #475569;
+        }
+        .tracker-last-sync {
+            font-size: 0.82rem;
+            color: #64748b;
+            margin: 0.5rem 0 0 0;
+            line-height: 1.45;
+        }
+        .tracker-last-sync strong { color: #0f172a; font-weight: 600; }
+        .tracker-section-label {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #334155;
+            margin: 0 0 0.65rem 0;
+            letter-spacing: -0.02em;
+        }
+        .tracker-hint {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin: 0.5rem 0 0 0;
+            line-height: 1.4;
+        }
+        div[data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
+        .tracker-stats-loading {
+            color: #64748b;
+            font-size: 0.95rem;
+            padding: 0.5rem 0;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -663,12 +753,21 @@ def render_public_survey_tracker_page(private_key_bytes: bytes, project_code: st
     code_key = str(cfg.get("PROJECT_CODE") or pc).upper()
     pname = cfg.get("PROJECT_NAME") or code_key
 
-    st.markdown(f'<div class="tracker-wrap">', unsafe_allow_html=True)
-    st.title("Tablet survey progress")
+    st.markdown('<div class="tracker-page-outer">', unsafe_allow_html=True)
+    # Slot is filled at the end so the stats bar sits above filters. Until then, show a loading
+    # stub so the area never goes blank (e.g. after Sync → rerun while Snowflake reloads).
+    stats_bar_slot = st.empty()
+    with stats_bar_slot.container():
+        with st.container(border=True):
+            st.markdown(
+                '<p class="tracker-stats-loading">Loading dashboard…</p>',
+                unsafe_allow_html=True,
+            )
 
     # Single source of truth for the UI: Snowflake cache (refreshed only by the button below).
     df = _normalize_tracker_dataframe(load_rows_from_snowflake(private_key_bytes, code_key))
-    total_completed_all = len(apply_filters(df, "All", "All", None, "Both", False))
+    total_completed_all = len(apply_filters(df, "All", "All", None))
+    last_sync_str = _last_sync_display(df)
 
     routes = sorted(
         {_route_str(x) for x in df["ROUTE_SURVEYED"].dropna().unique() if not _is_route_excluded(x)},
@@ -681,92 +780,122 @@ def render_public_survey_tracker_page(private_key_bytes: bytes, project_code: st
 
     route_options = ["All"] + routes
     initials_options = ["All"] + initials
-    match_options = ["Both (LocalTime or Date_submitted)", "LocalTime", "Date_submitted"]
 
-    # Default session keys once so checkbox/date widgets stay aligned (avoid value= vs state skew).
-    if "tracker_use_date_filter" not in st.session_state:
-        st.session_state["tracker_use_date_filter"] = True
     if "tracker_route_sel" not in st.session_state:
         st.session_state["tracker_route_sel"] = "All"
     if "tracker_initials_sel" not in st.session_state:
         st.session_state["tracker_initials_sel"] = "All"
-    if "tracker_match_date" not in st.session_state:
-        st.session_state["tracker_match_date"] = match_options[0]
     if "tracker_day" not in st.session_state:
         st.session_state["tracker_day"] = date.today()
+    if "tracker_limit_one_day" not in st.session_state:
+        # Migrate from older radio-based session
+        st.session_state["tracker_limit_one_day"] = (
+            st.session_state.get("tracker_date_scope_radio") == "One day"
+            if "tracker_date_scope_radio" in st.session_state
+            else False
+        )
+
+    # Filters first so counts + table match the same session state in this run.
+    st.markdown(
+        '<p class="tracker-section-label" style="margin-top:0.75rem">Find surveys</p>',
+        unsafe_allow_html=True,
+    )
+    with st.container(border=True):
+        r1, r2 = st.columns(2, gap="medium")
+        with r1:
+            st.selectbox("Route", route_options, key="tracker_route_sel")
+        with r2:
+            st.selectbox("Survey initials", initials_options, key="tracker_initials_sel")
+        st.toggle(
+            "Limit to one calendar day (Local time)",
+            key="tracker_limit_one_day",
+            help="Off = every survey day. On = only the day you pick below (matches the tablet’s Local time).",
+        )
+        _one_day = bool(st.session_state.get("tracker_limit_one_day", False))
+        st.date_input(
+            "Day",
+            key="tracker_day",
+            disabled=not _one_day,
+            help="Only used when the switch above is on.",
+        )
+    st.markdown(
+        '<p class="tracker-hint">Completed surveys only · route 999 &amp; test rows removed at sync</p>',
+        unsafe_allow_html=True,
+    )
 
     route_state = st.session_state.get("tracker_route_sel", "All")
     initials_state = st.session_state.get("tracker_initials_sel", "All")
-    use_date_state = bool(st.session_state.get("tracker_use_date_filter", True))
-    day_state = st.session_state.get("tracker_day", date.today())
-    match_state = st.session_state.get("tracker_match_date", match_options[0])
+    if bool(st.session_state.get("tracker_limit_one_day", False)):
+        day_state = st.session_state.get("tracker_day", date.today())
+    else:
+        day_state = None
 
     if route_state not in route_options:
         route_state = "All"
     if initials_state not in initials_options:
         initials_state = "All"
-    if match_state not in match_options:
-        match_state = match_options[0]
 
-    if match_state == "LocalTime":
-        mkey_state = "LocalTime"
-    elif match_state == "Date_submitted":
-        mkey_state = "Date_submitted"
-    else:
-        mkey_state = "Both"
-
-    filtered = apply_filters(df, route_state, initials_state, day_state, mkey_state, use_date_state)
+    filtered = apply_filters(df, route_state, initials_state, day_state)
     count = len(filtered)
 
-    # Header: project info + filtered total + sync
-    h1, h2, h3 = st.columns([3, 2, 2], vertical_alignment="center")
-    with h1:
-        st.markdown(f"**Project:** {pname}")
-        st.caption(f"Code: {code_key}")
-    with h2:
-        st.markdown("**Completed Surveys (Applied Filters)**")
-        st.markdown(f'<p class="metric-big">{count}</p>', unsafe_allow_html=True)
-        st.caption(f"All completed (no filters): {total_completed_all}")
-    with h3:
-        if st.button("Sync / Refresh data", type="primary", use_container_width=True):
-            with st.spinner("Syncing from source database…"):
-                try:
-                    stats = sync_mysql_to_snowflake(
-                        private_key_bytes,
-                        code_key,
-                        str(cfg["SOURCE_DATABASE_NAME"]),
-                        str(cfg["SOURCE_TABLE_NAME"]),
-                    )
-                    st.success(
-                        "Sync completed. "
-                        f"Total fetched: **{stats.get('total_fetched', 0)}**, "
-                        f"Total test removed (IntervInit=999 or Have5MinForSurveCode!=1): "
-                        f"**{stats.get('total_test_removed', 0)}**, "
-                        f"Total loaded: **{stats.get('total_loaded', 0)}**."
-                    )
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Sync failed: {e}")
-        st.caption("Fetches latest SQL data and updates Snowflake cache.")
-
-    st.markdown("### Filters")
-    f1, f2 = st.columns(2)
-    with f1:
-        st.selectbox("Route", route_options, key="tracker_route_sel")
-    with f2:
-        st.selectbox("Survey initials", initials_options, key="tracker_initials_sel")
-
-    d1, d2 = st.columns(2)
-    with d1:
-        st.checkbox("Filter by survey date", key="tracker_use_date_filter")
-        filter_by_survey_date = bool(st.session_state["tracker_use_date_filter"])
-        st.date_input("Survey date", disabled=not filter_by_survey_date, key="tracker_day")
-    with d2:
-        st.selectbox("Date matches", match_options, disabled=not filter_by_survey_date, key="tracker_match_date")
-
-    st.caption("Completed = Date_submitted is set. Routes equal to 999 are excluded.")
+    with stats_bar_slot.container():
+        with st.container(border=True):
+            st.markdown(
+                f"""
+                <div class="tracker-head">
+                  <h1 class="tracker-page-title">Tablet Survey Progress</h1>
+                  <p class="tracker-project-line">{html_escape(str(pname))}</p>
+                  <p class="tracker-blurb">Quick read on completed tablet surveys. Numbers follow your last sync — use <strong>Sync</strong> below for the newest data.</p>
+                  <span class="tracker-code-chip">Project code · {html_escape(str(code_key))}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            h2, h3, h4 = st.columns([1.1, 1.1, 1], vertical_alignment="center")
+            with h2:
+                st.metric(
+                    "In this project",
+                    total_completed_all,
+                    help="All completed surveys in the synced snapshot (not affected by the filters further down).",
+                )
+            with h3:
+                st.metric(
+                    "Showing now",
+                    count,
+                    help="What you see in the table — Route, initials, and optional one-day filter.",
+                )
+            with h4:
+                if st.button("Sync / Refresh", type="primary", use_container_width=True):
+                    with st.spinner("Syncing from source database…"):
+                        try:
+                            stats = sync_mysql_to_snowflake(
+                                private_key_bytes,
+                                code_key,
+                                str(cfg["SOURCE_DATABASE_NAME"]),
+                                str(cfg["SOURCE_TABLE_NAME"]),
+                            )
+                            st.success(
+                                "Sync completed. "
+                                f"Total fetched: **{stats.get('total_fetched', 0)}**, "
+                                f"Total test removed (IntervInit=999 or Have5MinForSurveCode!=1): "
+                                f"**{stats.get('total_test_removed', 0)}**, "
+                                f"Total loaded: **{stats.get('total_loaded', 0)}**."
+                            )
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Sync failed: {e}")
+                st.caption("Get the newest rows from the field database.")
+                _sync_html = (
+                    f'<p class="tracker-last-sync">Last sync<br/><strong>{html_escape(last_sync_str)}</strong></p>'
+                    if last_sync_str
+                    else '<p class="tracker-last-sync">Last sync<br/><em>Not yet — press Sync</em></p>'
+                )
+                st.markdown(_sync_html, unsafe_allow_html=True)
     if filtered.empty:
-        st.warning("No records found for the selected filters.")
+        st.warning(
+            "Nothing matches yet. Turn **off** “Limit to one calendar day” to see every day, set Route and initials to **All**, "
+            "or pick a day that has surveys. **Sync** if you just collected new data."
+        )
         st.stop()
 
     lime_id_series = filtered.get("ID")
@@ -789,10 +918,10 @@ def render_public_survey_tracker_page(private_key_bytes: bytes, project_code: st
         }
     )
 
-    st.markdown("### Records")
+    st.markdown('<p class="tracker-section-label" style="margin-top:1.5rem">Survey records</p>', unsafe_allow_html=True)
     st.dataframe(display, use_container_width=True, hide_index=True, height=min(520, 40 + 36 * min(len(display), 12)))
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div><!-- tracker-page-outer -->", unsafe_allow_html=True)
 
 
 def _fmt_ts(x: Any) -> str:
