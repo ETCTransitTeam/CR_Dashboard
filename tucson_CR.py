@@ -52,6 +52,37 @@ _SNOWFLAKE_UNQUOTED_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 # Single path segment for elvisheremap URLs, e.g. ac-transit25
 _ELVIS_PROJECT_NAME_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
+
+def _normalize_name_without_csv(value: str) -> str:
+    text = (value or "").strip()
+    if text.lower().endswith(".csv"):
+        return text[:-4].strip()
+    return text
+
+
+def _normalize_required_xlsx(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+
+    lowered = text.lower()
+    if lowered.endswith(".xlsx"):
+        base = text[:-5].strip()
+    elif lowered.endswith(".xls"):
+        base = text[:-4].strip()
+    elif lowered.endswith(".csv"):
+        base = text[:-4].strip()
+    else:
+        base = text
+    return f"{base}.xlsx" if base else ""
+
+
+def _display_xlsx_name_only(value: str) -> str:
+    text = (value or "").strip()
+    if text.lower().endswith(".xlsx"):
+        return text[:-5]
+    return text
+
 with open("path/to/key.p8", "rb") as key:
     private_key = serialization.load_pem_private_key(
         key.read(),
@@ -1485,13 +1516,23 @@ else:
                 st.session_state.selected_page = "🏠︎   Home"
             
             # Check if current page is a management page
-            management_page_keys = ["accounts_management", "create_accounts", "password_update", "file_management", "view_s3_files", "demographic_setup", "survey_tracker_setup"]
+            management_page_keys = [
+                "accounts_management",
+                "create_accounts",
+                "password_update",
+                "file_management",
+                "view_s3_files",
+                "demographic_setup",
+                "survey_tracker_setup",
+                "edit_project_configs",
+            ]
             is_management_page = current_page in management_page_keys
             
             # Management page mapping
             management_mapping = {
                 "accounts_management": "⚙️  Accounts Management",
                 "projects_configuration": "⚙️  Projects Configuration",
+                "edit_project_configs": "✏️  Edit Project Configs",
                 "create_accounts": "➕  Create Accounts",
                 "password_update": "🔐  Password Update",
                 "file_management": "📁  File Management",
@@ -1561,6 +1602,13 @@ else:
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = "projects_configuration"
+                    st.rerun()
+
+                if st.button("Edit Project Configs", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "edit_project_configs"
                     st.rerun()
                 
                 # File Management button
@@ -5964,15 +6012,15 @@ else:
                 project_name = st.text_input("Project Name *")
                 schema_name = st.text_input("Schema Name *")
 
-                elvis_db = st.text_input("ELVIS Database *")
-                elvis_table = st.text_input("ELVIS Table *")
+                elvis_db = st.text_input("ELVIS Database * (name only; .csv auto-removed)")
+                elvis_table = st.text_input("ELVIS Table * (name only; .csv auto-removed)")
 
-                main_db = st.text_input("Main Database *")
-                main_table = st.text_input("Main Table *")
+                main_db = st.text_input("Main Database * (name only; .csv auto-removed)")
+                main_table = st.text_input("Main Table * (name only; .csv auto-removed)")
 
-                details_file = st.text_input("Details File *")
-                cr_file = st.text_input("CR File *")
-                kingelvis_file = st.text_input("KingElvis File *")
+                details_file = st.text_input("Details File * (name only; .xlsx auto-added)")
+                cr_file = st.text_input("CR File * (name only; .xlsx auto-added)")
+                kingelvis_file = st.text_input("KingElvis File * (name only; .xlsx auto-added)")
                 elvis_project_name = st.text_input(
                     "Elvis project name (Clone Records URL segment) *",
                     help=(
@@ -6055,13 +6103,13 @@ else:
                 # Normalize: treat None/whitespace-only as empty (avoids SQL like CREATE SCHEMA IF NOT EXISTS <EOF>)
                 project_name = (project_name or "").strip()
                 schema_name = (schema_name or "").strip()
-                elvis_db = (elvis_db or "").strip()
-                elvis_table = (elvis_table or "").strip()
-                main_db = (main_db or "").strip()
-                main_table = (main_table or "").strip()
-                details_file = (details_file or "").strip()
-                cr_file = (cr_file or "").strip()
-                kingelvis_file = (kingelvis_file or "").strip()
+                elvis_db = _normalize_name_without_csv(elvis_db)
+                elvis_table = _normalize_name_without_csv(elvis_table)
+                main_db = _normalize_name_without_csv(main_db)
+                main_table = _normalize_name_without_csv(main_table)
+                details_file = _normalize_required_xlsx(details_file)
+                cr_file = _normalize_required_xlsx(cr_file)
+                kingelvis_file = _normalize_required_xlsx(kingelvis_file)
                 elvis_project_name = (elvis_project_name or "").strip()
 
                 # Required fields (including main_db and main_table)
@@ -6484,6 +6532,231 @@ else:
                     except Exception:
                         pass
                     st.error(f"❌ Failed to add project: {e}")
+                finally:
+                    try:
+                        if cur:
+                            cur.close()
+                    except Exception:
+                        pass
+                    try:
+                        if conn:
+                            conn.close()
+                    except Exception:
+                        pass
+
+        def edit_project_configs_page():
+            st.header("Edit Project Configs")
+            st.caption("Project Name is read-only to avoid breaking linked records in other config tables.")
+
+            conn = None
+            cur = None
+            try:
+                conn = create_snowflake_connection()
+                cur = conn.cursor()
+
+                # Ensure app-config schema/table exist and column exists, matching existing page behavior.
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {APP_CONFIG_SCHEMA}")
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS (
+                        PROJECT_NAME VARCHAR NOT NULL,
+                        BASE_SCHEMA VARCHAR NOT NULL,
+                        ELVIS_DATABASE VARCHAR,
+                        ELVIS_TABLE VARCHAR,
+                        MAIN_DATABASE VARCHAR,
+                        MAIN_TABLE VARCHAR,
+                        DETAILS_FILE_NAME VARCHAR,
+                        CR_FILE_NAME VARCHAR,
+                        KINGELVIS_FILE_NAME VARCHAR,
+                        ELVIS_PROJECT_NAME VARCHAR,
+                        IS_ACTIVE BOOLEAN DEFAULT TRUE
+                    )
+                    """
+                )
+                ensure_project_configs_elvis_project_name_column(cur)
+
+                cur.execute(
+                    f"""
+                    SELECT
+                        PROJECT_NAME,
+                        BASE_SCHEMA,
+                        ELVIS_DATABASE,
+                        ELVIS_TABLE,
+                        MAIN_DATABASE,
+                        MAIN_TABLE,
+                        DETAILS_FILE_NAME,
+                        CR_FILE_NAME,
+                        KINGELVIS_FILE_NAME,
+                        ELVIS_PROJECT_NAME,
+                        COALESCE(IS_ACTIVE, TRUE) AS IS_ACTIVE
+                    FROM {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
+                    ORDER BY PROJECT_NAME
+                    """
+                )
+                rows = cur.fetchall()
+            except Exception as e:
+                st.error(f"❌ Failed to load project configs: {e}")
+                return
+            finally:
+                try:
+                    if cur:
+                        cur.close()
+                except Exception:
+                    pass
+                try:
+                    if conn:
+                        conn.close()
+                except Exception:
+                    pass
+
+            if not rows:
+                st.info("No project configs found.")
+                return
+
+            project_map = {
+                r[0]: {
+                    "BASE_SCHEMA": r[1] or "",
+                    "ELVIS_DATABASE": r[2] or "",
+                    "ELVIS_TABLE": r[3] or "",
+                    "MAIN_DATABASE": r[4] or "",
+                    "MAIN_TABLE": r[5] or "",
+                    "DETAILS_FILE_NAME": _display_xlsx_name_only(r[6] or ""),
+                    "CR_FILE_NAME": _display_xlsx_name_only(r[7] or ""),
+                    "KINGELVIS_FILE_NAME": _display_xlsx_name_only(r[8] or ""),
+                    "ELVIS_PROJECT_NAME": r[9] or "",
+                    "IS_ACTIVE": bool(r[10]),
+                }
+                for r in rows
+            }
+            project_names = list(project_map.keys())
+
+            selected_project_name = st.selectbox(
+                "Select Project",
+                project_names,
+                key="edit_project_configs_selected_project",
+            )
+            selected = project_map[selected_project_name]
+
+            with st.form("edit_project_configs_form"):
+                st.caption("All editable fields are required (trim spaces before save).")
+                st.text_input("Project Name", value=selected_project_name, disabled=True)
+
+                st.text_input("Schema Name", value=selected["BASE_SCHEMA"], disabled=True)
+                elvis_db = st.text_input("ELVIS Database * (name only; .csv auto-removed)", value=selected["ELVIS_DATABASE"])
+                elvis_table = st.text_input("ELVIS Table * (name only; .csv auto-removed)", value=selected["ELVIS_TABLE"])
+                main_db = st.text_input("Main Database * (name only; .csv auto-removed)", value=selected["MAIN_DATABASE"])
+                main_table = st.text_input("Main Table * (name only; .csv auto-removed)", value=selected["MAIN_TABLE"])
+                details_file = st.text_input("Details File * (name only; .xlsx auto-added)", value=selected["DETAILS_FILE_NAME"])
+                cr_file = st.text_input("CR File * (name only; .xlsx auto-added)", value=selected["CR_FILE_NAME"])
+                kingelvis_file = st.text_input("KingElvis File * (name only; .xlsx auto-added)", value=selected["KINGELVIS_FILE_NAME"])
+                elvis_project_name = st.text_input(
+                    "Elvis project name (Clone Records URL segment) *",
+                    value=selected["ELVIS_PROJECT_NAME"],
+                    help=(
+                        "The path segment in the Elvis heremap URL after the record id, e.g. "
+                        "`ac-transit25` in .../elvisheremap/{id}/ac-transit25/lime. "
+                        "Letters, digits, period, underscore, hyphen only."
+                    ),
+                )
+                is_active = st.checkbox("Is Active", value=selected["IS_ACTIVE"])
+
+                submit_edit = st.form_submit_button("Update Project Config")
+
+            if submit_edit:
+                elvis_db = _normalize_name_without_csv(elvis_db)
+                elvis_table = _normalize_name_without_csv(elvis_table)
+                main_db = _normalize_name_without_csv(main_db)
+                main_table = _normalize_name_without_csv(main_table)
+                details_file = _normalize_required_xlsx(details_file)
+                cr_file = _normalize_required_xlsx(cr_file)
+                kingelvis_file = _normalize_required_xlsx(kingelvis_file)
+                elvis_project_name = (elvis_project_name or "").strip()
+
+                missing = []
+                if not elvis_db:
+                    missing.append("ELVIS Database")
+                if not elvis_table:
+                    missing.append("ELVIS Table")
+                if not main_db:
+                    missing.append("Main Database")
+                if not main_table:
+                    missing.append("Main Table")
+                if not details_file:
+                    missing.append("Details File")
+                if not cr_file:
+                    missing.append("CR File")
+                if not kingelvis_file:
+                    missing.append("KingElvis File")
+                if not elvis_project_name:
+                    missing.append("Elvis project name (Clone Records URL segment)")
+
+                if missing:
+                    st.error(
+                        "Please fill all required fields (no leading/trailing spaces): "
+                        + ", ".join(missing)
+                    )
+                    st.stop()
+
+                if not _ELVIS_PROJECT_NAME_SLUG.match(elvis_project_name):
+                    st.error(
+                        "Elvis project name must be one URL path segment: start with a letter or digit, "
+                        "then only letters, digits, period, underscore, or hyphen (no spaces or /)."
+                    )
+                    st.stop()
+
+                conn = None
+                cur = None
+                try:
+                    conn = create_snowflake_connection()
+                    cur = conn.cursor()
+
+                    cur.execute(
+                        f"""
+                        UPDATE {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
+                        SET
+                            ELVIS_DATABASE = %s,
+                            ELVIS_TABLE = %s,
+                            MAIN_DATABASE = %s,
+                            MAIN_TABLE = %s,
+                            DETAILS_FILE_NAME = %s,
+                            CR_FILE_NAME = %s,
+                            KINGELVIS_FILE_NAME = %s,
+                            ELVIS_PROJECT_NAME = %s,
+                            IS_ACTIVE = %s
+                        WHERE UPPER(PROJECT_NAME) = UPPER(%s)
+                        """,
+                        (
+                            elvis_db,
+                            elvis_table,
+                            main_db,
+                            main_table,
+                            details_file,
+                            cr_file,
+                            kingelvis_file,
+                            elvis_project_name,
+                            bool(is_active),
+                            selected_project_name,
+                        ),
+                    )
+
+                    if cur.rowcount != 1:
+                        conn.rollback()
+                        st.error(
+                            f"❌ Update aborted: expected to update 1 row for '{selected_project_name}', "
+                            f"but updated {cur.rowcount}."
+                        )
+                        return
+
+                    conn.commit()
+                    refresh_projects()
+                    st.success(f"✅ Project config updated for '{selected_project_name}'.")
+                    st.rerun()
+                except Exception as e:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    st.error(f"❌ Failed to update project config: {e}")
                 finally:
                     try:
                         if cur:
@@ -6967,6 +7240,12 @@ else:
                     st.error("❌ Access Denied: This page is only accessible to super administrators.")
                 else:
                     projects_configuration_page()
+            elif current_page == "edit_project_configs":
+                current_user_email = st.session_state.get("user", {}).get("email", "")
+                if not is_super_admin(current_user_email):
+                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
+                else:
+                    edit_project_configs_page()
             elif current_page == "create_accounts":
                 # Super admin check in routing
                 current_user_email = st.session_state.get("user", {}).get("email", "")
