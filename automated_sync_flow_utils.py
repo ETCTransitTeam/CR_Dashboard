@@ -10,6 +10,7 @@ import random
 import streamlit as st
 from snowflake.connector.pandas_tools import write_pandas
 import re
+from typing import List
 
 from utils import extract_multi_labels_from_header, group_multi_select_columns
 
@@ -41,6 +42,78 @@ def check_all_characters_present(df, columns_to_check):
     matching_columns = [column for column in df.columns if clean_string(column) in columns_to_check_lower]
 
     return matching_columns
+
+
+def _ensure_standard_column(df: pd.DataFrame, standard_name: str, aliases: List[str], default_value="") -> pd.DataFrame:
+    """
+    Ensure a standardized column exists in df.
+    - If standard_name already exists, keep it.
+    - Else try to find a matching alias using check_all_characters_present().
+    - Else create standard_name with default_value.
+    """
+    if standard_name in df.columns:
+        return df
+
+    candidates = [standard_name] + list(aliases or [])
+    matched = check_all_characters_present(df, candidates)
+    if matched:
+        df[standard_name] = df[matched[0]]
+    else:
+        df[standard_name] = default_value
+    return df
+
+
+def normalize_survey_columns_for_reports(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize frequently used survey/report columns so project-specific header
+    differences do not crash reporting. Missing fields are created with safe defaults.
+    """
+    if df is None:
+        return df
+
+    # IDs / grouping / filters
+    _ensure_standard_column(df, "id", ["ID", "RecordID", "Record_ID", "RespondentID"], default_value="")
+    _ensure_standard_column(df, "INTERV_INIT", ["IntervInit", "INTERVINIT", "Interviewer"], default_value="999")
+    _ensure_standard_column(
+        df,
+        "HAVE_5_MIN_FOR_SURVECode",
+        ["have5minforsurvecode", "HAVE_5_MIN_FOR_SURVECode", "ParticipationCode"],
+        default_value="",
+    )
+    _ensure_standard_column(df, "ElvisStatus", ["ElvisStatusCode", "ELVIS_STATUS", "ELVISSTATUS"], default_value="")
+
+    # Contest fields (can be absent in some projects)
+    _ensure_standard_column(
+        df,
+        "REGISTER_TO_WIN_YNCODE",
+        ["RegisterToWinYNCode", "REGISTER_TO_WIN_Y_NCODE", "REGISTER_TO_WIN_Y_N"],
+        default_value="",
+    )
+    _ensure_standard_column(df, "REG_2_WIN_CONTACT_NAME", ["Reg2WinContactName"], default_value="")
+    _ensure_standard_column(df, "REG_2_WIN_CONTACT_PHONE", ["Reg2WinContactPhone"], default_value="")
+
+    # Time / address / transfer / income fields used in report calculations
+    _ensure_standard_column(df, "HOMEADD_TIME", ["HomeAddTime"], default_value="")
+    _ensure_standard_column(df, "NOTE_TIME", ["NoteTime"], default_value="")
+    _ensure_standard_column(df, "REVIEWSCR_TIME", ["ReviewScrTime"], default_value="")
+    _ensure_standard_column(df, "PREV_TRANSFERS", ["PrevTransfers"], default_value="")
+    _ensure_standard_column(df, "NEXT_TRANSFERS", ["NextTransfers"], default_value="")
+    _ensure_standard_column(df, "PREV_TRANSFERSCode", ["PrevTransfersCode"], default_value="")
+    _ensure_standard_column(df, "NEXT_TRANSFERSCode", ["NextTransfersCode"], default_value="")
+    _ensure_standard_column(df, "ROUTE_SURVEYEDCode", ["RouteSurveyedCode"], default_value="")
+    _ensure_standard_column(df, "ROUTE_SURVEYED", ["RouteSurveyed"], default_value="")
+    _ensure_standard_column(df, "VAL_ACCESS_WALK", ["ValAccessWalk"], default_value="")
+    _ensure_standard_column(df, "VAL_EGRESS_WALK", ["ValEgressWalk"], default_value="")
+    _ensure_standard_column(df, "INCOMECode", ["IncomeCode"], default_value="")
+    _ensure_standard_column(df, "HOME_ADDRESS_LAT", ["HomeAddressLat"], default_value="")
+    _ensure_standard_column(df, "HOME_ADDRESS_LONG", ["HomeAddressLong"], default_value="")
+    _ensure_standard_column(df, "HOME_ADDRESS_PLACE", ["HomeAddressPlace"], default_value="")
+    _ensure_standard_column(df, "HOME_ADDRESS_ADDR", ["HomeAddressAddr"], default_value="")
+    _ensure_standard_column(df, "HOME_ADDRESS_CITY", ["HomeAddressCity"], default_value="")
+    _ensure_standard_column(df, "HOME_ADDRESS_STATE", ["HomeAddressState"], default_value="")
+    _ensure_standard_column(df, "HOME_ADDRESS_ZIP", ["HomeAddressZip"], default_value="")
+
+    return df
 
 def clean_string(s):
     return s.replace('_', '').replace('[', '').replace(']', '').replace(' ','').replace('#','').lower()
@@ -2259,6 +2332,10 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         project: Project name (optional)
         race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
     """
+    # Normalize frequently used columns so project-specific headers don't break reports.
+    elvis_df = normalize_survey_columns_for_reports(elvis_df.copy())
+    ke_df = normalize_survey_columns_for_reports(ke_df.copy())
+
     # Clean and filter elvis data (use elvis_df for all calculations)
     elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
     filtered_elvis = elvis_df[
@@ -3248,6 +3325,10 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
         race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
     """
     print("Processing route-level data...")
+
+    # Normalize frequently used columns so project-specific headers don't break route reports.
+    df = normalize_survey_columns_for_reports(df.copy())
+    elvis_df = normalize_survey_columns_for_reports(elvis_df.copy())
     
     # Clean and filter elvis data (use elvis_df for all calculations)
     elvis_df['INTERV_INIT'] = elvis_df['INTERV_INIT'].astype(str)
@@ -3598,8 +3679,8 @@ def process_surveyor_date_data_transit_ls6(
     Logic is IDENTICAL to original, only grouping key changes to Date_Surveyor
     """
 
-    ke_df = ke_df.copy()
-    elvis_df = elvis_df.copy()
+    ke_df = normalize_survey_columns_for_reports(ke_df.copy())
+    elvis_df = normalize_survey_columns_for_reports(elvis_df.copy())
 
     # -------------------------------
     # 1. FILTER ELVIS DATA (SOURCE OF TRUTH)
@@ -3954,8 +4035,8 @@ def process_route_date_data_transit_ls6(
     Assumes Date_Route exists in BOTH ke_df and elvis_df.
     """
 
-    ke_df = ke_df.copy()
-    elvis_df = elvis_df.copy()
+    ke_df = normalize_survey_columns_for_reports(ke_df.copy())
+    elvis_df = normalize_survey_columns_for_reports(elvis_df.copy())
 
     # -------------------------------
     # 1. FILTER ELVIS DATA
