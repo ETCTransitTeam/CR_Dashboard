@@ -7057,7 +7057,7 @@ else:
         PAGES_NOT_REQUIRING_DATA = {
             "accounts_management", "projects_configuration", "create_accounts",
             "password_update", "file_management", "view_s3_files", "demographic_setup",
-            "survey_tracker_setup",
+            "survey_tracker_setup", "edit_project_configs",
         }
         if current_page not in PAGES_NOT_REQUIRING_DATA and not has_project_data:
             st.warning("⚠️ No project data available yet.")
