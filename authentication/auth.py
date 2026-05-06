@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlencode
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 import jwt
@@ -16,11 +17,47 @@ from email.mime.multipart import MIMEMultipart
 import logging
 import streamlit.components.v1 as components
 
-# Set up basic logging
-logging.basicConfig(level=logging.DEBUG)
+# Set up basic logging (warnings/errors only in production runtime)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("boto3").setLevel(logging.WARNING)
+logging.getLogger("streamlit").setLevel(logging.WARNING)
 load_dotenv()
 APP_CONFIG_SCHEMA = os.getenv("APP_CONFIG_SCHEMA", "APP_CONFIG").strip() or "APP_CONFIG"
+
+# Canonical public URL of this Streamlit app (emails, bookmarks). Override via APP_PUBLIC_BASE_URL in .env.
+_APP_PUBLIC_BASE_URL = (os.getenv("APP_PUBLIC_BASE_URL") or "http://odcollection.etc-research.com").rstrip("/")
+
+
+def app_public_url(path_with_query: str = "/") -> str:
+    """Build an absolute URL to this app for use outside the browser (e.g. activation emails)."""
+    if not path_with_query.startswith("/"):
+        path_with_query = "/" + path_with_query
+    return f"{_APP_PUBLIC_BASE_URL}{path_with_query}"
+
+
+def app_public_page_link(page: str, token: str) -> str:
+    """Build a magic link with proper query encoding (JWTs in URLs must be encoded or they break)."""
+    return f"{_APP_PUBLIC_BASE_URL}/?{urlencode({'page': page, 'token': token})}"
+
+
+def _smtp_port() -> int:
+    try:
+        return int(os.getenv("EMAIL_PORT") or "587")
+    except (TypeError, ValueError):
+        return 587
+
+
+def _query_param_first(key: str, default=None):
+    """Streamlit may return a list for a query key; take the first value for stable token/page reads."""
+    v = st.query_params.get(key, default)
+    if v is None:
+        return default
+    if isinstance(v, (list, tuple)):
+        return str(v[0]) if v else default
+    return str(v)
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
@@ -76,6 +113,158 @@ def get_projects():
     conn.close()
 
     return projects
+
+
+def ensure_client_project_access_table():
+    """Create additive access-mapping table used for project-scoped client auth."""
+    conn = user_connect_to_snowflake()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {APP_CONFIG_SCHEMA}")
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS (
+                USER_EMAIL VARCHAR NOT NULL,
+                PROJECT_NAME VARCHAR NOT NULL,
+                IS_ACTIVE BOOLEAN DEFAULT TRUE,
+                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+                UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+            """
+        )
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_client_allowed_projects(email: str):
+    """Return active project names assigned to a client user email."""
+    ensure_client_project_access_table()
+    conn = user_connect_to_snowflake()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"""
+            SELECT PROJECT_NAME
+            FROM {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS
+            WHERE LOWER(USER_EMAIL) = LOWER(%s)
+              AND COALESCE(IS_ACTIVE, TRUE) = TRUE
+            ORDER BY PROJECT_NAME
+            """,
+            (email,),
+        )
+        return [row[0] for row in (cur.fetchall() or []) if row and row[0]]
+    finally:
+        cur.close()
+        conn.close()
+
+
+def assign_client_project(email: str, project_name: str) -> None:
+    """Upsert one active project mapping for a client email."""
+    ensure_client_project_access_table()
+    conn = user_connect_to_snowflake()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"""
+            UPDATE {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS
+            SET IS_ACTIVE = TRUE,
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE LOWER(USER_EMAIL) = LOWER(%s)
+              AND UPPER(PROJECT_NAME) = UPPER(%s)
+            """,
+            (email, project_name),
+        )
+        if cur.rowcount == 0:
+            cur.execute(
+                f"""
+                INSERT INTO {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS (USER_EMAIL, PROJECT_NAME, IS_ACTIVE)
+                VALUES (%s, %s, TRUE)
+                """,
+                (email, project_name),
+            )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
+def assign_client_project_with_status(email: str, project_name: str) -> str:
+    """
+    Upsert one active project mapping for a client email.
+    Returns: 'added' | 'reactivated' | 'already_active'
+    """
+    ensure_client_project_access_table()
+    conn = user_connect_to_snowflake()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"""
+            SELECT IS_ACTIVE
+            FROM {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS
+            WHERE LOWER(USER_EMAIL) = LOWER(%s)
+              AND UPPER(PROJECT_NAME) = UPPER(%s)
+            """,
+            (email, project_name),
+        )
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+                f"""
+                INSERT INTO {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS (USER_EMAIL, PROJECT_NAME, IS_ACTIVE)
+                VALUES (%s, %s, TRUE)
+                """,
+                (email, project_name),
+            )
+            conn.commit()
+            return "added"
+
+        is_active = bool(row[0])
+        if is_active:
+            return "already_active"
+
+        cur.execute(
+            f"""
+            UPDATE {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS
+            SET IS_ACTIVE = TRUE,
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE LOWER(USER_EMAIL) = LOWER(%s)
+              AND UPPER(PROJECT_NAME) = UPPER(%s)
+            """,
+            (email, project_name),
+        )
+        conn.commit()
+        return "reactivated"
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_user_basic_by_email(email: str):
+    """Return user basics for an email or None."""
+    conn = user_connect_to_snowflake()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT email, username, role, is_active
+            FROM user.user_table
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (email,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "email": row[0],
+            "username": row[1],
+            "role": row[2],
+            "is_active": bool(row[3]),
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 
@@ -266,7 +455,7 @@ def render_auth_layout(content_function, title, subtitle=None, dashboard_type="s
                 <img src="https://etcinstitute.com/wp-content/uploads/2023/09/ETC-NewLogo-Horizontal-Web.png"
                         alt="ETC Logo" style="width:300px; margin-bottom:20px;"/> <br/>
                 <h1>Welcome to {dashboard_title} <br/> Dashboard</h1>
-                    <h4 style="margin-bottom:10px">TRANSIT SURVEY 2025</h4>
+                    <h4 style="margin-bottom:10px">TRANSIT SURVEY</h4>
                     <h5>Origin-Destination Collection Dashboard</h5>
                     <p>725 W. Frontier Lane, Olathe, KS</p>
                     <p> (913) 829-1215</p>
@@ -310,7 +499,7 @@ def render_auth_layout(content_function, title, subtitle=None, dashboard_type="s
 
 def send_activation_email(email, activation_token):
     """Send an account activation email with a secure token using HTML format."""
-    activation_link = f"http://3.137.207.26:8501/?page=activate&token={activation_token}"
+    activation_link = app_public_page_link("activate", activation_token)
 
     subject = "Activate Your Account - ETC Institute"
     
@@ -385,14 +574,16 @@ def send_activation_email(email, activation_token):
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'html'))
 
-        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+        with smtplib.SMTP(EMAIL_HOST, _smtp_port()) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, email, msg.as_string())
 
-        print("Activation email sent successfully!")
+        logger.info("Activation email sent to %s", email)
+        return True
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        logger.exception("Failed to send activation email to %s: %s", email, e)
+        return False
 
 def create_new_user(email, username, password, role):
     """Create a new user in Snowflake (admin-only)."""
@@ -417,8 +608,10 @@ def create_new_user(email, username, password, role):
     try:
         cursor.execute(insert_query, (email, username, encoded_password, role, False, activation_token))
         conn.commit()
-        send_activation_email(email, activation_token)
-        st.success(f"User {username} created successfully! Activation email sent.")
+        if send_activation_email(email, activation_token):
+            st.success(f"User {username} created successfully! Activation email sent.")
+        else:
+            st.success(f"User {username} created, but the activation email failed to send. Check logs and SMTP settings.")
         return True
     except Exception as e:
         st.error(f"Failed to create user: {e}")
@@ -490,7 +683,7 @@ def register_new_user(email, username, password, role):
     cursor.execute("SELECT email FROM user.user_table WHERE email = %s", (email,))
     if cursor.fetchone():
         st.error('User already exists!')
-        return False
+        return False, False
 
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
     encoded_password = base64.b64encode(hashed_password).decode('utf-8')
@@ -505,8 +698,13 @@ def register_new_user(email, username, password, role):
     cursor.close()
     conn.close()
 
-    send_activation_email(email, activation_token)
-    return True
+    email_sent = send_activation_email(email, activation_token)
+    if not email_sent:
+        st.warning(
+            "Your account was created, but the activation email could not be sent. "
+            "Please contact support or try forgot-password after verifying your address."
+        )
+    return True, email_sent
 
 def register_page():
     """Displays a registration form and handles user registration."""
@@ -524,10 +722,13 @@ def register_page():
                 elif password1 != password2:
                     st.error("Passwords do not match.")
                 else:
-                    if register_new_user(email, username, password1, 'CLIENT'):
+                    created, email_sent = register_new_user(email, username, password1, 'CLIENT')
+                    if created and email_sent:
                         st.success("Registration successful! Check your email for activation link.")
                         time.sleep(2)
                         st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
+                    elif created:
+                        st.info("Account was created. If email delivery failed, use the message above and contact support.")
 
         st.markdown("""
             <style>
@@ -550,11 +751,109 @@ def register_page():
     render_auth_layout(register_content, "Create Account", "Join ETC Institute's analytics platform", dashboard_type="client")
 
 
+def _resolve_signup_project_name():
+    raw_project = _query_param_first("project", "")
+    project = (raw_project or "").strip()
+    if not project:
+        return None
+
+    projects = get_projects()
+    for name in projects.keys():
+        if name.strip().lower() == project.lower():
+            return name
+    return None
+
+
+def client_signup_page():
+    """Project-scoped signup: creates CLIENT user and assigns that project access."""
+    resolved_project = _resolve_signup_project_name()
+    requested_project = (_query_param_first("project", "") or "").strip()
+
+    def register_content():
+        if not requested_project:
+            st.error("Missing project in signup URL.")
+            return
+        if not resolved_project:
+            st.error("Invalid or inactive project in signup URL.")
+            return
+
+        st.info(f"Project access for this signup: {resolved_project}")
+        with st.form(key="project_register_form"):
+            username = st.text_input("Username", placeholder="Choose a username")
+            email = st.text_input("Email", placeholder="Enter your email address")
+            password1 = st.text_input("Password", type="password", placeholder="Create a password")
+            password2 = st.text_input("Confirm Password", type="password", placeholder="Re-enter your password")
+
+            if st.form_submit_button("Create Account", type='primary', use_container_width=True):
+                if not username or not email or not password1 or not password2:
+                    st.error("Please fill in all fields.")
+                elif password1 != password2:
+                    st.error("Passwords do not match.")
+                else:
+                    existing_user = get_user_basic_by_email(email)
+                    if existing_user:
+                        existing_role = str(existing_user.get("role", "")).upper()
+                        if existing_role != "CLIENT":
+                            st.error(
+                                "This email already exists as a non-client account. "
+                                "Please use a different email or contact administrator."
+                            )
+                            return
+
+                        status = assign_client_project_with_status(email, resolved_project)
+                        if status == "already_active":
+                            st.info(
+                                f"User already exists and already has access to {resolved_project}."
+                            )
+                        else:
+                            st.success(
+                                f"User already exists. Project access added for {resolved_project}."
+                            )
+
+                        if not existing_user.get("is_active", False):
+                            st.warning(
+                                "This account is not active yet. Please activate it from the email "
+                                "or use forgot password to get a fresh link."
+                            )
+                        else:
+                            time.sleep(1)
+                            st.markdown(
+                                f'<meta http-equiv="refresh" content="0;url=/?page=client_login">',
+                                unsafe_allow_html=True,
+                            )
+                        return
+
+                    created, email_sent = register_new_user(email, username, password1, 'CLIENT')
+                    if created:
+                        assign_client_project_with_status(email, resolved_project)
+                    if created and email_sent:
+                        st.success("Registration successful! Check your email for activation link.")
+                        time.sleep(2)
+                        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=client_login">', unsafe_allow_html=True)
+                    elif created:
+                        st.info("Account created. If activation email failed, contact support.")
+
+        st.markdown(
+            """
+            <div class="auth-link">
+                Already have an account? <a href="/?page=client_login">Login here</a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    render_auth_layout(
+        register_content,
+        "Client Signup",
+        "Create your account for your assigned project.",
+        dashboard_type="client",
+    )
+
+
 def activate_account():
     """Activate the user account based on the verification token."""
     def activate_content():
-        query_params = st.query_params
-        token = query_params.get("token", None)
+        token = _query_param_first("token")
 
         if not token:
             st.error("Invalid activation link.")
@@ -563,7 +862,7 @@ def activate_account():
         conn = user_connect_to_snowflake()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT email FROM user.user_table WHERE activation_token = %s", (token,))
+        cursor.execute("SELECT email, is_active FROM user.user_table WHERE activation_token = %s", (token,))
         user_record = cursor.fetchone()
 
         if not user_record:
@@ -573,15 +872,40 @@ def activate_account():
             return
 
         email = user_record[0]
+        is_active = bool(user_record[1]) if len(user_record) > 1 else False
 
-        cursor.execute("UPDATE user.user_table SET is_active = %s, activation_token = NULL WHERE email = %s", (True, email))
-        conn.commit()
+        if is_active:
+            cursor.close()
+            conn.close()
+            st.success("Your account is already activated. Please log in.")
+            st.markdown(f'<meta http-equiv="refresh" content="1;url=/?page=login">', unsafe_allow_html=True)
+            return
+
+        st.info("Click Activate to complete your account activation.")
+        if st.button("Activate Account", type="primary", use_container_width=True):
+            cursor.execute(
+                """
+                UPDATE user.user_table
+                SET is_active = %s, activation_token = NULL
+                WHERE email = %s AND activation_token = %s
+                """,
+                (True, email, token),
+            )
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            if cursor.rowcount == 0:
+                st.error("This activation link was already used or is no longer valid.")
+                return
+
+            st.success("🎉 Your account has been activated! You can now log in.")
+            st.info("Redirecting to login page...")
+            st.markdown(f'<meta http-equiv="refresh" content="2;url=/?page=login">', unsafe_allow_html=True)
+            return
+
         cursor.close()
         conn.close()
-
-        st.success("🎉 Your account has been activated! You can now log in.")
-        st.info("Redirecting to login page...")
-        st.markdown(f'<meta http-equiv="refresh" content="2;url=/?page=login">', unsafe_allow_html=True)
     
     render_auth_layout(activate_content, "Account Activation", "Your account is being activated...")
 
@@ -625,17 +949,20 @@ def check_user_login(email, password):
     else:
         return None
 
-def login():
+def login(client_mode: bool = False):
     """Displays a login form and handles authentication."""
     def login_content():
 
         schema_value = get_projects()
+        project_names = list(schema_value.keys())
         with st.form(key="login_form"):
             # Email and Password labels will be black if theme textColor is set to black
             email = st.text_input("Email", placeholder="Enter your email address")
             password = st.text_input("Password", type="password", placeholder="Enter your password")
-            print("schema_value:", schema_value )  # Debugging line to check the contents of schema_value   
-            project = st.selectbox("Select a Project", list(schema_value.keys()))
+            project_widget_label = "Select a Project"
+            selected_project_from_form = None
+            if not client_mode:
+                selected_project_from_form = st.selectbox(project_widget_label, project_names)
             # Forgot Password link, right-aligned and red
             st.markdown(
                 '<div style="text-align: right; margin-bottom: 8px;">'
@@ -649,13 +976,71 @@ def login():
                 if user == "inactive":
                     st.error("Your account is not active. Please verify your email before logging in.")
                 elif user:
+                    selected_project = selected_project_from_form
+                    user_role = str(user.get("role", "")).upper()
+                    if client_mode and user_role != "CLIENT":
+                        # Prevent stale portal state if someone tests client login with non-client account.
+                        st.session_state.pop("user", None)
+                        st.session_state.pop("logged_in", None)
+                        st.session_state.pop("token", None)
+                        st.session_state.pop("jwt_token", None)
+                        st.session_state.pop("selected_project", None)
+                        st.session_state.pop("schema", None)
+                        st.error("This login page is for client accounts only.")
+                        return
+
+                    if str(user.get("role", "")).upper() == "CLIENT":
+                        allowed_projects = get_client_allowed_projects(user["email"])
+                        if allowed_projects:
+                            valid_allowed = [p for p in allowed_projects if p in schema_value]
+                            if not valid_allowed:
+                                st.error("Your assigned project access is inactive. Contact administrator.")
+                                return
+                            if len(valid_allowed) == 1:
+                                selected_project = valid_allowed[0]
+                            else:
+                                # Persist authenticated client session before moving to project-card picker.
+                                store_user_in_session(user)
+                                st.session_state["logged_in"] = True
+                                st.session_state["jwt_token"] = generate_jwt(
+                                    user["email"], user["username"], user["role"]
+                                )
+                                st.session_state["login_redirect_page"] = "client_login"
+                                st.session_state["client_candidate_projects"] = valid_allowed
+                                st.query_params["logged_in"] = "true"
+                                st.query_params["page"] = "client_project_select"
+                                st.rerun()
+                                return
+                        elif client_mode:
+                            # Compatibility mode for existing CLIENT users without mapping.
+                            store_user_in_session(user)
+                            st.session_state["logged_in"] = True
+                            st.session_state["jwt_token"] = generate_jwt(
+                                user["email"], user["username"], user["role"]
+                            )
+                            st.session_state["login_redirect_page"] = "client_login"
+                            st.session_state["client_candidate_projects"] = project_names
+                            st.query_params["logged_in"] = "true"
+                            st.query_params["page"] = "client_project_select"
+                            st.rerun()
+                            return
+
+                    if not selected_project:
+                        st.error("Please select a project to continue.")
+                        return
+                    if selected_project not in schema_value:
+                        st.error("Selected project is invalid or inactive.")
+                        return
+
+                    # Persist session only after all authorization/project checks pass.
                     store_user_in_session(user)
                     st.success(f"Welcome {user['username']}!")
                     jwt_token = generate_jwt(user["email"], user["username"], user["role"])
                     st.session_state["logged_in"] = True
                     st.session_state["jwt_token"] = jwt_token
-                    st.session_state["selected_project"] = project
-                    st.session_state["schema"] = schema_value[project]
+                    st.session_state["login_redirect_page"] = "client_login" if client_mode else "login"
+                    st.session_state["selected_project"] = selected_project
+                    st.session_state["schema"] = schema_value[selected_project]
                     st.query_params["logged_in"] = "true"
                     st.query_params["page"] = "main"
                     st.rerun()
@@ -688,13 +1073,169 @@ def login():
             unsafe_allow_html=True
         )
 
-    render_auth_layout(login_content, "Login", "")
+    page_title = "Client Login" if client_mode else "Login"
+    subtitle = "Login to your assigned project account" if client_mode else ""
+    render_auth_layout(login_content, page_title, subtitle)
 
 def logout():
+    redirect_page = st.session_state.get("login_redirect_page", "login")
     st.session_state.clear()
     st.success("Logged out successfully!")
-    st.query_params["page"] = "login"
+    st.query_params["page"] = redirect_page
     st.rerun()
+
+
+def client_project_select_page():
+    """Post-login page for client users with multiple allowed projects."""
+    user = st.session_state.get("user", {})
+    role = str(user.get("role", "")).upper()
+    if role != "CLIENT":
+        st.error("This page is only for client users.")
+        st.query_params["page"] = "login"
+        return
+
+    projects = st.session_state.get("client_candidate_projects") or []
+    schema_value = get_projects()
+    projects = [p for p in projects if p in schema_value]
+    if not projects:
+        st.error("No active projects found for your account. Contact administrator.")
+        return
+
+    if len(projects) == 1:
+        chosen = projects[0]
+        st.session_state["selected_project"] = chosen
+        st.session_state["schema"] = schema_value[chosen]
+        st.success(f"Project selected: {chosen}")
+        st.query_params["page"] = "main"
+        st.rerun()
+        return
+
+    st.markdown(
+        """
+        <style>
+        .project-hero {
+            background: linear-gradient(135deg, #0b6b95 0%, #1b8fb8 45%, #4fc3dc 100%);
+            border-radius: 16px;
+            padding: 22px 22px 18px 22px;
+            margin: 4px 0 16px 0;
+            color: #ffffff;
+            box-shadow: 0 8px 24px rgba(12, 58, 86, 0.18);
+        }
+        .project-hero-title {
+            margin: 0;
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: 0.2px;
+        }
+        .project-hero-sub {
+            margin: 8px 0 0 0;
+            font-size: 14px;
+            color: #eaf7ff;
+        }
+        .project-select-wrap {
+            background: linear-gradient(180deg, #f8fcff 0%, #eef6fb 100%);
+            border: 1px solid #d8e8f5;
+            border-radius: 14px;
+            padding: 18px 20px;
+            margin-bottom: 16px;
+        }
+        .project-select-title {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 700;
+            color: #1d2e40;
+        }
+        .project-select-sub {
+            margin: 6px 0 0 0;
+            font-size: 14px;
+            color: #3c4f63;
+        }
+        .project-card {
+            border: 1px solid #d6e4ef;
+            border-radius: 12px;
+            padding: 14px 14px 12px 14px;
+            background: #ffffff;
+            margin: 6px 0 8px 0;
+            min-height: 95px;
+            box-shadow: 0 4px 12px rgba(19, 55, 79, 0.07);
+        }
+        .project-card-name {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1f2f43;
+            margin: 0 0 4px 0;
+            word-break: break-word;
+        }
+        .project-card-meta {
+            font-size: 12px;
+            color: #63758a;
+            margin: 0;
+        }
+        .project-chip {
+            display: inline-block;
+            margin-top: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #0d5b85;
+            background: #e6f4ff;
+            border: 1px solid #b9def8;
+            border-radius: 999px;
+            padding: 3px 9px;
+        }
+        .project-help {
+            margin: 8px 0 14px 0;
+            font-size: 13px;
+            color: #4a5e73;
+            text-align: center;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="project-hero">
+            <p class="project-hero-title">Pick Your Dashboard</p>
+            <p class="project-hero-sub">You have access to multiple projects. Choose one to continue.</p>
+        </div>
+        <div class="project-select-wrap">
+            <p class="project-select-title">Choose Your Project</p>
+            <p class="project-select-sub">Select one project to open your dashboard. You can switch later if you have multiple assigned projects.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='project-help'>Tip: project names match your assigned client programs.</p>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(2)
+    for idx, project_name in enumerate(projects):
+        col = cols[idx % 2]
+        with col:
+            st.markdown(
+                f"""
+                <div class="project-card">
+                    <p class="project-card-name">{project_name}</p>
+                    <p class="project-card-meta">Assigned client project</p>
+                    <span class="project-chip">Available Now</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                f"Enter {project_name}",
+                key=f"client_project_card_{idx}_{project_name}",
+                use_container_width=True,
+                type="primary",
+            ):
+                st.session_state["selected_project"] = project_name
+                st.session_state["schema"] = schema_value[project_name]
+                st.session_state["client_candidate_projects"] = projects
+                st.success(f"Project selected: {project_name}")
+                st.query_params["page"] = "main"
+                st.rerun()
 
 def is_authenticated():
     if "logged_in" in st.session_state and st.session_state.get("logged_in", False):
@@ -732,7 +1273,7 @@ def generate_reset_token(email):
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def send_reset_email(user_email, reset_token):
-    reset_link = f"http://3.137.207.26:8501/?page=reset_password&token={reset_token}"
+    reset_link = app_public_page_link("reset_password", reset_token)
     subject = "Password Reset Request - ETC Institute"
 
     body = f"""
@@ -805,13 +1346,15 @@ def send_reset_email(user_email, reset_token):
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'html'))
 
-        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+        with smtplib.SMTP(EMAIL_HOST, _smtp_port()) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, user_email, msg.as_string())
-        st.success("Password reset link sent to your email.")
+        return True
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        logger.exception("Failed to send password reset email to %s: %s", user_email, e)
+        st.error(f"Could not send email. Check SMTP settings and logs. ({e})")
+        return False
 
 def forgot_password():
     """Displays the forgot password page."""
@@ -831,8 +1374,8 @@ def forgot_password():
 
             if user:
                 reset_token = generate_reset_token(email)
-                send_reset_email(email, reset_token)
-                st.success("Password reset link has been sent to your email!")
+                if send_reset_email(email, reset_token):
+                    st.success("Password reset link has been sent to your email!")
             else:
                 st.error("Email not found in the system.")
             
@@ -892,8 +1435,7 @@ def update_user_password(email, new_password):
 def reset_password():
     """Displays the reset password form."""
     def reset_password_content():
-        query_params = st.query_params
-        reset_token = query_params.get("token", None)
+        reset_token = _query_param_first("token")
 
         if not reset_token:
             st.error("Reset token is missing or invalid.")
@@ -937,7 +1479,7 @@ def generate_change_password_token(email):
 
 def send_change_password_email(email):
     token = generate_change_password_token(email)
-    change_link = f"http://3.137.207.26:8501/?page=change_password&token={token}"
+    change_link = app_public_page_link("change_password", token)
     
     subject = "Change Your Password - ETC Institute"
 
@@ -1012,13 +1554,14 @@ def send_change_password_email(email):
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "html"))
 
-        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT) as server:
+        with smtplib.SMTP(EMAIL_HOST, _smtp_port()) as server:
             server.starttls()
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, email, msg.as_string())
 
         st.success("Password change link sent to your email.")
     except Exception as e:
+        logger.exception("Failed to send change-password email to %s: %s", email, e)
         st.error(f"Failed to send email: {e}")
 
 def verify_change_password_token(token):
@@ -1035,8 +1578,7 @@ def verify_change_password_token(token):
 def change_password_form():
     """Display the password change form after clicking the link."""
     def change_password_content():
-        query_params = st.query_params
-        token = query_params.get("token", None)
+        token = _query_param_first("token")
 
         if not token:
             st.error("Invalid request. No change password token found.")

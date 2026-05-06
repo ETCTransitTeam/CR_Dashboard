@@ -2,6 +2,7 @@
 import os
 import re
 import datetime
+from urllib.parse import quote_plus
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -32,7 +33,7 @@ from utils import (
     build_group_option_column_maps,
     demographic_display_key_for_group_name,
 )
-from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page
+from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -135,8 +136,32 @@ if "logged_in" not in st.session_state:
 
 # Get existing query parameters
 query_params = st.query_params
-# current_page = query_params.get("page", [""])[0]  # Get 'page' value if it exists
-current_page = st.query_params.get("page", "login")  # Default to "login" if not set
+
+
+def _current_page_from_query():
+    """Stable page key: Streamlit may return a list; normalize so auth links always match."""
+    p = st.query_params.get("page", "login")
+    if isinstance(p, (list, tuple)):
+        p = p[0] if p else "login"
+    return str(p).strip().lower() if p else "login"
+
+
+current_page = _current_page_from_query()
+
+# Always honor auth magic-link pages, even when an existing session is logged in.
+# This prevents "token expired/session" confusion when users open activation/reset links.
+if current_page == "activate":
+    activate_account()
+    st.stop()
+elif current_page == "reset_password":
+    reset_password()
+    st.stop()
+elif current_page == "change_password":
+    change_password_form()
+    st.stop()
+elif current_page == "client_project_select":
+    client_project_select_page()
+    st.stop()
 
 # button_style = """
 # <style>
@@ -158,20 +183,21 @@ if "success_project_name" not in st.session_state:
 if not st.session_state["logged_in"]:
     if current_page == "signup":
         register_page()  # Show the register page if the query parameter is set to "register"
+    elif current_page == "client_signup":
+        client_signup_page()
+    elif current_page == "client_login":
+        login(client_mode=True)
     elif current_page == "login":
         login()  # Show the login page by default
     elif current_page == "forgot_password":
         forgot_password()
-    elif current_page == "reset_password":
-        reset_password()
-    elif current_page=='activate':
-        activate_account()
-    elif current_page=='change_password':
-        change_password_form()
     elif current_page=='create_user':
         create_new_user_page()
     else:
-        st.write('Token Expired. LogIn Again')
+        st.write(
+            "This link is not valid here (missing or unknown **page** in the URL), "
+            "or your session timed out. Use **Login** below."
+        )
         if st.button("Login"):
             # st.experimental_set_query_params(page="login")
             # st.rerun()
@@ -180,8 +206,12 @@ if not st.session_state["logged_in"]:
 else:
     if not is_authenticated():
         st.error("Your Token Expired.You need to log in first.")
-        # Optionally, redirect the user to the login page
-        st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
+        # Role-aware redirect target (client portal vs admin/user portal)
+        redirect_page = st.session_state.get("login_redirect_page", "login")
+        st.markdown(
+            f'<meta http-equiv="refresh" content="0;url=/?page={redirect_page}">',
+            unsafe_allow_html=True
+        )
     else:
         selected_schema = st.session_state.get("schema", None)
         selected_project = str(st.session_state.get("selected_project", "")).lower()
@@ -1573,7 +1603,7 @@ else:
             else:
                 st.session_state.sidebar_menu = st.session_state.selected_page
                 st.selectbox(
-                    "",
+                    "Dashboard page selector",
                     menu_items,
                     key="sidebar_menu",
                     label_visibility="collapsed",
@@ -5986,6 +6016,20 @@ else:
 
         def projects_configuration_page():
             st.header("Add New Project")
+            st.caption("Client signup URLs use project name directly and respect APP_PUBLIC_BASE_URL.")
+
+            existing_projects = list(get_projects().keys())
+            if existing_projects:
+                with st.expander("Project-specific client signup URLs", expanded=False):
+                    selected_for_link = st.selectbox(
+                        "Choose a project",
+                        sorted(existing_projects),
+                        key="client_signup_project_selector",
+                    )
+                    signup_url = app_public_url(
+                        f"/?page=client_signup&project={quote_plus(selected_for_link)}"
+                    )
+                    st.code(signup_url, language=None)
 
             # Time period config: Load/Clear buttons must be outside st.form (st.button not allowed inside form)
             if "time_period_config_table" not in st.session_state:
@@ -6249,6 +6293,10 @@ else:
                             elvis_project_name,
                         ),
                     )
+                    new_signup_url = app_public_url(
+                        f"/?page=client_signup&project={quote_plus(project_name)}"
+                    )
+                    st.info(f"Client signup URL for {project_name}: {new_signup_url}")
 
                     # Parse pasted Excel table and create TOD, PERIOD_GROUPS, and PROJECT_PERIOD_MAPPING tables
                     time_period_df = st.session_state.get("time_period_config_table")
