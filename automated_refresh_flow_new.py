@@ -1318,19 +1318,61 @@ def fetch_and_process_data(project,schema):
             'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
         wkday_route_direction_df.rename(columns=rename_dict, inplace=True)
 
-        # Create a unified route lookup from detail_df_stops
-        route_lookup = detail_df_stops[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']].drop_duplicates()
-        
-        # Function to safely merge route names
+        # Build robust route lookup from STOPS data.
+        # Some projects store route IDs with a direction suffix (e.g., _00/_01),
+        # while dashboard route codes may be base route IDs without that suffix.
+        route_lookup = detail_df_stops[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']].drop_duplicates().copy()
+        route_lookup['ETC_ROUTE_ID'] = route_lookup['ETC_ROUTE_ID'].astype(str).str.strip()
+        route_lookup['ETC_ROUTE_NAME'] = route_lookup['ETC_ROUTE_NAME'].astype(str).str.strip()
+        route_lookup = route_lookup[
+            route_lookup['ETC_ROUTE_ID'].ne('') &
+            route_lookup['ETC_ROUTE_ID'].ne('nan') &
+            route_lookup['ETC_ROUTE_NAME'].ne('') &
+            route_lookup['ETC_ROUTE_NAME'].ne('nan')
+        ]
+
+        def normalize_route_code(route_code):
+            code = str(route_code).strip()
+            if not code or code.lower() in {'nan', 'none'}:
+                return ''
+            parts = code.split('_')
+            # Remove only directional suffix tokens (e.g., _00/_01/_02/_03).
+            # Do NOT strip meaningful route segments such as TAM_1_1.
+            if len(parts) > 1 and parts[-1] in {'00', '01', '02', '03'}:
+                return '_'.join(parts[:-1]).strip()
+            return code
+
+        # Exact ID -> route name
+        route_name_map_exact = (
+            route_lookup.drop_duplicates(subset=['ETC_ROUTE_ID'])
+            .set_index('ETC_ROUTE_ID')['ETC_ROUTE_NAME']
+            .to_dict()
+        )
+
+        # Base ID (suffix removed) -> route name
+        route_lookup['BASE_ROUTE_ID'] = route_lookup['ETC_ROUTE_ID'].apply(normalize_route_code)
+        route_name_map_base = (
+            route_lookup[route_lookup['BASE_ROUTE_ID'].ne('')]
+            .drop_duplicates(subset=['BASE_ROUTE_ID'])
+            .set_index('BASE_ROUTE_ID')['ETC_ROUTE_NAME']
+            .to_dict()
+        )
+
+        # Function to safely map route names
         def add_route_names(df):
-            df = df.merge(
-                route_lookup,
-                left_on='ROUTE_SURVEYEDCode',
-                right_on='ETC_ROUTE_ID',
-                how='left'
+            df = df.copy()
+            df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].astype(str).str.strip()
+            df['ROUTE_SURVEYED'] = df['ROUTE_SURVEYEDCode'].map(route_name_map_exact)
+
+            missing_mask = df['ROUTE_SURVEYED'].isna()
+            if missing_mask.any():
+                base_codes = df.loc[missing_mask, 'ROUTE_SURVEYEDCode'].apply(normalize_route_code)
+                df.loc[missing_mask, 'ROUTE_SURVEYED'] = base_codes.map(route_name_map_base)
+
+            df['ROUTE_SURVEYED'] = df['ROUTE_SURVEYED'].fillna(
+                'Unknown Route (' + df['ROUTE_SURVEYEDCode'] + ')'
             )
-            df['ROUTE_SURVEYED'] = df['ETC_ROUTE_NAME'].fillna('Unknown Route (' + df['ROUTE_SURVEYEDCode'] + ')')
-            return df.drop(columns=['ETC_ROUTE_ID', 'ETC_ROUTE_NAME'], errors='ignore')
+            return df
 
         # Apply to all DataFrames that need route names
         wkday_comparison_df = add_route_names(wkday_comparison_df)
