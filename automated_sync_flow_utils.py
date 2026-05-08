@@ -6738,6 +6738,15 @@ def create_low_response_report(elvis_df):
     # Create DataFrame for the report
     report_df = pd.DataFrame(report_data)
     
+    # Normalize mixed object columns before Snowflake upload.
+    # These fields can contain numbers for existing questions and blanks for missing ones,
+    # which causes Arrow conversion errors in write_pandas.
+    for col in ['First Max', 'First Min']:
+        if col in report_df.columns:
+            report_df[col] = report_df[col].apply(
+                lambda v: "" if pd.isna(v) else str(v)
+            )
+
     # Sort by percent_filled (lowest first) to highlight low response questions
     report_df = report_df.sort_values('percent_filled', ascending=True)
     

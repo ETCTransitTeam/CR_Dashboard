@@ -1318,18 +1318,36 @@ def fetch_and_process_data(project,schema):
             'Overall_Goal_DIFFERENCE': 'Remaining'}, inplace=True)
         wkday_route_direction_df.rename(columns=rename_dict, inplace=True)
 
-        # Build robust route lookup from STOPS data.
-        # Some projects store route IDs with a direction suffix (e.g., _00/_01),
-        # while dashboard route codes may be base route IDs without that suffix.
-        route_lookup = detail_df_stops[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']].drop_duplicates().copy()
-        route_lookup['ETC_ROUTE_ID'] = route_lookup['ETC_ROUTE_ID'].astype(str).str.strip()
-        route_lookup['ETC_ROUTE_NAME'] = route_lookup['ETC_ROUTE_NAME'].astype(str).str.strip()
-        route_lookup = route_lookup[
-            route_lookup['ETC_ROUTE_ID'].ne('') &
-            route_lookup['ETC_ROUTE_ID'].ne('nan') &
-            route_lookup['ETC_ROUTE_NAME'].ne('') &
-            route_lookup['ETC_ROUTE_NAME'].ne('nan')
-        ]
+        # Build route lookup from Details file with priority:
+        # 1) XFERS tab (preferred, usually directionless route IDs)
+        # 2) STOPS tab (fallback)
+        def sanitize_route_lookup(route_df):
+            if route_df is None or route_df.empty:
+                return pd.DataFrame(columns=['ETC_ROUTE_ID', 'ETC_ROUTE_NAME'])
+            required_cols = {'ETC_ROUTE_ID', 'ETC_ROUTE_NAME'}
+            if not required_cols.issubset(route_df.columns):
+                return pd.DataFrame(columns=['ETC_ROUTE_ID', 'ETC_ROUTE_NAME'])
+
+            sanitized_df = route_df[['ETC_ROUTE_ID', 'ETC_ROUTE_NAME']].drop_duplicates().copy()
+            sanitized_df['ETC_ROUTE_ID'] = sanitized_df['ETC_ROUTE_ID'].astype(str).str.strip()
+            sanitized_df['ETC_ROUTE_NAME'] = sanitized_df['ETC_ROUTE_NAME'].astype(str).str.strip()
+            sanitized_df = sanitized_df[
+                sanitized_df['ETC_ROUTE_ID'].ne('') &
+                sanitized_df['ETC_ROUTE_ID'].ne('nan') &
+                sanitized_df['ETC_ROUTE_NAME'].ne('') &
+                sanitized_df['ETC_ROUTE_NAME'].ne('nan')
+            ]
+            return sanitized_df
+
+        xfers_route_lookup = sanitize_route_lookup(detail_df_xfers)
+        stops_route_lookup = sanitize_route_lookup(detail_df_stops)
+        route_lookup = pd.concat([xfers_route_lookup, stops_route_lookup], ignore_index=True)
+        route_lookup = route_lookup.drop_duplicates(subset=['ETC_ROUTE_ID'], keep='first')
+        print(
+            f"Route lookup sources -> XFERS: {len(xfers_route_lookup)}, "
+            f"STOPS: {len(stops_route_lookup)}, "
+            f"Combined unique: {len(route_lookup)}"
+        )
 
         def normalize_route_code(route_code):
             code = str(route_code).strip()
@@ -1350,6 +1368,8 @@ def fetch_and_process_data(project,schema):
         )
 
         # Base ID (suffix removed) -> route name
+        # This remains as a fallback for projects where CR route codes are base IDs
+        # but detail sheets still carry directional suffixes (e.g., _00/_01).
         route_lookup['BASE_ROUTE_ID'] = route_lookup['ETC_ROUTE_ID'].apply(normalize_route_code)
         route_name_map_base = (
             route_lookup[route_lookup['BASE_ROUTE_ID'].ne('')]
