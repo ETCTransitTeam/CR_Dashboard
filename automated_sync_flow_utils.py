@@ -80,7 +80,40 @@ def normalize_survey_columns_for_reports(df: pd.DataFrame) -> pd.DataFrame:
         ["have5minforsurvecode", "HAVE_5_MIN_FOR_SURVECode", "ParticipationCode"],
         default_value="",
     )
-    _ensure_standard_column(df, "ElvisStatus", ["ElvisStatusCode", "ELVIS_STATUS", "ELVISSTATUS"], default_value="")
+    # Normalize values so '1', 1, 1.0, '1.0', ' 1 ' all compare equal to '1'.
+    # pandas often infers numeric columns as float64 when NaN is present, so a raw
+    # `astype(str) == '1'` check would silently drop every record (values render as
+    # '1.0'). Stripping the trailing '.0' once here means every downstream report
+    # filter just needs `== '1'`.
+    if "HAVE_5_MIN_FOR_SURVECode" in df.columns:
+        df["HAVE_5_MIN_FOR_SURVECode"] = (
+            df["HAVE_5_MIN_FOR_SURVECode"]
+            .astype(str)
+            .str.strip()
+            .str.replace(r"\.0$", "", regex=True)
+        )
+    # NOTE: do NOT alias `ElvisStatusCode` here. `ElvisStatus` carries text labels
+    # (e.g. 'Delete', 'Use'); `ElvisStatusCode` carries numeric codes (e.g. 4 = Delete).
+    # Aliasing them together silently breaks `ElvisStatus == 'Delete'` checks for any
+    # project that only ships the numeric column. If only the code column is present,
+    # derive the text label explicitly below.
+    _ensure_standard_column(df, "ElvisStatus", ["ELVIS_STATUS", "ELVISSTATUS"], default_value="")
+    if "ElvisStatus" in df.columns:
+        # If the text column is empty but a numeric `ElvisStatusCode` exists, map the
+        # codes we know to their text labels so downstream report logic works.
+        status_series = df["ElvisStatus"].astype(str).str.strip()
+        if (status_series == "").all():
+            code_col_matches = check_all_characters_present(df, ["elvisstatuscode"])
+            if code_col_matches:
+                code_to_label = {"1": "Use", "4": "Delete", "6": "Review"}
+                df["ElvisStatus"] = (
+                    df[code_col_matches[0]]
+                    .astype(str)
+                    .str.strip()
+                    .str.replace(".0", "", regex=False)
+                    .map(code_to_label)
+                    .fillna("")
+                )
 
     # Contest fields (can be absent in some projects)
     _ensure_standard_column(
@@ -2342,15 +2375,46 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         (elvis_df['INTERV_INIT'] != "999") & 
         (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
     ].copy()
-    
+
     # Get all IDs from filtered_elvis
-    elvis_ids = set(filtered_elvis['id'].unique())
-    
-    # Filter the original df (kingelvis) to only include IDs from elvis_df
-    # Make sure df has INTERV_INIT column for grouping
+    elvis_ids = set(filtered_elvis['id'].astype(str).unique())
+
+    # KingElvis stores the survey id under `elvis_id` in some projects (with a
+    # plain row-index in `id`). Pick whichever column actually overlaps with the
+    # elvis-side ids; if neither overlaps, fall back to `id` so behaviour stays
+    # the same as before this fix.
     ke_df['INTERV_INIT'] = ke_df['INTERV_INIT'].astype(str)
-    filtered_df = ke_df[ke_df['id'].isin(elvis_ids)].copy()
-    
+    ke_join_col = 'id'
+    if 'elvis_id' in ke_df.columns:
+        if ke_df['elvis_id'].astype(str).isin(elvis_ids).any():
+            ke_join_col = 'elvis_id'
+        elif 'id' in ke_df.columns and not ke_df['id'].astype(str).isin(elvis_ids).any():
+            # neither overlaps — keep 'elvis_id' to avoid the misleading row-index join
+            ke_join_col = 'elvis_id'
+    filtered_df = ke_df[ke_df[ke_join_col].astype(str).isin(elvis_ids)].copy()
+    print(
+        f"[Surveyor Report] ke_df rows={len(ke_df)}, elvis_ids={len(elvis_ids)}, "
+        f"join_col='{ke_join_col}', filtered_ke rows={len(filtered_df)}"
+    )
+
+    # Pre-compute normalized Final_Usage / ElvisStatus once so all downstream
+    # checks are case- and whitespace-insensitive.
+    filtered_df['_fu_lower'] = (
+        filtered_df['Final_Usage'].astype(str).str.strip().str.lower()
+        if 'Final_Usage' in filtered_df.columns
+        else pd.Series('', index=filtered_df.index)
+    )
+    filtered_df['_fu_isna'] = (
+        filtered_df['Final_Usage'].isna() | filtered_df['_fu_lower'].isin(['', 'nan', 'none'])
+        if 'Final_Usage' in filtered_df.columns
+        else pd.Series(True, index=filtered_df.index)
+    )
+    filtered_elvis['_es_lower'] = (
+        filtered_elvis['ElvisStatus'].astype(str).str.strip().str.lower()
+        if 'ElvisStatus' in filtered_elvis.columns
+        else pd.Series('', index=filtered_elvis.index)
+    )
+
     # Base counts from elvis_df
     record_counts = (
         filtered_elvis
@@ -2363,43 +2427,43 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
     interv_list = sorted(filtered_elvis['INTERV_INIT'].unique())
     summary_df = pd.DataFrame({'INTERV_INIT': interv_list}).merge(record_counts, how='left').fillna(0)
     
-    # Supervisor Deletes from elvis_df
+    # Supervisor Deletes from elvis_df (case-insensitive on ElvisStatus)
     delete_counts = (
-        filtered_elvis[filtered_elvis['ElvisStatus'] == 'Delete']
+        filtered_elvis[filtered_elvis['_es_lower'] == 'delete']
         .groupby('INTERV_INIT')['id']
         .count()
         .reset_index()
         .rename(columns={'id': '# of Supervisor Delete'})
     )
     summary_df = summary_df.merge(delete_counts, how='left').fillna(0)
-    
-    # Records Remove - check in df (kingelvis)
+
+    # Records Remove - check in ke_df (kingelvis), case-insensitive
     remove_counts = (
-        filtered_df[filtered_df['Final_Usage'] == 'Remove']
-        .groupby('INTERV_INIT')['id']
+        filtered_df[filtered_df['_fu_lower'] == 'remove']
+        .groupby('INTERV_INIT')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Remove'})
+        .rename(columns={ke_join_col: '# of Records Remove'})
     )
     summary_df = summary_df.merge(remove_counts, how='left').fillna(0)
-    
-    # Records Reviewed - check in df (kingelvis)
+
+    # Records Reviewed - any non-empty Final_Usage in ke_df
     reviewed_counts = (
-        filtered_df[filtered_df['Final_Usage'].notna()]
-        .groupby('INTERV_INIT')['id']
+        filtered_df[~filtered_df['_fu_isna']]
+        .groupby('INTERV_INIT')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Reviewed'})
     )
     summary_df = summary_df.merge(reviewed_counts, how='left').fillna(0)
-    
-    # Records Not Reviewed - check in df (kingelvis)
+
+    # Records Not Reviewed - empty/missing Final_Usage in ke_df
     not_reviewed_counts = (
-        filtered_df[filtered_df['Final_Usage'].isna()]
-        .groupby('INTERV_INIT')['id']
+        filtered_df[filtered_df['_fu_isna']]
+        .groupby('INTERV_INIT')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Not Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Not Reviewed'})
     )
     summary_df = summary_df.merge(not_reviewed_counts, how='left').fillna(0)
     
@@ -3339,16 +3403,39 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
     
     # Clean route codes (remove _00, _01 suffixes)
     filtered_elvis['ROUTE_ROOT'] = clean_route_code(filtered_elvis['ROUTE_SURVEYEDCode'])
-    
+
     # Get all IDs from filtered_elvis
-    elvis_ids = set(filtered_elvis['id'].unique())
-    
-    # Filter the original df (kingelvis) to only include IDs from elvis_df
-    # Make sure df has INTERV_INIT and ROUTE_ROOT columns for grouping
+    elvis_ids = set(filtered_elvis['id'].astype(str).unique())
+
+    # KingElvis stores the survey id under `elvis_id` in some projects. Auto-detect.
     df['INTERV_INIT'] = df['INTERV_INIT'].astype(str)
     df['ROUTE_ROOT'] = clean_route_code(df['ROUTE_SURVEYEDCode'])
-    filtered_df = df[df['id'].isin(elvis_ids)].copy()
-    
+    ke_join_col = 'id'
+    if 'elvis_id' in df.columns:
+        if df['elvis_id'].astype(str).isin(elvis_ids).any():
+            ke_join_col = 'elvis_id'
+        elif 'id' in df.columns and not df['id'].astype(str).isin(elvis_ids).any():
+            ke_join_col = 'elvis_id'
+    filtered_df = df[df[ke_join_col].astype(str).isin(elvis_ids)].copy()
+
+    # Pre-compute normalized Final_Usage / ElvisStatus once so all downstream
+    # checks are case- and whitespace-insensitive.
+    filtered_df['_fu_lower'] = (
+        filtered_df['Final_Usage'].astype(str).str.strip().str.lower()
+        if 'Final_Usage' in filtered_df.columns
+        else pd.Series('', index=filtered_df.index)
+    )
+    filtered_df['_fu_isna'] = (
+        filtered_df['Final_Usage'].isna() | filtered_df['_fu_lower'].isin(['', 'nan', 'none'])
+        if 'Final_Usage' in filtered_df.columns
+        else pd.Series(True, index=filtered_df.index)
+    )
+    filtered_elvis['_es_lower'] = (
+        filtered_elvis['ElvisStatus'].astype(str).str.strip().str.lower()
+        if 'ElvisStatus' in filtered_elvis.columns
+        else pd.Series('', index=filtered_elvis.index)
+    )
+
     # Base counts from elvis_df
     record_counts = (
         filtered_elvis
@@ -3361,43 +3448,44 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
     route_list = sorted(filtered_elvis['ROUTE_ROOT'].unique())
     route_report_df = pd.DataFrame({'ROUTE_ROOT': route_list}).merge(record_counts, how='left').fillna(0)
     
-    # Supervisor Deletes from elvis_df
+    # Supervisor Deletes from elvis_df (case-insensitive)
     delete_counts = (
-        filtered_elvis[filtered_elvis['ElvisStatus'] == 'Delete']
+        filtered_elvis[filtered_elvis['_es_lower'] == 'delete']
         .groupby('ROUTE_ROOT')['id']
         .count()
         .reset_index()
         .rename(columns={'id': '# of Supervisor Delete'})
     )
     route_report_df = route_report_df.merge(delete_counts, how='left').fillna(0)
-    
-    # Records Remove - check in df (kingelvis)
+
+    # Records Remove - check in kingelvis (case-insensitive). Route grouping needs
+    # ROUTE_ROOT on kingelvis too; clean_route_code is already applied above.
     remove_counts = (
-        filtered_df[filtered_df['Final_Usage'] == 'Remove']
-        .groupby('ROUTE_ROOT')['id']
+        filtered_df[filtered_df['_fu_lower'] == 'remove']
+        .groupby('ROUTE_ROOT')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Remove'})
+        .rename(columns={ke_join_col: '# of Records Remove'})
     )
     route_report_df = route_report_df.merge(remove_counts, how='left').fillna(0)
-    
-    # Records Reviewed - check in df (kingelvis)
+
+    # Records Reviewed - any non-empty Final_Usage in kingelvis
     reviewed_counts = (
-        filtered_df[filtered_df['Final_Usage'].notna()]
-        .groupby('ROUTE_ROOT')['id']
+        filtered_df[~filtered_df['_fu_isna']]
+        .groupby('ROUTE_ROOT')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Reviewed'})
     )
     route_report_df = route_report_df.merge(reviewed_counts, how='left').fillna(0)
-    
-    # Records Not Reviewed - check in df (kingelvis)
+
+    # Records Not Reviewed - empty/missing Final_Usage in kingelvis
     not_reviewed_counts = (
-        filtered_df[filtered_df['Final_Usage'].isna()]
-        .groupby('ROUTE_ROOT')['id']
+        filtered_df[filtered_df['_fu_isna']]
+        .groupby('ROUTE_ROOT')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Not Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Not Reviewed'})
     )
     route_report_df = route_report_df.merge(not_reviewed_counts, how='left').fillna(0)
     
@@ -3695,10 +3783,34 @@ def process_surveyor_date_data_transit_ls6(
     # -------------------------------
     # 2. FILTER KE_DF USING ELVIS IDS (CRITICAL)
     # -------------------------------
-    elvis_ids = set(filtered_elvis['id'].unique())
+    elvis_ids = set(filtered_elvis['id'].astype(str).unique())
 
     ke_df['INTERV_INIT'] = ke_df['INTERV_INIT'].astype(str)
-    filtered_ke = ke_df[ke_df['id'].isin(elvis_ids)].copy()
+    # Auto-detect the kingelvis join column (some projects use `elvis_id`).
+    ke_join_col = 'id'
+    if 'elvis_id' in ke_df.columns:
+        if ke_df['elvis_id'].astype(str).isin(elvis_ids).any():
+            ke_join_col = 'elvis_id'
+        elif 'id' in ke_df.columns and not ke_df['id'].astype(str).isin(elvis_ids).any():
+            ke_join_col = 'elvis_id'
+    filtered_ke = ke_df[ke_df[ke_join_col].astype(str).isin(elvis_ids)].copy()
+
+    # Case-insensitive Final_Usage / ElvisStatus helpers.
+    filtered_ke['_fu_lower'] = (
+        filtered_ke['Final_Usage'].astype(str).str.strip().str.lower()
+        if 'Final_Usage' in filtered_ke.columns
+        else pd.Series('', index=filtered_ke.index)
+    )
+    filtered_ke['_fu_isna'] = (
+        filtered_ke['Final_Usage'].isna() | filtered_ke['_fu_lower'].isin(['', 'nan', 'none'])
+        if 'Final_Usage' in filtered_ke.columns
+        else pd.Series(True, index=filtered_ke.index)
+    )
+    filtered_elvis['_es_lower'] = (
+        filtered_elvis['ElvisStatus'].astype(str).str.strip().str.lower()
+        if 'ElvisStatus' in filtered_elvis.columns
+        else pd.Series('', index=filtered_elvis.index)
+    )
 
     # -------------------------------
     # 3. BASE COUNTS (FROM ELVIS)
@@ -3718,10 +3830,10 @@ def process_surveyor_date_data_transit_ls6(
     )
 
     # -------------------------------
-    # 4. SUPERVISOR DELETE (ELVIS)
+    # 4. SUPERVISOR DELETE (ELVIS) — case-insensitive
     # -------------------------------
     delete_counts = (
-        filtered_elvis[filtered_elvis['ElvisStatus'] == 'Delete']
+        filtered_elvis[filtered_elvis['_es_lower'] == 'delete']
         .groupby('Date_Surveyor')['id']
         .count()
         .reset_index()
@@ -3730,32 +3842,32 @@ def process_surveyor_date_data_transit_ls6(
     summary_df = summary_df.merge(delete_counts, how='left').fillna(0)
 
     # -------------------------------
-    # 5. FINAL_USAGE METRICS (KE_DF)
+    # 5. FINAL_USAGE METRICS (KE_DF) — case-insensitive
     # -------------------------------
     remove_counts = (
-        filtered_ke[filtered_ke['Final_Usage'] == 'Remove']
-        .groupby('Date_Surveyor')['id']
+        filtered_ke[filtered_ke['_fu_lower'] == 'remove']
+        .groupby('Date_Surveyor')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Remove'})
+        .rename(columns={ke_join_col: '# of Records Remove'})
     )
     summary_df = summary_df.merge(remove_counts, how='left').fillna(0)
 
     reviewed_counts = (
-        filtered_ke[filtered_ke['Final_Usage'].notna()]
-        .groupby('Date_Surveyor')['id']
+        filtered_ke[~filtered_ke['_fu_isna']]
+        .groupby('Date_Surveyor')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Reviewed'})
     )
     summary_df = summary_df.merge(reviewed_counts, how='left').fillna(0)
 
     not_reviewed_counts = (
-        filtered_ke[filtered_ke['Final_Usage'].isna()]
-        .groupby('Date_Surveyor')['id']
+        filtered_ke[filtered_ke['_fu_isna']]
+        .groupby('Date_Surveyor')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Not Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Not Reviewed'})
     )
     summary_df = summary_df.merge(not_reviewed_counts, how='left').fillna(0)
 
@@ -4053,12 +4165,36 @@ def process_route_date_data_transit_ls6(
     # -------------------------------
     # 2. FILTER KE USING ELVIS IDS
     # -------------------------------
-    elvis_ids = set(filtered_elvis['id'].unique())
+    elvis_ids = set(filtered_elvis['id'].astype(str).unique())
 
     ke_df['INTERV_INIT'] = ke_df['INTERV_INIT'].astype(str)
     ke_df['ROUTE_ROOT'] = clean_route_code(ke_df['ROUTE_SURVEYEDCode'])
 
-    filtered_ke = ke_df[ke_df['id'].isin(elvis_ids)].copy()
+    # Auto-detect the kingelvis join column (some projects use `elvis_id`).
+    ke_join_col = 'id'
+    if 'elvis_id' in ke_df.columns:
+        if ke_df['elvis_id'].astype(str).isin(elvis_ids).any():
+            ke_join_col = 'elvis_id'
+        elif 'id' in ke_df.columns and not ke_df['id'].astype(str).isin(elvis_ids).any():
+            ke_join_col = 'elvis_id'
+    filtered_ke = ke_df[ke_df[ke_join_col].astype(str).isin(elvis_ids)].copy()
+
+    # Case-insensitive Final_Usage / ElvisStatus helpers.
+    filtered_ke['_fu_lower'] = (
+        filtered_ke['Final_Usage'].astype(str).str.strip().str.lower()
+        if 'Final_Usage' in filtered_ke.columns
+        else pd.Series('', index=filtered_ke.index)
+    )
+    filtered_ke['_fu_isna'] = (
+        filtered_ke['Final_Usage'].isna() | filtered_ke['_fu_lower'].isin(['', 'nan', 'none'])
+        if 'Final_Usage' in filtered_ke.columns
+        else pd.Series(True, index=filtered_ke.index)
+    )
+    filtered_elvis['_es_lower'] = (
+        filtered_elvis['ElvisStatus'].astype(str).str.strip().str.lower()
+        if 'ElvisStatus' in filtered_elvis.columns
+        else pd.Series('', index=filtered_elvis.index)
+    )
 
     # -------------------------------
     # 3. BASE COUNTS
@@ -4078,10 +4214,10 @@ def process_route_date_data_transit_ls6(
     )
 
     # -------------------------------
-    # 4. SUPERVISOR DELETE
+    # 4. SUPERVISOR DELETE — case-insensitive
     # -------------------------------
     delete_counts = (
-        filtered_elvis[filtered_elvis['ElvisStatus'] == 'Delete']
+        filtered_elvis[filtered_elvis['_es_lower'] == 'delete']
         .groupby('Date_Route')['id']
         .count()
         .reset_index()
@@ -4093,30 +4229,30 @@ def process_route_date_data_transit_ls6(
     ).fillna(0)
 
     # -------------------------------
-    # 5. FINAL USAGE METRICS
+    # 5. FINAL USAGE METRICS — case-insensitive
     # -------------------------------
     remove_counts = (
-        filtered_ke[filtered_ke['Final_Usage'] == 'Remove']
-        .groupby('Date_Route')['id']
+        filtered_ke[filtered_ke['_fu_lower'] == 'remove']
+        .groupby('Date_Route')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Remove'})
+        .rename(columns={ke_join_col: '# of Records Remove'})
     )
 
     reviewed_counts = (
-        filtered_ke[filtered_ke['Final_Usage'].notna()]
-        .groupby('Date_Route')['id']
+        filtered_ke[~filtered_ke['_fu_isna']]
+        .groupby('Date_Route')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Reviewed'})
     )
 
     not_reviewed_counts = (
-        filtered_ke[filtered_ke['Final_Usage'].isna()]
-        .groupby('Date_Route')['id']
+        filtered_ke[filtered_ke['_fu_isna']]
+        .groupby('Date_Route')[ke_join_col]
         .count()
         .reset_index()
-        .rename(columns={'id': '# of Records Not Reviewed'})
+        .rename(columns={ke_join_col: '# of Records Not Reviewed'})
     )
 
     for df in [remove_counts, reviewed_counts, not_reviewed_counts]:

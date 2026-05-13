@@ -1441,8 +1441,43 @@ def fetch_and_process_data(project,schema):
             df = df.rename(columns={
                 col_map["xregistertowinyncode"]: "REGISTER_TO_WIN_YNCODE"
             })
-        survey_report_df = process_surveyor_data_transit_ls6(ke_df, df, project, race_label_map)
-        route_report_df = process_route_data_transit_ls6(ke_df, df, race_label_map)
+
+        # ------------------------------------------------------------------
+        # Build an UNFILTERED elvis frame for the Surveyor / Route reports.
+        # `df` has already had rows where `ElvisStatus == 'Delete'` and
+        # `Final_Usage in ('remove','no data')` stripped out, so counting them
+        # from `df` always returns 0. The report functions apply their own
+        # `HAVE_5_MIN_FOR_SURVECode == '1'` and `INTERV_INIT != '999'` filters
+        # internally, so we just need to mirror the column renames that were
+        # applied to `df` without dropping the rows we want to count.
+        # ------------------------------------------------------------------
+        unfiltered_elvis_df = (
+            baby_elvis_df.copy() if baby_elvis_df is not None else df.copy()
+        )
+        if (
+            route_surveyed_code
+            and route_surveyed_code[0] in unfiltered_elvis_df.columns
+            and "ROUTE_SURVEYEDCode" not in unfiltered_elvis_df.columns
+        ):
+            unfiltered_elvis_df.rename(
+                columns={route_surveyed_code[0]: "ROUTE_SURVEYEDCode"},
+                inplace=True,
+            )
+        ufe_col_map = {clean(col): col for col in unfiltered_elvis_df.columns}
+        if (
+            "registertowinyncode" not in ufe_col_map
+            and "xregistertowinyncode" in ufe_col_map
+        ):
+            unfiltered_elvis_df = unfiltered_elvis_df.rename(
+                columns={
+                    ufe_col_map["xregistertowinyncode"]: "REGISTER_TO_WIN_YNCODE"
+                }
+            )
+        if "id" in unfiltered_elvis_df.columns:
+            unfiltered_elvis_df = unfiltered_elvis_df.drop_duplicates(subset="id")
+
+        survey_report_df = process_surveyor_data_transit_ls6(ke_df, unfiltered_elvis_df, project, race_label_map)
+        route_report_df = process_route_data_transit_ls6(ke_df, unfiltered_elvis_df, race_label_map)
         print("Survey and route reports processed successfully.")
         low_response_questions_df = create_low_response_report(df)
         print("Low response questions report created successfully.")
@@ -1566,9 +1601,47 @@ def fetch_and_process_data(project,schema):
             suffixes=('', '_r')
         )
 
+        # ------------------------------------------------------------------
+        # Mirror the ROUTE_ROOT + date-key construction onto `unfiltered_elvis_df`
+        # so the date-variant report functions can group by Date_Surveyor /
+        # Date_Route while still seeing rows where ElvisStatus == 'Delete' or
+        # Final_Usage in ('remove','no data'). Without this, `# of Supervisor
+        # Delete` and `# of Records Remove` come back as 0 on the dated tabs
+        # too. The functions apply their own HAVE_5_MIN / INTERV_INIT filters.
+        # ------------------------------------------------------------------
+        if "ROUTE_SURVEYED" in unfiltered_elvis_df.columns:
+            unfiltered_elvis_df["ROUTE_ROOT"] = clean_route_name(
+                unfiltered_elvis_df["ROUTE_SURVEYED"]
+            )
+        elif "ROUTE_ROOT" not in unfiltered_elvis_df.columns:
+            unfiltered_elvis_df["ROUTE_ROOT"] = ""
+
+        if "LocalTime" in unfiltered_elvis_df.columns:
+            unfiltered_elvis_df["Date_only"] = pd.to_datetime(
+                unfiltered_elvis_df["LocalTime"], errors="coerce"
+            ).dt.normalize()
+        else:
+            unfiltered_elvis_df["Date_only"] = pd.NaT
+
+        unfiltered_elvis_df["INTERV_INIT"] = unfiltered_elvis_df["INTERV_INIT"].astype(str)
+
+        unfiltered_elvis_df = unfiltered_elvis_df.merge(
+            survey_date_surveyor,
+            left_on=["Date_only", "INTERV_INIT"],
+            right_on=["Date", "INTERV_INIT"],
+            how="left",
+        )
+        unfiltered_elvis_df = unfiltered_elvis_df.merge(
+            survey_date_route,
+            left_on=["Date_only", "ROUTE_ROOT"],
+            right_on=["Date", "ROUTE_ROOT"],
+            how="left",
+            suffixes=("", "_r"),
+        )
+
         # Now process with the merged data
-        survey_report_by_date_df = process_surveyor_date_data_transit_ls6(ke_df, df, survey_date_surveyor, race_label_map)
-        route_report_by_date_df = process_route_date_data_transit_ls6(ke_df, df, survey_date_route, race_label_map)
+        survey_report_by_date_df = process_surveyor_date_data_transit_ls6(ke_df, unfiltered_elvis_df, survey_date_surveyor, race_label_map)
+        route_report_by_date_df = process_route_date_data_transit_ls6(ke_df, unfiltered_elvis_df, survey_date_route, race_label_map)
 
         # Final DataFrame cleanup
         wkday_comparison_df.rename(columns={'ETC_ROUTE_NAME': 'ROUTE_SURVEYED'}, inplace=True)
