@@ -1519,7 +1519,7 @@ else:
                 ]
 
                 if 'actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project:
-                    menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
+                    menu_items.extend(["🚫  Refusal Analysis",
                     "🗺️  Location Maps","👥  Demographic Review"])
 
                 if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in selected_schema.lower()):
@@ -1533,7 +1533,7 @@ else:
 
                 # New/unknown projects (e.g. LACMTA_TEST_4): show full dashboard menu when nothing above matched
                 if len(menu_items) == 4 and selected_project:
-                    menu_items.extend(["🚫  Refusal Analysis", "⤓    LOW RESPONSE QUESTIONS",
+                    menu_items.extend(["🚫  Refusal Analysis",
                         "🗺️  Location Maps", "👥  Demographic Review"])
                     if 'rail' not in selected_schema.lower():
                         menu_items.append("↺   Clone Records")
