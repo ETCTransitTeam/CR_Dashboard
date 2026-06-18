@@ -113,6 +113,81 @@ def render_styled_dataframe(dataframe, height=400, pinned_column=None, key="grid
         height=height
     )
 
+
+def _format_refusal_blank_count(val):
+    if val is None or val == "":
+        return ""
+    if isinstance(val, float) and pd.isna(val):
+        return ""
+    try:
+        return str(int(round(float(val))))
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def _format_refusal_blank_pct(val):
+    if val is None or val == "":
+        return ""
+    if isinstance(val, float) and pd.isna(val):
+        return ""
+    try:
+        num = float(val)
+        return f"{num:.2f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def style_blank_pct(val):
+    """Red gradient for refusal/blank percentage cells (higher blank % = darker red)."""
+    if pd.isna(val):
+        return ""
+    try:
+        num = float(val)
+    except (TypeError, ValueError):
+        return ""
+    if num <= 0:
+        return ""
+    if num < 2.5:
+        return "background-color:#fff5f5"
+    if num < 10:
+        return "background-color:#ffc9c9"
+    if num < 25:
+        return "background-color:#ff8787"
+    return "background-color:#e03131;color:white"
+
+
+def apply_blank_pct_styling(df, pct_columns):
+    """Apply red gradient to % columns and clean integer / % display formatting."""
+    if df is None or df.empty:
+        return df.style
+    styled = df.style
+    format_dict = {}
+    for col in df.columns:
+        if str(col).endswith("_BLANKS") or col == "TOTAL_BLANKS":
+            format_dict[col] = _format_refusal_blank_count
+        elif str(col).endswith("_PCT") or col == "TOTAL_PCT":
+            format_dict[col] = _format_refusal_blank_pct
+    if format_dict:
+        styled = styled.format(format_dict)
+    for col in pct_columns:
+        if col in df.columns:
+            styled = styled.map(style_blank_pct, subset=[col])
+    return styled
+
+
+def format_refusal_blanks_dataframe(df):
+    """Return a copy with clean display values for blanks counts and percentages."""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for col in out.columns:
+        if str(col).endswith("_BLANKS") or col == "TOTAL_BLANKS":
+            out[col] = out[col].apply(_format_refusal_blank_count)
+        elif str(col).endswith("_PCT") or col == "TOTAL_PCT":
+            out[col] = out[col].apply(_format_refusal_blank_pct)
+    return out
+
+
 def create_csv(df, file_name):
     """
     Convert the DataFrame to CSV and return it for downloading.
@@ -643,7 +718,12 @@ def _normalize_demographic_setup_payload(data):
         if inner:
             group_option_columns[gks] = inner
 
-    return question_dict, multi_select_field_names, group_option_columns
+    alert_raw = data.get("alert_field_names") or []
+    if not isinstance(alert_raw, list):
+        alert_raw = []
+    alert_field_names = [str(x).strip() for x in alert_raw if str(x).strip()]
+
+    return question_dict, multi_select_field_names, group_option_columns, alert_field_names
 
 
 def load_demographic_setup_from_s3(bucket_name, project_key):
@@ -664,11 +744,12 @@ def load_demographic_setup_from_s3(bucket_name, project_key):
         data = json.loads(body)
         if not isinstance(data, dict):
             return None
-        qd, msn, goc = _normalize_demographic_setup_payload(data)
+        qd, msn, goc, alert_field_names = _normalize_demographic_setup_payload(data)
         return {
             "question_dict": qd,
             "multi_select_field_names": msn,
             "group_option_columns": goc,
+            "alert_field_names": alert_field_names,
         }
     except Exception as e:
         from botocore.exceptions import ClientError
@@ -684,6 +765,7 @@ def save_demographic_setup_to_s3(
     question_dict,
     multi_select_field_names=None,
     group_option_columns=None,
+    alert_field_names=None,
 ):
     """
     Save demographic field setup for a project to S3.
@@ -699,6 +781,7 @@ def save_demographic_setup_to_s3(
         "question_dict": question_dict,
         "multi_select_field_names": list(multi_select_field_names or []),
         "group_option_columns": dict(group_option_columns or {}),
+        "alert_field_names": list(alert_field_names or []),
     }
     body = json.dumps(payload, indent=2)
     try:
@@ -706,6 +789,50 @@ def save_demographic_setup_to_s3(
         return True
     except Exception as e:
         print(f"Error saving demographic setup to S3: {e}")
+        return False
+
+
+REFUSAL_BLANKS_ALERTS_SUFFIX = "_refusal_blanks_alerts.json"
+
+
+def _refusal_blanks_alerts_key(project_key):
+    safe_key = str(project_key).replace(" ", "_").upper()
+    return f"{DEMOGRAPHIC_CONFIG_PREFIX}{safe_key}{REFUSAL_BLANKS_ALERTS_SUFFIX}"
+
+
+def load_refusal_blanks_alerts_from_s3(bucket_name, project_key):
+    """Load {field}_{date} keys already emailed for refusal-blanks alerts."""
+    import json
+    key = _refusal_blanks_alerts_key(project_key)
+    try:
+        response = s3_client.get_object(Bucket=bucket_name, Key=key)
+        body = response["Body"].read().decode("utf-8")
+        data = json.loads(body)
+        if isinstance(data, dict):
+            return {str(k): data[k] for k in data.keys()}
+        return {}
+    except Exception as e:
+        from botocore.exceptions import ClientError
+        if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "NoSuchKey":
+            return {}
+        print(f"Error loading refusal blanks alerts from S3: {e}")
+        return {}
+
+
+def save_refusal_blanks_alerts_to_s3(bucket_name, project_key, notified_map):
+    import json
+    key = _refusal_blanks_alerts_key(project_key)
+    body = json.dumps(notified_map or {}, indent=2)
+    try:
+        s3_client.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=body.encode("utf-8"),
+            ContentType="application/json",
+        )
+        return True
+    except Exception as e:
+        print(f"Error saving refusal blanks alerts to S3: {e}")
         return False
 
 

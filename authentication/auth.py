@@ -1803,15 +1803,194 @@ def change_password(email):
     render_auth_layout(change_password_content, "Change Password", "Update your account password")
 
 # ============================================
-# SUPER ADMIN MANAGEMENT FUNCTIONS
-# ============================================
-
-# List of super admin emails
+# List of super admin emails (also used for refusal-blanks alert recipients)
 SUPER_ADMIN_EMAILS = [
     "shehryar.iqbal@etcinstitute.com",
     "booali735@gmail.com",
-    "jason.jones@etcinstitute.com"
+    "jason.jones@etcinstitute.com",
 ]
+
+REFUSAL_BLANKS_ALERT_THRESHOLD_PCT = 2.5
+
+
+def get_refusal_blanks_alert_recipients():
+    """All super admins receive refusal/blank alerts."""
+    return list(SUPER_ADMIN_EMAILS)
+
+
+def send_refusal_blanks_alert_email(to_emails, project_name, breaches, is_mock_test=False):
+    """
+    Send QA alert when configured fields exceed blank % threshold on a single day.
+    breaches: list of dicts with keys field, date, pct, n, column_name (optional).
+    """
+    if not breaches or not to_emails:
+        return False
+    subject_prefix = "[TEST] " if is_mock_test else ""
+    subject = f"{subject_prefix}Refusal/Blank Alert — {project_name}"
+    rows_html = ""
+    for b in breaches:
+        rows_html += (
+            f"<tr><td>{b.get('field', '')}</td>"
+            f"<td>{b.get('date', '')}</td>"
+            f"<td>{b.get('pct', '')}%</td>"
+            f"<td>{b.get('n', '')}</td></tr>"
+        )
+    test_banner = ""
+    if is_mock_test:
+        test_banner = (
+            '<div style="background:#fff3cd;border:1px solid #ffc107;padding:14px;margin-bottom:16px;">'
+            "<strong>For testing the alert</strong> — this is a mock test email. "
+            "No live survey data was changed. Threshold simulated: "
+            f"&gt; {REFUSAL_BLANKS_ALERT_THRESHOLD_PCT}% blanks on a single day."
+            "</div>"
+        )
+    body = f"""
+    <html><body>
+    {test_banner}
+    <h2>Refusal / No Answer (Blanks) alert</h2>
+    <p>Project: <strong>{project_name}</strong></p>
+    <p>One or more Missing Alert fields exceeded {REFUSAL_BLANKS_ALERT_THRESHOLD_PCT}% blanks on a single day.</p>
+    <table border="1" cellpadding="6" cellspacing="0">
+    <tr><th>Field</th><th>Date</th><th>Blank %</th><th>N</th></tr>
+    {rows_html}
+    </table>
+    <p>Open the dashboard → Refusal Analysis → Blanks % By Day tab for details.</p>
+    </body></html>
+    """
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_ADDRESS
+        msg["To"] = ", ".join(to_emails)
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP(EMAIL_HOST, _smtp_port()) as server:
+            server.starttls()
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_ADDRESS, to_emails, msg.as_string())
+        return True
+    except Exception as e:
+        logger.exception("Failed to send refusal blanks alert: %s", e)
+        return False
+
+
+def evaluate_and_send_refusal_blanks_alerts(
+    bucket_name,
+    project_name,
+    daily_df,
+    alert_field_names,
+    demographic_config,
+):
+    """
+    Check daily blank % for alert fields; email all super admins for new breaches (>2.5%).
+    Returns list of breach dicts emailed (may be empty).
+    """
+    from utils import load_refusal_blanks_alerts_from_s3, save_refusal_blanks_alerts_to_s3
+
+    if not bucket_name or daily_df is None or daily_df.empty:
+        return []
+    if not alert_field_names:
+        return []
+
+    def _daily_n_by_date(df):
+        """Map date label (e.g. '2026 03 18') -> total approaches N from bottom N row."""
+        n_map = {}
+        if "COLUMN_NAME" not in df.columns:
+            return n_map
+        n_rows = df[df["COLUMN_NAME"].astype(str).str.strip().str.upper() == "N"]
+        if n_rows.empty:
+            return n_map
+        n_row = n_rows.iloc[-1]
+        for col in df.columns:
+            if not str(col).endswith("_BLANKS"):
+                continue
+            date_label = str(col).replace("_BLANKS", "")
+            val = n_row.get(col, "")
+            if val is None or str(val).strip() in ("", "nan", "None"):
+                continue
+            try:
+                n_map[date_label] = int(round(float(val)))
+            except (TypeError, ValueError):
+                n_map[date_label] = val
+        return n_map
+
+    daily_n = _daily_n_by_date(daily_df)
+    notified = load_refusal_blanks_alerts_from_s3(bucket_name, project_name)
+    breaches = []
+    threshold = REFUSAL_BLANKS_ALERT_THRESHOLD_PCT
+
+    for _, row in daily_df.iterrows():
+        if str(row.get("Alert", "")).strip() != "Alert":
+            continue
+        col_name = str(row.get("COLUMN_NAME", "")).strip()
+        if col_name in ("N", "") or col_name.lower() == "n":
+            continue
+        for col in daily_df.columns:
+            if not str(col).endswith("_PCT"):
+                continue
+            date_label = str(col).replace("_PCT", "")
+            try:
+                pct = float(row.get(col, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if pct <= threshold:
+                continue
+            key = f"{col_name}_{date_label}"
+            if notified.get(key):
+                continue
+            breaches.append(
+                {
+                    "field": col_name,
+                    "date": date_label,
+                    "pct": round(pct, 2),
+                    "n": daily_n.get(date_label, ""),
+                }
+            )
+            notified[key] = True
+
+    if not breaches:
+        return []
+
+    sent = send_refusal_blanks_alert_email(
+        get_refusal_blanks_alert_recipients(),
+        project_name,
+        breaches,
+    )
+    if sent:
+        save_refusal_blanks_alerts_to_s3(bucket_name, project_name, notified)
+    return breaches if sent else []
+
+
+def run_mock_refusal_blanks_alert_test(project_name):
+    """
+    Send a mock alert email to all super admins (no live data or S3 dedupe changes).
+    Simulates Missing Alert fields breaching >2.5% on a single day.
+    """
+    mock_breaches = [
+        {
+            "field": "COUNT_VH_HH",
+            "date": "2026 03 18",
+            "pct": 8.75,
+            "n": 320,
+        },
+        {
+            "field": "TIME_ON",
+            "date": "2026 03 18",
+            "pct": 6.12,
+            "n": 320,
+        },
+    ]
+    recipients = get_refusal_blanks_alert_recipients()
+    sent = send_refusal_blanks_alert_email(
+        recipients,
+        project_name,
+        mock_breaches,
+        is_mock_test=True,
+    )
+    return sent, recipients, mock_breaches
+
+
+# SUPER ADMIN MANAGEMENT FUNCTIONS
+# ============================================
 
 def is_super_admin(email):
     """Check if the email belongs to a super admin."""

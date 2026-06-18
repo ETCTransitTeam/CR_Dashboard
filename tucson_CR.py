@@ -20,6 +20,8 @@ from utils import (
     create_csv,
     download_csv,
     render_styled_dataframe,
+    apply_blank_pct_styling,
+    format_refusal_blanks_dataframe,
     validate_filename,
     validate_kingelvis_sheet,
     validate_cr_sheets,
@@ -770,6 +772,8 @@ else:
                 'refusal_analysis_report': 'refusal_analysis_df',
                 'refusal_race_report': 'refusal_race_df',
                 'demographic_review': 'demographic_review_df',
+                'refusal_blanks_totals': 'refusal_blanks_totals_df',
+                'refusal_blanks_daily': 'refusal_blanks_daily_df',
                 'last_survey_date': 'last_survey_date_df',
             }
 
@@ -845,6 +849,8 @@ else:
 
         refusal_analysis_df = dataframes.get('refusal_analysis_df', pd.DataFrame())
         refusal_race_df = dataframes.get('refusal_race_df', pd.DataFrame())
+        refusal_blanks_totals_df = dataframes.get('refusal_blanks_totals_df', pd.DataFrame())
+        refusal_blanks_daily_df = dataframes.get('refusal_blanks_daily_df', pd.DataFrame())
         demographic_review_df = dataframes.get('demographic_review_df', pd.DataFrame())
         last_survey_date_df = dataframes.get('last_survey_date_df', pd.DataFrame())
 
@@ -4526,48 +4532,69 @@ else:
                 st.rerun()
 
 
-        def show_refusal_analysis(refusal_analysis_df, refusal_race_df):
+        def _render_refusal_blanks_table(df, title, default_sort_col="TOTAL_PCT", is_daily=False):
+            st.subheader(title)
+            if df is None or df.empty:
+                st.info(
+                    "No Refusal/No Answer (Blanks) data yet. Configure fields on **Demographic Setup**, "
+                    "then run **Sync Data** from the Home page."
+                )
+                return
+            work = df.copy()
+            pct_cols = [c for c in work.columns if str(c).endswith("_PCT") or c == "TOTAL_PCT"]
+            sort_col = default_sort_col if default_sort_col in work.columns else None
+            if sort_col:
+                work = work.sort_values(sort_col, ascending=False, na_position="last")
+            styled = apply_blank_pct_styling(work, pct_cols)
+            st.dataframe(styled, use_container_width=True, hide_index=True, height=520 if is_daily else 420)
+            export_df = format_refusal_blanks_dataframe(work)
+            csv_data, file_name = create_csv(export_df, "refusal_blanks_daily" if is_daily else "refusal_blanks_totals")
+            download_csv(csv_data, file_name, "Download CSV")
+
+        def show_refusal_analysis(
+            refusal_analysis_df,
+            refusal_race_df,
+            refusal_blanks_totals_df=None,
+            refusal_blanks_daily_df=None,
+        ):
             """
             Display comprehensive refusal analysis statistics using the master tables
             """
+            if refusal_blanks_totals_df is None:
+                refusal_blanks_totals_df = pd.DataFrame()
+            if refusal_blanks_daily_df is None:
+                refusal_blanks_daily_df = pd.DataFrame()
+
             st.title("📊 Refusal Analysis Dashboard")
-            refusal_analysis_df['INTERV_INIT'] = refusal_analysis_df['INTERV_INIT'].astype(str)
-            refusal_analysis_df = refusal_analysis_df[refusal_analysis_df['INTERV_INIT'] != "999"]
-            refusal_analysis_df = refusal_analysis_df.iloc[1:].copy()
-            
-            if refusal_analysis_df.empty:
-                st.warning("No refusal data available. Please sync data first.")
-                if st.button("Sync Data"):
-                    st.query_params["page"] = "main"
-                    st.rerun()
-                return
-            
-            # Filter for refusals only (HAVE_5_MIN_FOR_SURVECode != '1')
-            refusal_df = refusal_analysis_df[refusal_analysis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) != '1'].copy()
-            
-            if refusal_df.empty:
-                st.info("No refusal records found in the dataset (all responses were participations).")
-                return
-            
-            # FIX: Convert DATE_SUBMITTED to datetime safely
-            # Use LocalTime if available, otherwise use DATE_SUBMITTED
-            if 'LocalTime' in refusal_df.columns:
-                refusal_df['Survey_Date'] = pd.to_datetime(refusal_df['LocalTime'], errors='coerce')
-            elif 'DATE_SUBMITTED' in refusal_df.columns:
-                refusal_df['Survey_Date'] = pd.to_datetime(refusal_df['DATE_SUBMITTED'], errors='coerce')
-            
-            # Create tabs for different refusal statistics
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "📋 Refusal Overview", "👥 Interviewer Refusals", "🛣️ Route Refusals", "🧑‍🤝‍🧑 Demographics"
+            refusal_work = refusal_analysis_df.copy() if refusal_analysis_df is not None else pd.DataFrame()
+            if not refusal_work.empty and "INTERV_INIT" in refusal_work.columns:
+                refusal_work["INTERV_INIT"] = refusal_work["INTERV_INIT"].astype(str)
+                refusal_work = refusal_work[refusal_work["INTERV_INIT"] != "999"]
+            if len(refusal_work) > 1:
+                refusal_work = refusal_work.iloc[1:].copy()
+
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "📋 Refusal Overview",
+                "👥 Interviewer Refusals",
+                "🛣️ Route Refusals",
+                "🧑‍🤝‍🧑 Demographics",
+                "📊 Blanks % Totals",
+                "📅 Blanks % By Day",
             ])
-            
+
             with tab1:
-                st.subheader("Refusal Overview")
-                
-                # Overall refusal statistics
-                total_refusals = len(refusal_df)
-                total_approaches = len(refusal_analysis_df)
-                refusal_rate = (total_refusals / total_approaches * 100) if total_approaches > 0 else 0
+                if refusal_work.empty:
+                    st.warning("No refusal data available. Please sync data first.")
+                    if st.button("Sync Data", key="refusal_sync_tab1"):
+                        st.query_params["page"] = "main"
+                        st.rerun()
+                else:
+                    refusal_df = refusal_work[
+                        refusal_work["HAVE_5_MIN_FOR_SURVECode"].astype(str) != "1"
+                    ].copy() if "HAVE_5_MIN_FOR_SURVECode" in refusal_work.columns else pd.DataFrame()
+                    total_refusals = len(refusal_df)
+                    total_approaches = len(refusal_work)
+                    refusal_rate = (total_refusals / total_approaches * 100) if total_approaches > 0 else 0
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -4970,9 +4997,25 @@ else:
                 st.write("• Review approach techniques in high-refusal demographic groups")
             
             # Navigation
-            if st.button("🔙 Home Page"):
+            if st.button("🔙 Home Page", key="refusal_tab4_home"):
                 st.query_params["page"] = "main"
                 st.rerun()
+
+            with tab5:
+                _render_refusal_blanks_table(
+                    refusal_blanks_totals_df,
+                    "Refusal / No Answer (Blanks) — % of Totals",
+                    default_sort_col="TOTAL_PCT",
+                    is_daily=False,
+                )
+
+            with tab6:
+                _render_refusal_blanks_table(
+                    refusal_blanks_daily_df,
+                    "Refusal / No Answer (Blanks) — % by Day",
+                    default_sort_col="TOTAL_PCT",
+                    is_daily=True,
+                )
 
         def location_maps_page():
             """
@@ -5837,7 +5880,9 @@ else:
             config = load_demographic_setup_from_s3(bucket_name, selected_project)
             saved_question_dict = config["question_dict"] if config else {}
             saved_multi_list = config.get("multi_select_field_names", []) if config else []
+            saved_alert_list = config.get("alert_field_names", []) if config else []
             saved_multi = set(saved_multi_list)
+            saved_alert = set(saved_alert_list)
 
             has_group_name_col = "GROUP NAME" in dd_df.columns
             full_group_option_maps = build_group_option_column_maps(dd_df, db_columns)
@@ -5920,6 +5965,8 @@ else:
                         st.session_state[f"{state_key_prefix}{i}_{fn}"] = saved_has_race
                     else:
                         st.session_state[f"{state_key_prefix}{i}_{fn}"] = fn in saved_fields
+                    alert_cb = f"demographic_alert_{selected_project}_{i}_{fn}"
+                    st.session_state[alert_cb] = fn in saved_alert
                 st.session_state[init_key] = selected_project
 
             # -----------------------
@@ -5961,12 +6008,23 @@ else:
 
                 for i, fn, desc, is_multi in filtered_fields:
                     cb_key = f"{state_key_prefix}{i}_{fn}"
-                    # Show (Multi-Select) in brackets next to field name for Race and disability (read-only indicator)
-                    if is_multi:
-                        label = f"**{fn}** (Multi-Select) — {desc[:80]}{'…' if len(desc) > 80 else ''}"
-                    else:
-                        label = f"**{fn}** — {desc[:80]}{'…' if len(desc) > 80 else ''}"
-                    checked = st.checkbox(label, key=cb_key)
+                    alert_key = f"demographic_alert_{selected_project}_{i}_{fn}"
+                    col_field, col_alert = st.columns([4, 1])
+                    with col_field:
+                        if is_multi:
+                            label = f"**{fn}** (Multi-Select) — {desc[:80]}{'…' if len(desc) > 80 else ''}"
+                        else:
+                            label = f"**{fn}** — {desc[:80]}{'…' if len(desc) > 80 else ''}"
+                        checked = st.checkbox(label, key=cb_key)
+                    with col_alert:
+                        # Do not disable inside st.form — form widgets do not rerun until submit,
+                        # so disabled= would stay True after checking Include in the same form.
+                        st.checkbox(
+                            "Missing Alert",
+                            key=alert_key,
+                            help="Email alert when blank % exceeds 2.5% on a single day (Refusal/Blanks). "
+                            "Only saved when the field above is also checked.",
+                        )
                     if checked:
                         selected_fields.append((fn, desc, is_multi))
 
@@ -5987,7 +6045,15 @@ else:
                     if merged_selected:
                         question_dict = {fn: desc for fn, desc, _ in merged_selected}
                         multi_select_field_names = [fn for fn, _, is_multi in merged_selected if is_multi]
-                        # Persist group maps for any selected group key in question_dict (keys must match display keys).
+                        alert_field_names = []
+                        for fn, _, _ in merged_selected:
+                            ak = None
+                            for idx2, fn2 in enumerate(field_names_list):
+                                if fn2 == fn:
+                                    ak = f"demographic_alert_{selected_project}_{idx2}_{fn}"
+                                    break
+                            if ak and st.session_state.get(ak, False):
+                                alert_field_names.append(fn)
                         group_option_columns = {
                             k: dict(v)
                             for k, v in full_group_option_maps.items()
@@ -5999,20 +6065,67 @@ else:
                             question_dict,
                             multi_select_field_names,
                             group_option_columns=group_option_columns,
+                            alert_field_names=alert_field_names,
                         ):
-                            st.success(
-                                f"✅ Saved {len(question_dict)} fields for **{selected_project}**."
-                                + (f" Multi-select: {', '.join(multi_select_field_names)}." if multi_select_field_names else "")
-                                + (
-                                    f" Group column maps: {len(group_option_columns)}."
-                                    if group_option_columns
-                                    else ""
-                                )
-                            )
+                            st.session_state[f"demographic_setup_saved_{selected_project}"] = {
+                                "count": len(question_dict),
+                                "alerts": len(alert_field_names),
+                            }
+                            st.rerun()
                         else:
                             st.error("❌ Failed to save to S3.")
                     else:
                         st.warning("Select at least one field before saving.")
+
+            # -----------------------
+            # SAVED CONFIG SUMMARY TABLE (below form — reloads from S3 on each run)
+            # -----------------------
+            saved_banner = st.session_state.pop(f"demographic_setup_saved_{selected_project}", None)
+            if saved_banner:
+                st.success(
+                    f"✅ Saved **{saved_banner['count']}** fields for **{selected_project}**. "
+                    f"Missing Alert enabled on **{saved_banner['alerts']}** field(s). "
+                    "Run **Sync** on Home to refresh Refusal/Blanks tables."
+                )
+
+            config = load_demographic_setup_from_s3(bucket_name, selected_project)
+            if config and config.get("question_dict"):
+                summary_qd = config["question_dict"]
+                summary_multi = set(config.get("multi_select_field_names") or [])
+                summary_alert = set(config.get("alert_field_names") or [])
+                summary_rows = []
+                for fn, desc in summary_qd.items():
+                    summary_rows.append(
+                        {
+                            "Field Name": fn,
+                            "Description": (
+                                str(desc)[:120] + ("…" if len(str(desc)) > 120 else "")
+                            ),
+                            "Multi-Select": "Yes" if fn in summary_multi else "No",
+                            "Missing Alert": "Enabled" if fn in summary_alert else "Off",
+                        }
+                    )
+                summary_df = pd.DataFrame(summary_rows)
+                st.markdown("---")
+                st.subheader("Saved field configuration")
+                st.caption(
+                    f"**{len(summary_df)}** fields selected for Demographic Review and Refusal/Blanks analysis."
+                )
+
+                def _style_missing_alert(val):
+                    if val == "Enabled":
+                        return "background-color:#d3f9d8;color:#2b8a3e;font-weight:bold"
+                    return "color:#868e96"
+
+                styled_summary = summary_df.style.applymap(
+                    _style_missing_alert, subset=["Missing Alert"]
+                )
+                st.dataframe(styled_summary, use_container_width=True, hide_index=True, height=min(400, 35 * len(summary_df) + 38))
+            elif not config:
+                st.markdown("---")
+                st.info(
+                    "No saved configuration yet for this project. Select fields above and click **Save**."
+                )
 
         def projects_configuration_page():
             st.header("Add New Project")
@@ -7180,7 +7293,12 @@ else:
             elif current_page == "low_response_questions_tab":
                 low_response_questions_page()
             elif current_page == "refusal":  # ADD THIS NEW PAGE FOR REFUSAL ANALYSIS
-                show_refusal_analysis(refusal_analysis_df, refusal_race_df)
+                show_refusal_analysis(
+                    refusal_analysis_df,
+                    refusal_race_df,
+                    refusal_blanks_totals_df=refusal_blanks_totals_df,
+                    refusal_blanks_daily_df=refusal_blanks_daily_df,
+                )
             elif current_page == "surveyreport":
                 if not surveyor_report_trends_df.empty and not route_report_trends_df.empty:
                     surveyor_last_row = surveyor_report_trends_df.iloc[-1].to_dict()

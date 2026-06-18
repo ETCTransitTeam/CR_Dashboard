@@ -1505,6 +1505,35 @@ def fetch_and_process_data(project,schema):
             print("No demographic setup JSON in S3 for this project — skipping demographic summary.")
             demographic_review_df = pd.DataFrame(columns=DEMOGRAPHIC_REVIEW_COLUMNS)
 
+        refusal_blanks_totals_df = pd.DataFrame()
+        refusal_blanks_daily_df = pd.DataFrame()
+        try:
+            from refusal_blanks_report import create_refusal_blanks_report
+
+            refusal_blanks_totals_df, refusal_blanks_daily_df = create_refusal_blanks_report(
+                baby_elvis_df,
+                demographic_config,
+                project_name,
+            )
+            print("Refusal blanks report processed successfully.")
+        except Exception as e:
+            print(f"Refusal blanks report skipped (non-fatal): {e}")
+
+        try:
+            if bucket_name and demographic_config and not refusal_blanks_daily_df.empty:
+                from authentication.auth import evaluate_and_send_refusal_blanks_alerts
+
+                alert_names = demographic_config.get("alert_field_names") or []
+                evaluate_and_send_refusal_blanks_alerts(
+                    bucket_name,
+                    project_name,
+                    refusal_blanks_daily_df,
+                    alert_names,
+                    demographic_config,
+                )
+        except Exception as e:
+            print(f"Refusal blanks alert email skipped (non-fatal): {e}")
+
         # Convert both columns to datetime, handling errors
         ke_df['Elvis_Date'] = pd.to_datetime(ke_df['Elvis_Date'], errors='coerce')
         df['LocalTime'] = pd.to_datetime(df['LocalTime'], errors='coerce')
@@ -2014,6 +2043,8 @@ def fetch_and_process_data(project,schema):
             'Refusal Analysis Report': refusal_analysis_df,
             'Refusal Race Report': refusal_race_df,
             'Demographic Review': demographic_review_df,
+            'Refusal Blanks Totals': refusal_blanks_totals_df,
+            'Refusal Blanks Daily': refusal_blanks_daily_df,
         }
 
         # Add weekend dataframes only if they exist
@@ -2041,6 +2072,8 @@ def fetch_and_process_data(project,schema):
             'Refusal Analysis Report': 'refusal_analysis_report',
             'Refusal Race Report': 'refusal_race_report',
             'Demographic Review': 'demographic_review',
+            'Refusal Blanks Totals': 'refusal_blanks_totals',
+            'Refusal Blanks Daily': 'refusal_blanks_daily',
         }
 
         # Add weekend table mappings only if weekend data exists
