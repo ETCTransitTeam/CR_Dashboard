@@ -1,4 +1,7 @@
 import os
+import csv
+import html
+from io import StringIO
 from urllib.parse import urlencode
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -15,7 +18,6 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 import logging
-import streamlit.components.v1 as components
 
 # Set up basic logging (warnings/errors only in production runtime)
 logging.basicConfig(level=logging.WARNING)
@@ -949,6 +951,18 @@ def check_user_login(email, password):
     else:
         return None
 
+def is_super_admin(email):
+    """Check if the email belongs to a super admin."""
+    return email.lower() in [admin_email.lower() for admin_email in SUPER_ADMIN_EMAILS]
+
+
+def can_access_survey_assignment_manager(email: str, role: str | None = None) -> bool:
+    """Survey Assignment Manager: super admins and ADMIN role only (not CLIENT or USER)."""
+    if is_super_admin(email):
+        return True
+    return str(role or "").upper() == "ADMIN"
+
+
 def login(client_mode: bool = False):
     """Displays a login form and handles authentication."""
     def login_content():
@@ -971,7 +985,30 @@ def login(client_mode: bool = False):
                 unsafe_allow_html=True
             )
             # Login button
-            if st.form_submit_button("Login", type="primary", use_container_width=True):
+            login_od = st.form_submit_button("Login", type="primary", use_container_width=True)
+            if not client_mode:
+                st.markdown(
+                    """
+                    <div style="margin: 14px 0 8px 0; text-align: center;">
+                        <p style="margin: 0; font-size: 16px; font-weight: 700; color: #1d2e40;">
+                            Survey Assignment Manager
+                        </p>
+                        <p style="margin: 6px 0 0 0; font-size: 13px; color: #63758a;">
+                            Log in to upload RunCut files and export assignment reports →
+                        </p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                login_sam = st.form_submit_button(
+                    "Log in to Survey Assignment Manager",
+                    use_container_width=True,
+                )
+            else:
+                login_sam = False
+
+            if login_od or login_sam:
+                assignment_login = bool(login_sam and not client_mode)
                 user = check_user_login(email, password)
                 if user == "inactive":
                     st.error("Your account is not active. Please verify your email before logging in.")
@@ -1042,7 +1079,21 @@ def login(client_mode: bool = False):
                     st.session_state["selected_project"] = selected_project
                     st.session_state["schema"] = schema_value[selected_project]
                     st.query_params["logged_in"] = "true"
-                    st.query_params["page"] = "main"
+
+                    if assignment_login:
+                        if user_role == "CLIENT":
+                            st.error("Client accounts cannot access Survey Assignment Manager.")
+                            return
+                        if not can_access_survey_assignment_manager(user["email"], user_role):
+                            st.error("You do not have access to Survey Assignment Manager. Contact an administrator.")
+                            return
+                        st.query_params["page"] = "field_assignments"
+                        st.rerun()
+
+                    if is_super_admin(user["email"]):
+                        st.query_params["page"] = "admin_portal_select"
+                    else:
+                        st.query_params["page"] = "main"
                     st.rerun()
                 else:
                     st.error("Incorrect email or password")
@@ -1085,31 +1136,7 @@ def logout():
     st.rerun()
 
 
-def client_project_select_page():
-    """Post-login page for client users with multiple allowed projects."""
-    user = st.session_state.get("user", {})
-    role = str(user.get("role", "")).upper()
-    if role != "CLIENT":
-        st.error("This page is only for client users.")
-        st.query_params["page"] = "login"
-        return
-
-    projects = st.session_state.get("client_candidate_projects") or []
-    schema_value = get_projects()
-    projects = [p for p in projects if p in schema_value]
-    if not projects:
-        st.error("No active projects found for your account. Contact administrator.")
-        return
-
-    if len(projects) == 1:
-        chosen = projects[0]
-        st.session_state["selected_project"] = chosen
-        st.session_state["schema"] = schema_value[chosen]
-        st.success(f"Project selected: {chosen}")
-        st.query_params["page"] = "main"
-        st.rerun()
-        return
-
+def _portal_select_styles() -> None:
     st.markdown(
         """
         <style>
@@ -1192,6 +1219,34 @@ def client_project_select_page():
         """,
         unsafe_allow_html=True,
     )
+
+
+def client_project_select_page():
+    """Post-login page for client users with multiple allowed projects."""
+    user = st.session_state.get("user", {})
+    role = str(user.get("role", "")).upper()
+    if role != "CLIENT":
+        st.error("This page is only for client users.")
+        st.query_params["page"] = "login"
+        return
+
+    projects = st.session_state.get("client_candidate_projects") or []
+    schema_value = get_projects()
+    projects = [p for p in projects if p in schema_value]
+    if not projects:
+        st.error("No active projects found for your account. Contact administrator.")
+        return
+
+    if len(projects) == 1:
+        chosen = projects[0]
+        st.session_state["selected_project"] = chosen
+        st.session_state["schema"] = schema_value[chosen]
+        st.success(f"Project selected: {chosen}")
+        st.query_params["page"] = "main"
+        st.rerun()
+        return
+
+    _portal_select_styles()
     st.markdown(
         """
         <div class="project-hero">
@@ -1236,6 +1291,63 @@ def client_project_select_page():
                 st.success(f"Project selected: {project_name}")
                 st.query_params["page"] = "main"
                 st.rerun()
+
+def admin_portal_select_page():
+    """Post-login portal picker for super admins: Field Assignments or OD Dashboard."""
+    user = st.session_state.get("user", {})
+    email = str(user.get("email", ""))
+    if not is_super_admin(email):
+        st.error("This page is only for super administrators.")
+        st.query_params["page"] = "main"
+        st.rerun()
+        return
+
+    selected_project = st.session_state.get("selected_project", "—")
+    _portal_select_styles()
+    st.markdown(
+        """
+        <div class="project-hero">
+            <p class="project-hero-title">Pick Your Portal</p>
+            <p class="project-hero-sub">Choose Survey Assignment Manager or the OD Collection Dashboard to continue.</p>
+        </div>
+        <div class="project-select-wrap">
+            <p class="project-select-title">Choose Your Portal</p>
+            <p class="project-select-sub">You can switch portals later without logging out.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(
+            """
+            <div class="project-card">
+                <p class="project-card-name">Survey Assignment Manager</p>
+                <p class="project-card-meta">RunCut upload, assignment rules, Word report export</p>
+                <span class="project-chip">Transit Field Staff</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Enter Survey Assignment Manager", key="admin_portal_field_assignments", use_container_width=True, type="primary"):
+            st.query_params["page"] = "field_assignments"
+            st.rerun()
+
+    with col2:
+        st.markdown(
+            f"""
+            <div class="project-card">
+                <p class="project-card-name">OD Collection Dashboard</p>
+                <p class="project-card-meta">Survey collection, refusal analysis, project reports</p>
+                <span class="project-chip">Project: {selected_project}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Enter OD Dashboard", key="admin_portal_od_dashboard", use_container_width=True, type="primary"):
+            st.query_params["page"] = "main"
+            st.rerun()
 
 def is_authenticated():
     if "logged_in" in st.session_state and st.session_state.get("logged_in", False):
@@ -1992,10 +2104,6 @@ def run_mock_refusal_blanks_alert_test(project_name):
 # SUPER ADMIN MANAGEMENT FUNCTIONS
 # ============================================
 
-def is_super_admin(email):
-    """Check if the email belongs to a super admin."""
-    return email.lower() in [admin_email.lower() for admin_email in SUPER_ADMIN_EMAILS]
-
 def get_all_users():
     conn = user_connect_to_snowflake()
     cursor = conn.cursor(snowflake.connector.DictCursor)
@@ -2125,149 +2233,770 @@ def admin_update_password(email, new_password):
         cursor.close()
         conn.close()
 
+
+def admin_update_user_role(email: str, new_role: str) -> tuple[bool, str]:
+    """Update a user's role (super-admin function). Super-admin accounts cannot be changed."""
+    if is_super_admin(email):
+        return False, "Cannot change role for super admin accounts."
+
+    role = str(new_role or "").upper()
+    if role not in {"USER", "ADMIN", "CLIENT"}:
+        return False, "Invalid role. Choose USER, ADMIN, or CLIENT."
+
+    conn = user_connect_to_snowflake()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT email, role FROM user.user_table WHERE email = %s", (email,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "User not found!"
+        if is_super_admin(row[0]):
+            return False, "Cannot change role for super admin accounts."
+
+        cursor.execute(
+            """
+            UPDATE user.user_table
+            SET role = %s
+            WHERE email = %s
+            """,
+            (role, email),
+        )
+        conn.commit()
+        if cursor.rowcount <= 0:
+            return False, "Role was not updated."
+        return True, f"Role updated to {role} for {email}."
+    except Exception as e:
+        return False, f"Error updating role: {str(e)}"
+    finally:
+        cursor.close()
+        conn.close()
+
 # ============================================
 # MANAGEMENT PAGE FUNCTIONS
 # ============================================
 
+def _user_initials(username: str) -> str:
+    parts = [p for p in str(username or "").strip().split() if p]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+def _accounts_page_size_change() -> None:
+    st.session_state["accounts_page_num"] = 1
+
+
+def _accounts_management_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .acct-page-header h1 {
+            margin: 0 0 4px 0;
+            font-size: 28px;
+            font-weight: 800;
+            color: #1d2e40;
+        }
+        .acct-page-header p {
+            margin: 0;
+            color: #63758a;
+            font-size: 14px;
+        }
+        .acct-stat-card {
+            background: #ffffff;
+            border: 1px solid #e6edf5;
+            border-radius: 14px;
+            padding: 16px 18px;
+            box-shadow: 0 4px 14px rgba(19, 55, 79, 0.06);
+            min-height: 92px;
+        }
+        .acct-stat-label {
+            font-size: 13px;
+            color: #63758a;
+            margin-bottom: 8px;
+        }
+        .acct-stat-value {
+            font-size: 30px;
+            font-weight: 800;
+            line-height: 1;
+        }
+        .acct-stat-total { color: #1565a8; }
+        .acct-stat-active { color: #2e7d32; }
+        .acct-stat-inactive { color: #c62828; }
+        .acct-stats-gap {
+            height: 22px;
+        }
+        .acct-actions-cell,
+        .acct-btn-pw,
+        .acct-btn-deact,
+        .acct-btn-act,
+        .acct-data-row {
+            display: none !important;
+        }
+        div[data-testid="element-container"]:has(.acct-actions-cell),
+        div[data-testid="element-container"]:has(.acct-btn-pw),
+        div[data-testid="element-container"]:has(.acct-btn-deact),
+        div[data-testid="element-container"]:has(.acct-btn-act),
+        div[data-testid="element-container"]:has(.acct-data-row) {
+            display: none !important;
+            width: 0 !important;
+            height: 0 !important;
+            overflow: hidden !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            flex: 0 0 0 !important;
+        }
+        .acct-col-head {
+            margin: 0;
+            padding: 10px 0;
+            font-size: 11px;
+            font-weight: 700;
+            color: #63758a;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .acct-user-cell {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 42px;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        .acct-avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #0b6b95, #4fc3dc);
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        .acct-user-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: #1f2f43;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            flex: 1 1 auto;
+            max-width: 100%;
+        }
+        .acct-email {
+            font-size: 12px;
+            color: #63758a;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 8px 4px 8px 0;
+            line-height: 1.35;
+            max-width: 100%;
+            display: block;
+        }
+        .acct-role-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+        }
+        .acct-role-badge.super-admin {
+            background: #f3e8ff;
+            color: #7b1fa2;
+            border: 1px solid #e1bee7;
+        }
+        .acct-role-locked {
+            margin-top: 6px;
+            font-size: 11px;
+            color: #8a97a8;
+        }
+        .acct-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .acct-status-pill.active {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .acct-status-pill.inactive {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .acct-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: currentColor;
+            flex-shrink: 0;
+        }
+        .acct-created {
+            font-size: 12px;
+            color: #63758a;
+            padding: 12px 0;
+            white-space: nowrap;
+        }
+        .acct-note {
+            margin-top: 16px;
+            background: #eef6ff;
+            border: 1px solid #cfe3f7;
+            border-radius: 12px;
+            padding: 12px 14px;
+            color: #35556f;
+            font-size: 13px;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div[data-testid="stHorizontalBlock"] {
+            align-items: center !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            display: flex;
+            align-items: center;
+            min-height: 44px;
+            overflow: hidden !important;
+            min-width: 0 !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] > div {
+            width: 100% !important;
+            min-width: 0 !important;
+            overflow: hidden !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div.acct-table-divider {
+            height: 1px;
+            background: #d8e0ea;
+            margin: 0;
+            width: 100%;
+            display: block;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div[data-testid="element-container"]:has(.acct-table-divider) {
+            margin: 0 -1rem !important;
+            padding: 0 1rem !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div[data-testid="element-container"]:has(.acct-header-divider) {
+            padding-top: 0 !important;
+            padding-bottom: 8px !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div[data-testid="element-container"]:has(.acct-user-row-divider) {
+            padding-top: 10px !important;
+            padding-bottom: 10px !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div[data-testid="stSelectbox"] > div {
+            margin-bottom: 0;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div.acct-head-row + div[data-testid="stHorizontalBlock"] {
+            background: #f8fbff;
+            margin: -1rem -1rem 0 -1rem;
+            padding: 0.2rem 1rem 0.05rem 1rem;
+            min-height: 42px;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.acct-table-anchor)
+            div.acct-foot-row + div[data-testid="stHorizontalBlock"] {
+            border-top: 1px solid #e6edf5;
+            margin: 0 -1rem -1rem -1rem;
+            padding: 8px 1rem 4px 1rem;
+        }
+        div[data-testid="column"]:has(.acct-actions-cell)
+            div[data-testid="stVerticalBlock"] {
+            display: block !important;
+        }
+        .acct-action-group {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            max-width: 100%;
+        }
+        .acct-action-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            min-width: 68px;
+            min-height: 30px;
+            padding: 6px 10px;
+            border-radius: 8px;
+            color: #ffffff !important;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            text-decoration: none !important;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0, 104, 148, 0.18);
+            transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+        }
+        .acct-action-btn:hover {
+            color: #ffffff !important;
+            text-decoration: none !important;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(0, 104, 148, 0.22);
+        }
+        .acct-action-btn.password {
+            background-color: #006894 !important;
+            border: 1px solid #006894 !important;
+        }
+        .acct-action-btn.password:hover {
+            background-color: #005477 !important;
+        }
+        .acct-action-btn.danger {
+            background-color: #c62828 !important;
+            border: 1px solid #c62828 !important;
+        }
+        .acct-action-btn.danger:hover {
+            background-color: #ad1f1f !important;
+        }
+        .acct-action-btn.success {
+            background-color: #2e7d32 !important;
+            border: 1px solid #2e7d32 !important;
+        }
+        .acct-action-btn.success:hover {
+            background-color: #246427 !important;
+        }
+        .acct-action-disabled {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 30px;
+            padding: 6px 10px;
+            border-radius: 8px;
+            background-color: #f0f4f8 !important;
+            border: 1px solid #cfd8dc !important;
+            color: #78909c !important;
+            font-size: 11px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        @media (max-width: 900px) {
+            .acct-action-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .acct-action-btn,
+            .acct-action-disabled {
+                width: 100%;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _accounts_role_change_handler(email: str, widget_key: str) -> None:
+    new_role = st.session_state.get(widget_key)
+    if not new_role:
+        return
+    success, message = admin_update_user_role(email, new_role)
+    if success:
+        st.session_state["accounts_role_toast"] = "Role updated successfully"
+    else:
+        st.session_state["accounts_role_error"] = message
+
+
+def _filter_accounts_users(
+    users: list[dict],
+    search_term: str,
+    role_filter: str,
+    status_filter: str,
+) -> list[dict]:
+    filtered = users
+    if search_term:
+        term = search_term.lower()
+        filtered = [
+            u for u in filtered
+            if term in u["username"].lower() or term in u["email"].lower()
+        ]
+    if role_filter != "All Roles":
+        if role_filter == "Super Admin":
+            filtered = [u for u in filtered if is_super_admin(u["email"])]
+        else:
+            filtered = [
+                u for u in filtered
+                if not is_super_admin(u["email"]) and str(u.get("role", "")).upper() == role_filter.upper()
+            ]
+    if status_filter == "Active":
+        filtered = [u for u in filtered if u.get("is_active")]
+    elif status_filter == "Inactive":
+        filtered = [u for u in filtered if not u.get("is_active")]
+    return filtered
+
+
+def _accounts_users_csv(users: list[dict]) -> str:
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["Username", "Email", "Role", "Status", "Created"])
+    for user in users:
+        role = "SUPER ADMIN" if is_super_admin(user["email"]) else str(user.get("role", "")).upper()
+        writer.writerow([
+            user.get("username", ""),
+            user.get("email", ""),
+            role,
+            "Active" if user.get("is_active") else "Inactive",
+            user.get("created_at", ""),
+        ])
+    return buffer.getvalue()
+
+
+def _query_param_value(name: str) -> str:
+    value = st.query_params.get(name, "")
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return str(value or "")
+
+
+def _clear_accounts_action_params() -> None:
+    for key in ("acct_action", "acct_email"):
+        if key in st.query_params:
+            del st.query_params[key]
+
+
+def _accounts_action_url(email: str, action: str) -> str:
+    return "?" + urlencode({
+        "page": "accounts_management",
+        "acct_action": action,
+        "acct_email": email,
+    })
+
+
+def _accounts_action_link(email: str, action: str, label: str, css_class: str, title: str) -> str:
+    return (
+        f'<a class="acct-action-btn {css_class}" '
+        f'href="{html.escape(_accounts_action_url(email, action), quote=True)}" '
+        f'title="{html.escape(title, quote=True)}">{html.escape(label)}</a>'
+    )
+
+
+def _handle_accounts_action_query() -> None:
+    action = _query_param_value("acct_action")
+    email = _query_param_value("acct_email")
+    if not action or not email:
+        return
+
+    if is_super_admin(email):
+        st.session_state["accounts_role_error"] = "Protected account cannot be changed."
+        _clear_accounts_action_params()
+        st.rerun()
+
+    if action == "password":
+        st.session_state["password_update_target_email"] = email
+        st.session_state.pop("password_update_selected_email", None)
+        _clear_accounts_action_params()
+        st.query_params["page"] = "password_update"
+        st.rerun()
+
+    if action in {"activate", "deactivate"}:
+        make_active = action == "activate"
+        if toggle_user_status(email, make_active):
+            status_label = "activated" if make_active else "deactivated"
+            st.session_state["accounts_role_toast"] = f"{email} {status_label} successfully."
+        _clear_accounts_action_params()
+        st.query_params["page"] = "accounts_management"
+        st.rerun()
+
+
 def accounts_management_page():
     """Display all accounts with activate/deactivate functionality."""
-    # Header with title and Create Account button on same line
-    title_col1, title_col2 = st.columns([3, 1])
-    with title_col1:
-        st.title("Accounts Management")
-    with title_col2:
-        st.markdown("<br>", unsafe_allow_html=True)  # Align button with title
-        if st.button("Create Account", type="primary", use_container_width=False):
+    current_user_email = st.session_state.get("user", {}).get("email", "")
+    if not is_super_admin(current_user_email):
+        st.error("Access Denied: This page is only accessible to super administrators.")
+        return
+
+    _accounts_management_styles()
+    _handle_accounts_action_query()
+
+    header_left, header_right = st.columns([3.2, 1])
+    with header_left:
+        st.markdown(
+            """
+            <div class="acct-page-header">
+                <h1>Accounts Management</h1>
+                <p>Manage user accounts, roles and permissions</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with header_right:
+        st.markdown("<div style='height: 18px'></div>", unsafe_allow_html=True)
+        if st.button("Create Account", type="primary", use_container_width=True):
             st.query_params["page"] = "create_accounts"
             st.rerun()
-    
-    st.markdown("**View and manage all user accounts**")
-    
-    # Get current user email
-    current_user_email = st.session_state.get("user", {}).get("email", "")
-    
-    if not is_super_admin(current_user_email):
-        st.error("❌ Access Denied: This page is only accessible to super administrators.")
-        return
-    
-    # Fetch all users
+
     users = get_all_users()
-    
     if not users:
         st.info("No users found in the system.")
         return
-    
-    # Display statistics
+
     total_users = len(users)
-    active_users = sum(1 for u in users if u['is_active'])
+    active_users = sum(1 for u in users if u["is_active"])
     inactive_users = total_users - active_users
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Users", total_users)
-    with col2:
-        st.metric("Active Users", active_users)
-    with col3:
-        st.metric("Inactive Users", inactive_users)
-    
-    st.markdown("---")
-    
-    # Search and filter
-    search_term = st.text_input("🔍 Search by username or email", "")
-    
-    # Filter users
-    filtered_users = users
-    if search_term:
-        filtered_users = [
-            u for u in users 
-            if search_term.lower() in u['username'].lower() or search_term.lower() in u['email'].lower()
-        ]
-    
-    # Display users in a table
-    if filtered_users:
-        # Table header
-        st.subheader(f"User Accounts ({len(filtered_users)} found)")
-        
-        # Create table with header row
-        header_col1, header_col2, header_col3, header_col4, header_col5, header_col6 = st.columns([2, 2.5, 1, 1, 1.5, 2])
-        with header_col1:
-            st.markdown("**Username**")
-        with header_col2:
-            st.markdown("**Email**")
-        with header_col3:
-            st.markdown("**Role**")
-        with header_col4:
-            st.markdown("**Status**")
-        with header_col5:
-            st.markdown("**Created**")
-        with header_col6:
-            st.markdown("**Actions**")
-        
-        st.markdown("---")
-        
-        # Table rows with action buttons
-        for idx, user in enumerate(filtered_users):
-            is_super = is_super_admin(user['email'])
-            
-            # Format username with super admin indicator
-            username_display = f"👑 {user['username']}" if is_super else user['username']
-            email_display = user['email']
-            if is_super:
-                email_display += " (Super Admin)"
-            
-            # Format role
-            role_display = "🔵 ADMIN" if user['role'].upper() == "ADMIN" else "🟢 CLIENT"
-            
-            # Format status
-            status_display = "✅ Active" if user['is_active'] else "❌ Inactive"
-            
-            # Format created date
-            created_date = user.get('created_at', 'N/A')
-            created_display = created_date if created_date != 'N/A' else 'N/A'
-            
-            # Create row with columns for actions
-            row_col1, row_col2, row_col3, row_col4, row_col5, row_col6 = st.columns([2, 2.5, 1, 1, 1.5, 2])
-            
-            with row_col1:
-                st.write(username_display)
-            with row_col2:
-                st.caption(email_display)
-            with row_col3:
-                st.write(role_display)
-            with row_col4:
-                st.write(status_display)
-            with row_col5:
-                st.caption(created_display)
-            with row_col6:
-                if is_super:
-                    st.caption("🔒 Protected")
-                else:
-                    # Action buttons in a horizontal layout
-                    action_col1, action_col2 = st.columns(2)
-                    with action_col1:
-                        # Activate/Deactivate button
-                        if user['is_active']:
-                            if st.button("Deactivate", key=f"deactivate_{idx}", type="secondary", use_container_width=True):
-                                if toggle_user_status(user['email'], False):
-                                    st.success(f"User {user['username']} deactivated successfully!")
-                                    st.rerun()
-                        else:
-                            if st.button("Activate", key=f"activate_{idx}", type="primary", use_container_width=True):
-                                if toggle_user_status(user['email'], True):
-                                    st.success(f"User {user['username']} activated successfully!")
-                                    st.rerun()
-                    with action_col2:
-                        # Password Update button
-                        if st.button("✎ Pw", key=f"password_{idx}", use_container_width=True):
-                            st.session_state["password_update_target_email"] = user['email']
-                            st.query_params["page"] = "password_update"
-                            st.rerun()
-            
-            # Add separator between rows (except last)
-            if idx < len(filtered_users) - 1:
-                st.markdown("---")
-    else:
+
+    stat1, stat2, stat3 = st.columns(3)
+    with stat1:
+        st.markdown(
+            f"""
+            <div class="acct-stat-card">
+                <div class="acct-stat-label">Total Users</div>
+                <div class="acct-stat-value acct-stat-total">{total_users}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with stat2:
+        st.markdown(
+            f"""
+            <div class="acct-stat-card">
+                <div class="acct-stat-label">Active Users</div>
+                <div class="acct-stat-value acct-stat-active">{active_users}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with stat3:
+        st.markdown(
+            f"""
+            <div class="acct-stat-card">
+                <div class="acct-stat-label">Inactive Users</div>
+                <div class="acct-stat-value acct-stat-inactive">{inactive_users}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="acct-stats-gap"></div>', unsafe_allow_html=True)
+
+    if toast := st.session_state.pop("accounts_role_toast", None):
+        st.success(toast)
+    if err := st.session_state.pop("accounts_role_error", None):
+        st.error(err)
+
+    if "accounts_page_num" not in st.session_state:
+        st.session_state["accounts_page_num"] = 1
+
+    with st.container(border=True):
+        tool1, tool2, tool3, tool4 = st.columns([2.4, 1, 1, 1], gap="small")
+        with tool1:
+            search_term = st.text_input(
+                "Search",
+                placeholder="Search by username or email...",
+                label_visibility="collapsed",
+                key="accounts_search",
+            )
+        with tool2:
+            role_filter = st.selectbox(
+                "Role filter",
+                ["All Roles", "USER", "ADMIN", "CLIENT", "Super Admin"],
+                label_visibility="collapsed",
+                key="accounts_role_filter",
+            )
+        with tool3:
+            status_filter = st.selectbox(
+                "Status filter",
+                ["All Statuses", "Active", "Inactive"],
+                label_visibility="collapsed",
+                key="accounts_status_filter",
+            )
+        with tool4:
+            filtered_for_export = _filter_accounts_users(users, search_term, role_filter, status_filter)
+            st.download_button(
+                "Export CSV",
+                data=_accounts_users_csv(filtered_for_export),
+                file_name="accounts_export.csv",
+                mime="text/csv",
+                type="primary",
+                use_container_width=True,
+            )
+
+    filtered_users = filtered_for_export
+    if not filtered_users:
         st.info("No users found matching your search criteria.")
+        return
+
+    filter_sig = f"{search_term}|{role_filter}|{status_filter}"
+    if st.session_state.get("accounts_filter_sig") != filter_sig:
+        st.session_state["accounts_filter_sig"] = filter_sig
+        st.session_state["accounts_page_num"] = 1
+
+    page_size = int(st.session_state.get("accounts_page_size", 10))
+    if page_size not in {5, 10, 25, 50}:
+        page_size = 10
+    total_pages = max(1, (len(filtered_users) + page_size - 1) // page_size)
+    page_num = st.session_state.get("accounts_page_num", 1)
+    page_num = max(1, min(page_num, total_pages))
+    st.session_state["accounts_page_num"] = page_num
+    start = (page_num - 1) * page_size
+    page_users = filtered_users[start:start + page_size]
+    col_ratios = [1.45, 2.0, 1.0, 0.85, 1.0, 1.8]
+    role_options = ["USER", "ADMIN", "CLIENT"]
+
+    with st.container(border=True):
+        st.markdown('<div class="acct-table-anchor"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="acct-head-row"></div>', unsafe_allow_html=True)
+        head_cols = st.columns(col_ratios, gap="small")
+        for col, label in zip(head_cols, ["User", "Email", "Role", "Status", "Created", "Actions"]):
+            with col:
+                st.markdown(f'<p class="acct-col-head">{label}</p>', unsafe_allow_html=True)
+
+        st.markdown(
+            '<div class="acct-table-divider acct-header-divider"></div>',
+            unsafe_allow_html=True,
+        )
+
+        for idx, user in enumerate(page_users):
+            st.markdown('<div class="acct-data-row"></div>', unsafe_allow_html=True)
+
+            user_email = user["email"]
+            username = user.get("username", "")
+            display_username = username.split("@", 1)[0] if "@" in str(username) else username
+            is_super = is_super_admin(user_email)
+            initials = _user_initials(display_username)
+            created_display = user.get("created_at", "N/A") or "N/A"
+            status_class = "active" if user.get("is_active") else "inactive"
+            status_label = "Active" if user.get("is_active") else "Inactive"
+
+            row1, row2, row3, row4, row5, row6 = st.columns(col_ratios, gap="small")
+            with row1:
+                st.markdown(
+                    f"""
+                    <div class="acct-user-cell">
+                        <div class="acct-avatar">{html.escape(initials)}</div>
+                        <div class="acct-user-name" title="{html.escape(username)}">{html.escape(display_username)}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with row2:
+                st.markdown(
+                    f'<div class="acct-email">{html.escape(user_email)}</div>',
+                    unsafe_allow_html=True,
+                )
+            with row3:
+                if is_super:
+                    st.markdown(
+                        """
+                        <span class="acct-role-badge super-admin">SUPER ADMIN</span>
+                        <div class="acct-role-locked">Role cannot be changed</div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    current_role = str(user.get("role", "USER")).upper()
+                    if current_role not in role_options:
+                        current_role = "USER"
+                    role_key = f"role_select_{user_email}"
+                    st.selectbox(
+                        "Role",
+                        role_options,
+                        index=role_options.index(current_role),
+                        key=role_key,
+                        label_visibility="collapsed",
+                        on_change=_accounts_role_change_handler,
+                        args=(user_email, role_key),
+                    )
+            with row4:
+                st.markdown(
+                    f"""
+                    <span class="acct-status-pill {status_class}">
+                        <span class="acct-status-dot"></span>{status_label}
+                    </span>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with row5:
+                st.markdown(
+                    f'<div class="acct-created">{html.escape(created_display)}</div>',
+                    unsafe_allow_html=True,
+                )
+            with row6:
+                st.markdown('<div class="acct-actions-cell"></div>', unsafe_allow_html=True)
+                if is_super:
+                    st.markdown(
+                        '<div class="acct-action-group">'
+                        '<span class="acct-action-disabled" title="Protected account">Protected</span>'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif user.get("is_active"):
+                    st.markdown(
+                        '<div class="acct-action-group">'
+                        + _accounts_action_link(user_email, "password", "Pass", "password", "Change password")
+                        + _accounts_action_link(user_email, "deactivate", "Deact", "danger", "Deactivate account")
+                        + '</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        '<div class="acct-action-group">'
+                        + _accounts_action_link(user_email, "password", "Pass", "password", "Change password")
+                        + _accounts_action_link(user_email, "activate", "Active", "success", "Activate account")
+                        + '</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            if idx < len(page_users) - 1:
+                st.markdown(
+                    '<div class="acct-table-divider acct-user-row-divider"></div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown('<div class="acct-foot-row"></div>', unsafe_allow_html=True)
+        foot_left, foot_mid, foot_right = st.columns([1.5, 1.2, 1], gap="small")
+        with foot_left:
+            st.caption(
+                f"Showing {start + 1} to {min(start + len(page_users), len(filtered_users))} "
+                f"of {len(filtered_users)} users"
+            )
+        with foot_mid:
+            pcol1, pcol2, pcol3 = st.columns(3, gap="small")
+            with pcol1:
+                if st.button("Prev", disabled=page_num <= 1, key="accounts_prev_page"):
+                    st.session_state["accounts_page_num"] = page_num - 1
+                    st.rerun()
+            with pcol2:
+                st.markdown(
+                    f"<div style='text-align:center;padding-top:6px;color:#63758a;'>"
+                    f"Page {page_num} / {total_pages}</div>",
+                    unsafe_allow_html=True,
+                )
+            with pcol3:
+                if st.button("Next", disabled=page_num >= total_pages, key="accounts_next_page"):
+                    st.session_state["accounts_page_num"] = page_num + 1
+                    st.rerun()
+        with foot_right:
+            st.selectbox(
+                "Rows per page",
+                [10, 5, 25, 50],
+                label_visibility="collapsed",
+                key="accounts_page_size",
+                on_change=_accounts_page_size_change,
+            )
+
+    st.markdown(
+        """
+        <div class="acct-note">
+            <strong>Note:</strong> Role changes take effect immediately. Users may need to log in again to see updated permissions.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def create_accounts_page():
     """Page for creating new user accounts."""
@@ -2324,102 +3053,69 @@ def password_update_page():
     st.title("Password Update")
     st.markdown("**Update passwords for any user account**")
     
-    # Get current user email
     current_user_email = st.session_state.get("user", {}).get("email", "")
-    
     if not is_super_admin(current_user_email):
         st.error("❌ Access Denied: This page is only accessible to super administrators.")
         return
     
-    # Fetch all users (excluding super admins)
     all_users = get_all_users()
     non_admin_users = [u for u in all_users if not is_super_admin(u['email'])]
-    
     if not non_admin_users:
         st.info("No users available for password update.")
         return
     
-    # Check if target email is set from Accounts Management page
-    target_email = st.session_state.get("password_update_target_email", None)
-    
-    # Store selected email in session state to persist across reruns
+    target_email = st.session_state.pop("password_update_target_email", None)
     if target_email:
-        # Set the selected email in session state and clear target_email
         st.session_state["password_update_selected_email"] = target_email
-        del st.session_state["password_update_target_email"]
     
-    # Get the selected email from session state (persists across reruns)
-    selected_email = st.session_state.get("password_update_selected_email", None)
-    
-    # If selected email is set, show only that user (no dropdown)
-    if selected_email:
-        selected_user = next((u for u in non_admin_users if u['email'] == selected_email), None)
-        
-        if not selected_user:
-            st.error(f"User with email {selected_email} not found or is a super admin.")
-            # Clear the selected email
-            if "password_update_selected_email" in st.session_state:
-                del st.session_state["password_update_selected_email"]
-            return
-        
-        # Check if it's a super admin
-        if is_super_admin(selected_email):
-            st.error("⚠️ **Cannot update password for super admin accounts.**")
-            # Clear the selected email
-            if "password_update_selected_email" in st.session_state:
-                del st.session_state["password_update_selected_email"]
-            return
-        
-        # Show selected user info (no dropdown)
-        st.info(f"**Updating password for:** {selected_user['username']} ({selected_user['email']}) | **Role:** {selected_user['role']}")
-    else:
-        # If no selected email, show dropdown for all users
+    selected_email = st.session_state.get("password_update_selected_email")
+    if not selected_email:
         st.warning("⚠️ **Note:** You cannot update passwords for super admin accounts (Jason, Shehryar, Boo Ali).")
-        
         user_options = {f"{u['username']} ({u['email']})": u['email'] for u in non_admin_users}
-        selected_user_display = st.selectbox("Select User", list(user_options.keys()))
+        selected_user_display = st.selectbox("Select User", list(user_options.keys()), key="password_update_user_picker")
         selected_email = user_options[selected_user_display]
-        
-        # Store in session state
         st.session_state["password_update_selected_email"] = selected_email
-        
-        # Get selected user details
-        selected_user = next((u for u in non_admin_users if u['email'] == selected_email), None)
     
-    if selected_user:
-        # Double-check we're using the correct email
-        selected_email = st.session_state.get("password_update_selected_email", selected_user['email'])
+    selected_user = next((u for u in non_admin_users if u["email"] == selected_email), None)
+    if not selected_user:
+        st.error(f"User with email {selected_email} not found or is a super admin.")
+        st.session_state.pop("password_update_selected_email", None)
+        return
+    
+    if is_super_admin(selected_user["email"]):
+        st.error("⚠️ **Cannot update password for super admin accounts.**")
+        st.session_state.pop("password_update_selected_email", None)
+        return
+    
+    email_to_update = selected_user["email"]
+    st.info(
+        f"**Updating password for:** {selected_user['username']} ({email_to_update}) | "
+        f"**Role:** {selected_user['role']}"
+    )
+    
+    with st.form(f"update_password_form_{email_to_update}"):
+        st.text_input("Account email (locked)", value=email_to_update, disabled=True)
+        new_password = st.text_input("New Password *", type="password", placeholder="Enter new password")
+        confirm_password = st.text_input("Confirm New Password *", type="password", placeholder="Re-enter new password")
         
-        with st.form("update_password_form"):
-            new_password = st.text_input("New Password *", type="password", placeholder="Enter new password")
-            confirm_password = st.text_input("Confirm New Password *", type="password", placeholder="Re-enter new password")
-            
-            if st.form_submit_button("Update Password", type="primary", use_container_width=True):
-                # Use the email from session state to ensure we update the correct user
-                email_to_update = st.session_state.get("password_update_selected_email", selected_email)
-                
-                if not new_password or not confirm_password:
-                    st.error("Please fill in both password fields.")
-                elif new_password != confirm_password:
-                    st.error("Passwords do not match.")
-                elif len(new_password) < 6:
-                    st.error("Password must be at least 6 characters long.")
+        if st.form_submit_button("Update Password", type="primary", use_container_width=True):
+            if not new_password or not confirm_password:
+                st.error("Please fill in both password fields.")
+            elif new_password != confirm_password:
+                st.error("Passwords do not match.")
+            elif len(new_password) < 6:
+                st.error("Password must be at least 6 characters long.")
+            else:
+                success, message = admin_update_password(email_to_update, new_password)
+                if success:
+                    st.success(message)
+                    st.balloons()
+                    time.sleep(1)
+                    st.rerun()
                 else:
-                    success, message = admin_update_password(email_to_update, new_password)
-                    if success:
-                        st.success(message)
-                        st.balloons()
-                        # Keep the selected email in session state so same user remains selected
-                        # Don't clear it - user can update again or go back to accounts management
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error(message)
-        
-        # Add a button to go back to Accounts Management
-        if st.button("← Back to Accounts Management", type="secondary"):
-            # Clear the selected email when going back
-            if "password_update_selected_email" in st.session_state:
-                del st.session_state["password_update_selected_email"]
-            st.query_params["page"] = "accounts_management"
-            st.rerun()
+                    st.error(message)
+    
+    if st.button("← Back to Accounts Management", type="secondary", key="password_update_back"):
+        st.session_state.pop("password_update_selected_email", None)
+        st.query_params["page"] = "accounts_management"
+        st.rerun()

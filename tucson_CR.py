@@ -35,7 +35,7 @@ from utils import (
     build_group_option_column_maps,
     demographic_display_key_for_group_name,
 )
-from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page
+from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -46,6 +46,7 @@ from utils import apply_lacmta_agency_filter
 import boto3
 from io import BytesIO, StringIO
 from public_survey_tracker import render_public_survey_tracker_page, survey_tracker_setup_page
+from field_assignments.page import render_field_assignments_page
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -191,6 +192,8 @@ if not st.session_state["logged_in"]:
         login(client_mode=True)
     elif current_page == "login":
         login()  # Show the login page by default
+    elif current_page == "field_assignments":
+        login()
     elif current_page == "forgot_password":
         forgot_password()
     elif current_page=='create_user':
@@ -215,6 +218,23 @@ else:
             unsafe_allow_html=True
         )
     else:
+        if current_page == "admin_portal_select":
+            admin_portal_select_page()
+            st.stop()
+        if current_page == "field_assignments":
+            _fa_user = st.session_state.get("user", {})
+            if not can_access_survey_assignment_manager(
+                _fa_user.get("email", ""),
+                _fa_user.get("role"),
+            ):
+                st.error("You do not have access to Survey Assignment Manager. Contact an administrator.")
+                if st.button("Back to OD Dashboard"):
+                    st.query_params["page"] = "main"
+                    st.rerun()
+                st.stop()
+            render_field_assignments_page()
+            st.stop()
+
         selected_schema = st.session_state.get("schema", None)
         selected_project = str(st.session_state.get("selected_project", "")).lower()
         def create_snowflake_connection():
@@ -1616,14 +1636,29 @@ else:
                     on_change=on_dashboard_change,
                 )
 
-            # --- Management section for super admins ---
+            # --- Survey Assignment Manager (super admins + ADMIN role) ---
             current_user_email = st.session_state.get("user", {}).get("email", "")
+            current_user_role = st.session_state.get("user", {}).get("role", "")
+            if can_access_survey_assignment_manager(current_user_email, current_user_role):
+                st.markdown(
+                    '<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">',
+                    unsafe_allow_html=True,
+                )
+                if st.button("Survey Assignment Manager", use_container_width=True, type="primary"):
+                    st.query_params["page"] = "field_assignments"
+                    st.rerun()
+
+            # --- Management section for super admins ---
             if is_super_admin(current_user_email):
                 st.markdown(
                     '<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">',
                     unsafe_allow_html=True,
                 )
                 st.markdown("<div class='section-label'>Management</div>", unsafe_allow_html=True)
+
+                if st.button("Switch Portal", use_container_width=True):
+                    st.query_params["page"] = "admin_portal_select"
+                    st.rerun()
 
                 # Single button to go to Accounts Management page
                 if st.button("Accounts Management", use_container_width=True, type="primary"):
@@ -7218,7 +7253,8 @@ else:
         PAGES_NOT_REQUIRING_DATA = {
             "accounts_management", "projects_configuration", "create_accounts",
             "password_update", "file_management", "view_s3_files", "demographic_setup",
-            "survey_tracker_setup", "edit_project_configs",
+            "survey_tracker_setup", "edit_project_configs", "field_assignments",
+            "admin_portal_select",
         }
         if current_page not in PAGES_NOT_REQUIRING_DATA and not has_project_data:
             st.warning("⚠️ No project data available yet.")
