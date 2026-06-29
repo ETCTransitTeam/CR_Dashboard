@@ -4,7 +4,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from field_assignments.core.constants import (
     COL_ASN,
@@ -15,6 +15,18 @@ from field_assignments.core.constants import (
     EXPECTED_COLUMNS,
 )
 from field_assignments.core.time_utils import is_blank, normalize_cell, normalize_header, option_values
+
+
+def build_header_template() -> bytes:
+    """Return a blank .xlsx workbook containing only the expected RunCut headers."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "RunCut"
+    for column_index, header in enumerate(EXPECTED_COLUMNS, start=1):
+        sheet.cell(row=1, column=column_index, value=header)
+    out = BytesIO()
+    workbook.save(out)
+    return out.getvalue()
 
 
 def read_headers(sheet) -> list[str]:

@@ -8,9 +8,21 @@ import streamlit as st
 from field_assignments.core.assign import fill_assignment_numbers
 from field_assignments.core.export_docs import export_reports_zip
 from field_assignments.core.storage import list_workbook_versions, load_workbook_version, save_workbook_version
-from field_assignments.core.summary import route_coverage_summary, style_coverage_dataframe
+from field_assignments.core.summary import (
+    route_coverage_summary,
+    start_location_routes_summary,
+    style_coverage_dataframe,
+    style_start_location_dataframe,
+)
 from field_assignments.core.time_utils import parse_assignment_filter
-from field_assignments.core.workbook import workbook_options
+from field_assignments.core.workbook import build_header_template, workbook_options
+
+MAX_ASSIGNMENT_GUIDELINES = 50
+FA_TABS = {
+    "export": "📄 Export Reports",
+    "assign": "✏️ Create Assignments",
+    "summary": "📊 Summary & Versions",
+}
 
 
 def _workbook_bytes() -> bytes | None:
@@ -29,6 +41,491 @@ def _set_workbook(uploaded, sheet_name: str | None = None) -> None:
     except Exception as exc:
         st.session_state.pop("fa_workbook_options", None)
         raise exc
+
+
+def _render_header_template_download(key: str) -> None:
+    st.download_button(
+        "Download Headers Template",
+        data=build_header_template(),
+        file_name="RunCut_Headers_Template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=key,
+        use_container_width=True,
+    )
+
+
+def _assignment_guideline_count() -> int:
+    return int(st.session_state.get("fa_assignment_count", 1))
+
+
+def _ensure_assignment_guideline_count() -> None:
+    if "fa_assignment_count" not in st.session_state:
+        st.session_state["fa_assignment_count"] = 1
+
+
+_ASSIGNMENT_WIDGET_SUFFIXES = (
+    "use",
+    "block",
+    "route",
+    "start_loc",
+    "end_loc",
+    "start_from",
+    "start_to",
+    "end_from",
+    "end_to",
+)
+
+
+def _assignment_widget_key(index: int, suffix: str) -> str:
+    return f"fa_assignment_{index}_{suffix}"
+
+
+def _guideline_store_key(index: int) -> str:
+    return f"fa_guideline_store_{index}"
+
+
+def _get_guideline_store(index: int) -> dict[str, str]:
+    key = _guideline_store_key(index)
+    if key not in st.session_state:
+        st.session_state[key] = {
+            "block": "(All blocks)",
+            "route": "",
+            "start_loc": "",
+            "end_loc": "",
+        }
+    return st.session_state[key]
+
+
+def _save_guideline_store(index: int) -> None:
+    store = _get_guideline_store(index)
+    store["block"] = str(
+        st.session_state.get(_assignment_widget_key(index, "block"), store["block"]) or store["block"]
+    )
+    store["route"] = str(
+        st.session_state.get(_assignment_widget_key(index, "route"), store["route"]) or ""
+    )
+    store["start_loc"] = str(
+        st.session_state.get(_assignment_widget_key(index, "start_loc"), store["start_loc"]) or ""
+    )
+    store["end_loc"] = str(
+        st.session_state.get(_assignment_widget_key(index, "end_loc"), store["end_loc"]) or ""
+    )
+
+
+def _restore_guideline_store_to_widgets(index: int) -> None:
+    store = _get_guideline_store(index)
+    st.session_state[_assignment_widget_key(index, "use")] = True
+    for suffix in ("block", "route", "start_loc", "end_loc"):
+        value = store.get(suffix, "")
+        if value:
+            st.session_state[_assignment_widget_key(index, suffix)] = value
+    if store.get("route"):
+        st.session_state[_loc_route_key(index)] = store["route"]
+
+
+def _restore_all_guideline_stores() -> None:
+    for index in range(1, _assignment_guideline_count() + 1):
+        _restore_guideline_store_to_widgets(index)
+
+
+def _loc_route_key(index: int) -> str:
+    return f"fa_assignment_{index}_loc_route"
+
+
+def _reset_assignment_locations(index: int) -> None:
+    st.session_state[_assignment_widget_key(index, "start_loc")] = ""
+    st.session_state[_assignment_widget_key(index, "end_loc")] = ""
+
+
+def _apply_route_location_binding(index: int, route_sel: str) -> None:
+    """Clear locations only when the route truly changed, not on add/rerun."""
+    bound_route = st.session_state.get(_loc_route_key(index))
+    if bound_route not in (None, "") and str(bound_route) != str(route_sel):
+        _reset_assignment_locations(index)
+    if route_sel:
+        st.session_state[_loc_route_key(index)] = route_sel
+
+
+def _selectbox_options(options: list[str], current: str) -> list[str]:
+    """Build selectbox options and keep the current session value even if not in the route map."""
+    ordered: list[str] = [""]
+    seen = {""}
+    for value in options:
+        text = str(value)
+        if text and text not in seen:
+            ordered.append(text)
+            seen.add(text)
+    text = str(current or "")
+    if text and text not in seen:
+        ordered.append(text)
+    return ordered
+
+
+def _seed_assignment_guideline_defaults(index: int) -> None:
+    use_key = _assignment_widget_key(index, "use")
+    if use_key in st.session_state:
+        return
+    st.session_state[use_key] = True
+    st.session_state[_assignment_widget_key(index, "block")] = "(All blocks)"
+    for suffix in ("route", "start_loc", "end_loc"):
+        st.session_state[_assignment_widget_key(index, suffix)] = ""
+
+
+def _location_options(
+    route_sel: str,
+    route_map: dict[str, list[str]],
+    fallback: list[str],
+) -> list[str]:
+    if not route_sel:
+        return list(fallback or [])
+    if route_sel in route_map:
+        return list(route_map[route_sel] or [])
+    for key, values in route_map.items():
+        if str(key) == str(route_sel):
+            return list(values or [])
+    return list(fallback or [])
+
+
+def _clear_assignment_widget_state(index: int) -> None:
+    for suffix in _ASSIGNMENT_WIDGET_SUFFIXES:
+        st.session_state.pop(_assignment_widget_key(index, suffix), None)
+    st.session_state.pop(_loc_route_key(index), None)
+
+
+def _remove_assignment_guideline(index: int) -> None:
+    count = _assignment_guideline_count()
+    if count <= 1 or index < 1 or index > count:
+        return
+
+    for position in range(1, count + 1):
+        _save_guideline_store(position)
+
+    remaining_stores = [_get_guideline_store(position).copy() for position in range(1, count + 1)]
+    remaining_stores.pop(index - 1)
+
+    for position in range(1, count + 1):
+        _clear_assignment_widget_state(position)
+        st.session_state.pop(_guideline_store_key(position), None)
+
+    st.session_state["fa_assignment_count"] = count - 1
+    for new_index, store in enumerate(remaining_stores, start=1):
+        st.session_state[_guideline_store_key(new_index)] = store
+        _restore_guideline_store_to_widgets(new_index)
+
+
+def _queue_remove_assignment_guideline(index: int) -> None:
+    st.session_state["fa_pending_remove_index"] = index
+
+
+def _process_pending_guideline_removals() -> bool:
+    pending_remove = st.session_state.pop("fa_pending_remove_index", None)
+    if pending_remove is None:
+        return False
+    _remove_assignment_guideline(int(pending_remove))
+    return True
+
+
+def _build_guidelines_list(
+    opts: dict[str, object],
+    guideline_count: int,
+    *,
+    scan_order: str,
+    tolerance: int,
+    include_interlined: bool,
+) -> list[dict[str, str]]:
+    blocks = ["(All blocks)"] + list(opts.get("blocks") or [])
+    guidelines_list: list[dict[str, str]] = []
+
+    for index in range(1, guideline_count + 1):
+        use_key = f"fa_assignment_{index}_use"
+        if not st.session_state.get(use_key):
+            continue
+
+        block_sel = st.session_state.get(f"fa_assignment_{index}_block", blocks[0])
+        route_sel = st.session_state.get(f"fa_assignment_{index}_route", "")
+        start_loc = st.session_state.get(f"fa_assignment_{index}_start_loc", "")
+        end_loc = st.session_state.get(f"fa_assignment_{index}_end_loc", "")
+        start_from = st.session_state.get(f"fa_assignment_{index}_start_from")
+        start_to = st.session_state.get(f"fa_assignment_{index}_start_to")
+        end_from = st.session_state.get(f"fa_assignment_{index}_end_from")
+        end_to = st.session_state.get(f"fa_assignment_{index}_end_to")
+
+        if not route_sel or not start_loc or not end_loc:
+            continue
+        if not all([start_from, start_to, end_from, end_to]):
+            continue
+
+        guidelines_list.append(
+            {
+                "block": "" if block_sel == "(All blocks)" else block_sel,
+                "route": route_sel,
+                "start_location": start_loc,
+                "end_location": end_loc,
+                "start_from": start_from.strftime("%H:%M"),
+                "start_to": start_to.strftime("%H:%M"),
+                "shift_from": end_from.strftime("%H:%M"),
+                "shift_to": end_to.strftime("%H:%M"),
+                "scan_order": scan_order,
+                "tolerance": str(tolerance),
+                "include_interlined": "true" if include_interlined else "false",
+            }
+        )
+
+    return guidelines_list
+
+
+@st.fragment
+def _render_assign_guidelines_and_output() -> None:
+    """Interactive assignment configuration; reruns only this section on widget changes."""
+    opts = st.session_state.get("fa_workbook_options") or {}
+    if not opts:
+        st.warning("Workbook options are not loaded.")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Blank Asn# rows", int(opts["blank_rows"]))
+    c2.metric("Next Asn#", int(opts["next_assignment"]))
+    c3.metric("Sheet", str(opts["sheet"]))
+    st.caption("Each completed assignment guideline creates one new assignment number.")
+
+    with st.container(border=True):
+        _step_title(2, "Assignment settings")
+        set_col1, set_col2 = st.columns(2)
+        with set_col1:
+            tolerance = st.selectbox(
+                "Time tolerance",
+                options=[
+                    ("Exact times", 0),
+                    ("+/- 5 minutes", 5),
+                    ("+/- 10 minutes", 10),
+                    ("+/- 15 minutes", 15),
+                    ("+/- 20 minutes", 20),
+                    ("+/- 30 minutes", 30),
+                ],
+                format_func=lambda item: item[0],
+                index=3,
+                key="fa_tolerance",
+            )[1]
+        with set_col2:
+            scan_order = st.selectbox(
+                "Scan order",
+                options=[("Top to bottom", "top_to_bottom"), ("Bottom to top", "bottom_to_top")],
+                format_func=lambda item: item[0],
+                key="fa_scan_order",
+            )[1]
+        include_interlined = st.checkbox(
+            "Include same-block interlined routes between start and end",
+            value=True,
+            key="fa_include_interlined",
+            help=(
+                "When enabled, blank rows on the same block between the selected route's start and end "
+                "are included even if the route changes (interlining)."
+            ),
+        )
+
+    route_start = opts.get("route_start_locations") or {}
+    route_end = opts.get("route_end_locations") or {}
+    blocks = ["(All blocks)"] + list(opts.get("blocks") or [])
+    routes = list(opts.get("routes") or [])
+
+    if _process_pending_guideline_removals():
+        st.rerun()
+
+    guideline_count = _assignment_guideline_count()
+    if st.session_state.pop("fa_restore_guidelines", False):
+        _restore_all_guideline_stores()
+
+    with st.container(border=True):
+        _step_title(3, "Assignment guidelines")
+        st.caption(
+            "Start Location and Start From/To find the first row. "
+            "Final End Location and End From/To find the last row."
+        )
+        add_col, remove_col, info_col = st.columns([1, 1, 2])
+        with add_col:
+            if st.button(
+                "Add Assignment",
+                key="fa_add_assignment",
+                use_container_width=True,
+                disabled=guideline_count >= MAX_ASSIGNMENT_GUIDELINES,
+            ):
+                for index in range(1, guideline_count + 1):
+                    _save_guideline_store(index)
+                new_index = min(guideline_count + 1, MAX_ASSIGNMENT_GUIDELINES)
+                st.session_state["fa_assignment_count"] = new_index
+                _seed_assignment_guideline_defaults(new_index)
+                st.session_state["fa_restore_guidelines"] = True
+                st.rerun()
+        with remove_col:
+            if st.button(
+                "Remove Last",
+                key="fa_remove_last_assignment",
+                use_container_width=True,
+                disabled=guideline_count <= 1,
+                help="Remove the last assignment guideline.",
+            ):
+                _queue_remove_assignment_guideline(guideline_count)
+                st.rerun()
+        with info_col:
+            st.caption(
+                f"Showing {guideline_count} assignment guideline(s). "
+                f"Maximum {MAX_ASSIGNMENT_GUIDELINES}."
+            )
+
+        for index in range(1, guideline_count + 1):
+            use_key = _assignment_widget_key(index, "use")
+            if use_key not in st.session_state:
+                st.session_state[use_key] = True
+            label_col, remove_col = st.columns([5, 1], vertical_alignment="center")
+            with label_col:
+                st.checkbox(f"Assignment #{index} Guideline", key=use_key)
+            with remove_col:
+                if guideline_count > 1 and st.button(
+                    "Remove",
+                    key=f"fa_remove_assignment_{index}",
+                    use_container_width=True,
+                    help=f"Remove Assignment #{index} guideline.",
+                ):
+                    _queue_remove_assignment_guideline(index)
+                    st.rerun()
+            if not st.session_state.get(use_key):
+                continue
+
+            block_key = _assignment_widget_key(index, "block")
+            route_key = _assignment_widget_key(index, "route")
+            start_key = _assignment_widget_key(index, "start_loc")
+            end_key = _assignment_widget_key(index, "end_loc")
+            store = _get_guideline_store(index)
+            route_sel = str(st.session_state.get(route_key, store.get("route", "")) or "")
+
+            with st.container(border=True):
+                st.markdown(f"**Assignment #{index}**")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.selectbox(
+                        "Block",
+                        _selectbox_options(blocks, str(st.session_state.get(block_key, store["block"]))),
+                        key=block_key,
+                    )
+                with c2:
+                    st.selectbox(
+                        "Route",
+                        _selectbox_options(routes, route_sel),
+                        key=route_key,
+                    )
+                route_sel = str(st.session_state.get(route_key, "") or "")
+                _apply_route_location_binding(index, route_sel)
+                start_locs = _location_options(
+                    route_sel,
+                    route_start,
+                    list(opts.get("start_locations") or []),
+                )
+                end_locs = _location_options(
+                    route_sel,
+                    route_end,
+                    list(opts.get("end_locations") or []),
+                )
+                with c3:
+                    st.selectbox(
+                        "Start location",
+                        _selectbox_options(
+                            start_locs,
+                            str(st.session_state.get(start_key, store.get("start_loc", ""))),
+                        ),
+                        key=start_key,
+                    )
+                with c4:
+                    st.selectbox(
+                        "Final end location",
+                        _selectbox_options(
+                            end_locs,
+                            str(st.session_state.get(end_key, store.get("end_loc", ""))),
+                        ),
+                        key=end_key,
+                    )
+
+                t1, t2, t3, t4 = st.columns(4)
+                with t1:
+                    st.time_input("Start from", key=f"fa_assignment_{index}_start_from")
+                with t2:
+                    st.time_input("Start to", key=f"fa_assignment_{index}_start_to")
+                with t3:
+                    st.time_input("End from", key=f"fa_assignment_{index}_end_from")
+                with t4:
+                    st.time_input("End to", key=f"fa_assignment_{index}_end_to")
+
+            _save_guideline_store(index)
+
+            route_sel = st.session_state.get(f"fa_assignment_{index}_route", "")
+            start_loc = st.session_state.get(f"fa_assignment_{index}_start_loc", "")
+            end_loc = st.session_state.get(f"fa_assignment_{index}_end_loc", "")
+            if not route_sel or not start_loc or not end_loc:
+                st.warning(f"Assignment #{index}: fill route and both locations.")
+
+    guidelines_list = _build_guidelines_list(
+        opts,
+        guideline_count,
+        scan_order=scan_order,
+        tolerance=tolerance,
+        include_interlined=include_interlined,
+    )
+
+    with st.container(border=True):
+        _step_title(4, "Create output files")
+        if st.button("Fill Assignment Numbers", type="primary", key="fa_fill_btn", use_container_width=True):
+            data = _workbook_bytes()
+            if not data:
+                st.error("Upload and load a workbook first.")
+                return
+            if not guidelines_list:
+                st.error("Enable and complete at least one assignment guideline.")
+                return
+            try:
+                updated_bytes, results = fill_assignment_numbers(
+                    data, st.session_state.get("fa_sheet_name"), guidelines_list
+                )
+                st.session_state["fa_workbook_bytes"] = updated_bytes
+                st.session_state["fa_workbook_options"] = workbook_options(
+                    updated_bytes, st.session_state.get("fa_sheet_name")
+                )
+                zip_bytes, summaries = export_reports_zip(updated_bytes, st.session_state.get("fa_sheet_name"))
+                st.session_state["fa_last_export_summary"] = summaries
+                st.session_state["fa_last_export_zip"] = zip_bytes
+                st.session_state["fa_updated_workbook"] = updated_bytes
+                parts = [f"assignment {item['assignment']} on {item['count']} row(s)" for item in results]
+                st.success(f"Created {len(results)} assignment(s): " + "; ".join(parts) + ".")
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
+
+    updated_bytes = st.session_state.get("fa_updated_workbook")
+    zip_bytes = st.session_state.get("fa_last_export_zip")
+    if updated_bytes or zip_bytes:
+        d1, d2 = st.columns(2)
+        with d1:
+            if updated_bytes:
+                st.download_button(
+                    "Download updated Excel",
+                    data=updated_bytes,
+                    file_name="RunCut_Assignments_Updated.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+        with d2:
+            if zip_bytes:
+                st.download_button(
+                    "Download Word reports ZIP",
+                    data=zip_bytes,
+                    file_name="RunCut_Assignment_Documents.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+
+    summaries = st.session_state.get("fa_last_export_summary")
+    if summaries:
+        with st.container(border=True):
+            _step_title(5, "Export summary")
+            st.dataframe(summaries, use_container_width=True, hide_index=True)
 
 
 def _display_name_for_portal(user: dict) -> str:
@@ -96,6 +593,35 @@ def _inject_page_styles() -> None:
         }
         .stApp:has(.fa-page-marker) div[data-testid="stTabs"] [data-baseweb="tab-panel"] {
             padding-top: 1.15rem;
+        }
+        .stApp:has(.fa-page-marker) div[data-testid="stRadio"] > div {
+            gap: 0.35rem;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid #d4e0ec;
+            border-radius: 14px;
+            padding: 0.4rem;
+            box-shadow: 0 4px 18px rgba(15, 45, 75, 0.07);
+            backdrop-filter: blur(6px);
+            width: 100%;
+        }
+        .stApp:has(.fa-page-marker) div[data-testid="stRadio"] label {
+            background: transparent;
+            border-radius: 10px;
+            color: #516579;
+            font-weight: 650;
+            padding: 0.55rem 1.05rem;
+            margin: 0 !important;
+            transition: all 0.15s ease;
+        }
+        .stApp:has(.fa-page-marker) div[data-testid="stRadio"] label:hover {
+            background: #f0f7fd;
+            color: #0b6bcb;
+        }
+        .stApp:has(.fa-page-marker) div[data-testid="stRadio"] label[data-checked="true"],
+        .stApp:has(.fa-page-marker) div[data-testid="stRadio"] label:has(input:checked) {
+            background: linear-gradient(135deg, #0b6bcb 0%, #0891c7 100%);
+            color: #ffffff !important;
+            box-shadow: 0 6px 16px rgba(11, 107, 203, 0.28);
         }
         .stApp:has(.fa-page-marker) div[data-testid="stVerticalBlockBorderWrapper"] {
             background: rgba(255, 255, 255, 0.96);
@@ -338,7 +864,7 @@ def _workflow_strip() -> None:
             </div>
             <div class="fa-workflow-item">
                 <strong>2. Build assignments</strong>
-                <span>Apply up to 10 rules to fill blank Asn# rows.</span>
+                <span>Add assignment guidelines to fill blank Asn# rows.</span>
             </div>
             <div class="fa-workflow-item">
                 <strong>3. Export reports</strong>
@@ -554,53 +1080,11 @@ def _render_export_tab() -> None:
 
     with st.container(border=True):
         _step_title(1, "Upload workbook")
-        uploaded = st.file_uploader("RunCut Excel file (.xlsx)", type=["xlsx"], key="fa_export_upload")
-        sheet_name = st.text_input("Sheet name (blank = active sheet)", key="fa_export_sheet")
-        assignment_filter = st.text_input(
-            "Assignments (optional)",
-            placeholder="All, or enter 1,2,9",
-            key="fa_export_filter",
-            help="Leave blank to export every assignment with a nonblank Asn#.",
-        )
-
-        if uploaded is not None:
-            try:
-                _set_workbook(uploaded, sheet_name or None)
-                opts = st.session_state.get("fa_workbook_options", {})
-                st.success(f"Loaded {uploaded.name}")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Sheet", str(opts.get("sheet", "")))
-                c2.metric("Max Asn#", int(opts.get("max_assignment", 0)))
-                c3.metric("Blank rows", int(opts.get("blank_rows", 0)))
-            except Exception as exc:
-                st.error(str(exc))
+        _render_export_upload_section()
 
     with st.container(border=True):
         _step_title(2, "Generate documents")
-        if st.button("Generate Word Documents", type="primary", key="fa_export_btn", use_container_width=True):
-            data = _workbook_bytes()
-            if not data:
-                st.error("Upload a RunCut workbook first.")
-                return
-            try:
-                wanted = parse_assignment_filter(assignment_filter)
-                zip_bytes, summaries = export_reports_zip(data, st.session_state.get("fa_sheet_name"), wanted)
-                st.session_state["fa_last_export_summary"] = summaries
-                st.session_state["fa_last_export_zip"] = zip_bytes
-                st.success(f"Exported {len(summaries)} Word document(s).")
-            except Exception as exc:
-                st.error(str(exc))
-
-        zip_bytes = st.session_state.get("fa_last_export_zip")
-        if zip_bytes:
-            st.download_button(
-                "Download ZIP",
-                data=zip_bytes,
-                file_name="RunCut_Assignment_Documents.zip",
-                mime="application/zip",
-                type="primary",
-                use_container_width=True,
-            )
+        _render_export_generate_section()
 
     summaries = st.session_state.get("fa_last_export_summary")
     if summaries:
@@ -609,188 +1093,113 @@ def _render_export_tab() -> None:
             st.dataframe(summaries, use_container_width=True, hide_index=True)
 
 
+@st.fragment
+def _render_export_upload_section() -> None:
+    _render_header_template_download("fa_export_template")
+    uploaded = st.file_uploader("RunCut Excel file (.xlsx)", type=["xlsx"], key="fa_export_upload")
+    sheet_name = st.text_input("Sheet name (blank = active sheet)", key="fa_export_sheet")
+    st.caption("Choose a file, then click **Load Workbook** to parse it.")
+
+    if st.button("Load Workbook", key="fa_export_load", type="primary", use_container_width=True):
+        if uploaded is None:
+            st.error("Choose an .xlsx workbook first.")
+            return
+        try:
+            _set_workbook(uploaded, sheet_name or None)
+            st.session_state["fa_rules_loaded"] = True
+            st.success(f"Loaded {uploaded.name}")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+    data = _workbook_bytes()
+    if data:
+        opts = st.session_state.get("fa_workbook_options", {})
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Sheet", str(opts.get("sheet", "")))
+        c2.metric("Max Asn#", int(opts.get("max_assignment", 0)))
+        c3.metric("Blank rows", int(opts.get("blank_rows", 0)))
+
+
+@st.fragment
+def _render_export_generate_section() -> None:
+    assignment_filter = st.text_input(
+        "Assignments (optional)",
+        placeholder="All, or enter 1,2,9",
+        key="fa_export_filter",
+        help="Leave blank to export every assignment with a nonblank Asn#.",
+    )
+
+    if st.button("Generate Word Documents", type="primary", key="fa_export_btn", use_container_width=True):
+        data = _workbook_bytes()
+        if not data:
+            st.error("Upload a RunCut workbook and click **Load Workbook** first.")
+            return
+        try:
+            wanted = parse_assignment_filter(assignment_filter)
+            zip_bytes, summaries = export_reports_zip(data, st.session_state.get("fa_sheet_name"), wanted)
+            st.session_state["fa_last_export_summary"] = summaries
+            st.session_state["fa_last_export_zip"] = zip_bytes
+            st.success(f"Exported {len(summaries)} Word document(s).")
+        except Exception as exc:
+            st.error(str(exc))
+
+    zip_bytes = st.session_state.get("fa_last_export_zip")
+    if zip_bytes:
+        st.download_button(
+            "Download ZIP",
+            data=zip_bytes,
+            file_name="RunCut_Assignment_Documents.zip",
+            mime="application/zip",
+            type="primary",
+            use_container_width=True,
+        )
+
+
 def _render_assign_tab() -> None:
+    _ensure_assignment_guideline_count()
     _tab_intro(
         "Create Assignments",
-        "Load route dropdowns, define assignment rules, and fill blank Asn# rows in the workbook.",
+        "Load route dropdowns, define assignment guidelines, and fill blank Asn# rows in the workbook.",
     )
 
     with st.container(border=True):
         _step_title(1, "Load workbook")
-        uploaded = st.file_uploader("RunCut Excel file (.xlsx)", type=["xlsx"], key="fa_assign_upload")
-        sheet_name = st.text_input("Sheet name (blank = active sheet)", key="fa_assign_sheet")
-        st.caption("Upload first to load dropdowns for route and locations.")
+        _render_assign_upload_section()
 
-        if st.button("Load Assignment Dropdowns", key="fa_load_dropdowns", type="primary", use_container_width=True):
-            if uploaded is None:
-                st.error("Choose an .xlsx workbook first.")
-                return
-            try:
-                _set_workbook(uploaded, sheet_name or None)
-                st.session_state["fa_rules_loaded"] = True
-                st.success("Dropdowns loaded.")
-            except Exception as exc:
-                st.error(str(exc))
-
-    if uploaded is not None and not st.session_state.get("fa_rules_loaded"):
-        try:
-            _set_workbook(uploaded, sheet_name or None)
-        except Exception:
-            pass
-
-    opts = st.session_state.get("fa_workbook_options")
-    if not opts or not st.session_state.get("fa_rules_loaded"):
+    if not st.session_state.get("fa_rules_loaded"):
         st.info("Upload a workbook and click **Load Assignment Dropdowns** to begin.")
         return
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Blank Asn# rows", int(opts["blank_rows"]))
-    c2.metric("Next Asn#", int(opts["next_assignment"]))
-    c3.metric("Sheet", str(opts["sheet"]))
-    st.caption("Fill up to 10 rule rows; each checked row creates one new assignment number.")
+    _render_assign_guidelines_and_output()
 
-    with st.container(border=True):
-        _step_title(2, "Assignment settings")
-        set_col1, set_col2 = st.columns(2)
-        with set_col1:
-            tolerance = st.selectbox(
-                "Time tolerance",
-                options=[
-                    ("Exact times", 0),
-                    ("+/- 5 minutes", 5),
-                    ("+/- 10 minutes", 10),
-                    ("+/- 15 minutes", 15),
-                    ("+/- 20 minutes", 20),
-                    ("+/- 30 minutes", 30),
-                ],
-                format_func=lambda item: item[0],
-                index=3,
-                key="fa_tolerance",
-            )[1]
-        with set_col2:
-            scan_order = st.selectbox(
-                "Scan order",
-                options=[("Top to bottom", "top_to_bottom"), ("Bottom to top", "bottom_to_top")],
-                format_func=lambda item: item[0],
-                key="fa_scan_order",
-            )[1]
 
-    route_start = opts.get("route_start_locations") or {}
-    route_end = opts.get("route_end_locations") or {}
-    blocks = ["(All blocks)"] + list(opts.get("blocks") or [])
-    routes = list(opts.get("routes") or [])
+@st.fragment
+def _render_assign_upload_section() -> None:
+    _render_header_template_download("fa_assign_template")
+    uploaded = st.file_uploader("RunCut Excel file (.xlsx)", type=["xlsx"], key="fa_assign_upload")
+    sheet_name = st.text_input("Sheet name (blank = active sheet)", key="fa_assign_sheet")
+    st.caption("Choose a file, then click **Load Assignment Dropdowns**.")
 
-    rules_list: list[dict[str, str]] = []
-    with st.container(border=True):
-        _step_title(3, "Assignment rules")
-        st.caption(
-            "Start Location and Start From/To find the first row. "
-            "Final End Location and End From/To find the last row."
-        )
-        for index in range(1, 11):
-            use_key = f"fa_rule_{index}_use"
-            st.checkbox(f"Use rule {index}", value=(index == 1), key=use_key)
-            if not st.session_state.get(use_key):
-                continue
+    if st.button("Load Assignment Dropdowns", key="fa_load_dropdowns", type="primary", use_container_width=True):
+        if uploaded is None:
+            st.error("Choose an .xlsx workbook first.")
+            return
+        try:
+            _set_workbook(uploaded, sheet_name or None)
+            st.session_state["fa_rules_loaded"] = True
+            st.success("Dropdowns loaded.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
 
-            with st.container(border=True):
-                st.markdown(f"**Rule {index}**")
-                c1, c2, c3, c4 = st.columns(4)
-                with c1:
-                    block_sel = st.selectbox("Block", blocks, key=f"fa_rule_{index}_block")
-                with c2:
-                    route_sel = st.selectbox("Route", [""] + routes, key=f"fa_rule_{index}_route")
-                with c3:
-                    start_locs = route_start.get(route_sel, []) if route_sel else list(opts.get("start_locations") or [])
-                    start_loc = st.selectbox("Start location", [""] + start_locs, key=f"fa_rule_{index}_start_loc")
-                with c4:
-                    end_locs = route_end.get(route_sel, []) if route_sel else list(opts.get("end_locations") or [])
-                    end_loc = st.selectbox("Final end location", [""] + end_locs, key=f"fa_rule_{index}_end_loc")
-
-                t1, t2, t3, t4 = st.columns(4)
-                with t1:
-                    start_from = st.time_input("Start from", key=f"fa_rule_{index}_start_from")
-                with t2:
-                    start_to = st.time_input("Start to", key=f"fa_rule_{index}_start_to")
-                with t3:
-                    end_from = st.time_input("End from", key=f"fa_rule_{index}_end_from")
-                with t4:
-                    end_to = st.time_input("End to", key=f"fa_rule_{index}_end_to")
-
-            if not route_sel or not start_loc or not end_loc:
-                st.warning(f"Rule {index}: fill route and both locations.")
-                continue
-
-            rules_list.append(
-                {
-                    "block": "" if block_sel == "(All blocks)" else block_sel,
-                    "route": route_sel,
-                    "start_location": start_loc,
-                    "end_location": end_loc,
-                    "start_from": start_from.strftime("%H:%M"),
-                    "start_to": start_to.strftime("%H:%M"),
-                    "shift_from": end_from.strftime("%H:%M"),
-                    "shift_to": end_to.strftime("%H:%M"),
-                    "scan_order": scan_order,
-                    "tolerance": str(tolerance),
-                }
-            )
-
-    with st.container(border=True):
-        _step_title(4, "Create output files")
-        if st.button("Fill Assignment Numbers", type="primary", key="fa_fill_btn", use_container_width=True):
-            data = _workbook_bytes()
-            if not data:
-                st.error("Upload and load a workbook first.")
-                return
-            if not rules_list:
-                st.error("Enable and complete at least one rule row.")
-                return
-            try:
-                updated_bytes, results = fill_assignment_numbers(
-                    data, st.session_state.get("fa_sheet_name"), rules_list
-                )
-                st.session_state["fa_workbook_bytes"] = updated_bytes
-                st.session_state["fa_workbook_options"] = workbook_options(
-                    updated_bytes, st.session_state.get("fa_sheet_name")
-                )
-                zip_bytes, summaries = export_reports_zip(updated_bytes, st.session_state.get("fa_sheet_name"))
-                st.session_state["fa_last_export_summary"] = summaries
-                st.session_state["fa_last_export_zip"] = zip_bytes
-                st.session_state["fa_updated_workbook"] = updated_bytes
-                parts = [f"assignment {item['assignment']} on {item['count']} row(s)" for item in results]
-                st.success(f"Created {len(results)} assignment(s): " + "; ".join(parts) + ".")
-            except Exception as exc:
-                st.error(str(exc))
-
-    updated_bytes = st.session_state.get("fa_updated_workbook")
-    zip_bytes = st.session_state.get("fa_last_export_zip")
-    if updated_bytes or zip_bytes:
-        d1, d2 = st.columns(2)
-        with d1:
-            if updated_bytes:
-                st.download_button(
-                    "Download updated Excel",
-                    data=updated_bytes,
-                    file_name="RunCut_Assignments_Updated.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
-        with d2:
-            if zip_bytes:
-                st.download_button(
-                    "Download Word reports ZIP",
-                    data=zip_bytes,
-                    file_name="RunCut_Assignment_Documents.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                )
-
-    summaries = st.session_state.get("fa_last_export_summary")
-    if summaries:
-        with st.container(border=True):
-            _step_title(5, "Export summary")
-            st.dataframe(summaries, use_container_width=True, hide_index=True)
+    data = _workbook_bytes()
+    if data and st.session_state.get("fa_rules_loaded"):
+        opts = st.session_state.get("fa_workbook_options", {})
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Blank Asn# rows", int(opts.get("blank_rows", 0)))
+        c2.metric("Next Asn#", int(opts.get("next_assignment", 0)))
+        c3.metric("Sheet", str(opts.get("sheet", "")))
 
 
 def _render_summary_tab() -> None:
@@ -812,7 +1221,25 @@ def _render_summary_tab() -> None:
             st.info("Upload a workbook on the Export or Assign tab to see route coverage.")
 
     with st.container(border=True):
-        _step_title(2, "Version history")
+        _step_title(2, "Start Location & Routes")
+        if data:
+            try:
+                location_df = start_location_routes_summary(data, st.session_state.get("fa_sheet_name"))
+                if location_df.empty:
+                    st.info("No start locations found in the workbook.")
+                else:
+                    st.dataframe(
+                        style_start_location_dataframe(location_df),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+            except Exception as exc:
+                st.error(str(exc))
+        else:
+            st.info("Upload a workbook on the Export or Assign tab to see start location route coverage.")
+
+    with st.container(border=True):
+        _step_title(3, "Version history")
         label = st.text_input(
             "Project / city label for S3 versions",
             value=st.session_state.get("selected_project", "general"),
@@ -877,16 +1304,34 @@ def _render_summary_tab() -> None:
 
 def _workbook_status_banner() -> None:
     data = _workbook_bytes()
-    if not data:
-        return
     opts = st.session_state.get("fa_workbook_options") or {}
     with st.container(border=True):
         st.markdown("**Current workbook in session**")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("File", str(st.session_state.get("fa_workbook_name", "Loaded")))
-        c2.metric("Sheet", str(opts.get("sheet", "—")))
-        c3.metric("Max Asn#", int(opts.get("max_assignment", 0)))
-        c4.metric("Blank rows", int(opts.get("blank_rows", 0)))
+        if data:
+            c1.metric("File", str(st.session_state.get("fa_workbook_name", "Loaded")))
+            c2.metric("Sheet", str(opts.get("sheet", "—")))
+            c3.metric("Max Asn#", int(opts.get("max_assignment", 0)))
+            c4.metric("Blank rows", int(opts.get("blank_rows", 0)))
+        else:
+            c1.metric("File", "None loaded")
+            c2.metric("Sheet", "—")
+            c3.metric("Max Asn#", 0)
+            c4.metric("Blank rows", "—")
+
+
+def _render_tab_navigation() -> str:
+    if "fa_active_tab" not in st.session_state:
+        st.session_state["fa_active_tab"] = "export"
+    st.radio(
+        "Sections",
+        options=list(FA_TABS.keys()),
+        format_func=lambda key: FA_TABS[key],
+        horizontal=True,
+        key="fa_active_tab",
+        label_visibility="collapsed",
+    )
+    return str(st.session_state["fa_active_tab"])
 
 
 def render_field_assignments_page() -> None:
@@ -897,12 +1342,10 @@ def render_field_assignments_page() -> None:
     _workflow_strip()
     _workbook_status_banner()
 
-    export_tab, assign_tab, summary_tab = st.tabs(
-        ["📄 Export Reports", "✏️ Create Assignments", "📊 Summary & Versions"]
-    )
-    with export_tab:
+    active_tab = _render_tab_navigation()
+    if active_tab == "export":
         _render_export_tab()
-    with assign_tab:
+    elif active_tab == "assign":
         _render_assign_tab()
-    with summary_tab:
+    else:
         _render_summary_tab()

@@ -18,15 +18,39 @@ from field_assignments.core.time_utils import is_blank, normalize_cell, time_in_
 from field_assignments.core.workbook import workbook_options
 
 
-def row_matches_base_rules(sheet, row_number: int, rules: dict[str, str], block: str | None = None) -> bool:
+def row_matches_base_rules(
+    sheet,
+    row_number: int,
+    rules: dict[str, str],
+    block: str | None = None,
+    *,
+    require_route: bool = True,
+) -> bool:
     if not is_blank(sheet.cell(row=row_number, column=COL_ASN).value):
         return False
     required_block = block or rules["block"]
     if required_block and normalize_cell(sheet.cell(row=row_number, column=COL_BLOCK).value) != required_block:
         return False
-    if normalize_cell(sheet.cell(row=row_number, column=COL_ROUTE).value) != rules["route"]:
+    if require_route and normalize_cell(sheet.cell(row=row_number, column=COL_ROUTE).value) != rules["route"]:
         return False
     return True
+
+
+def row_matches_segment_row(
+    sheet,
+    row_number: int,
+    rules: dict[str, str],
+    block: str,
+) -> bool:
+    """Match blank Asn# rows on the same block within an assignment segment."""
+    include_interlined = str(rules.get("include_interlined", "false")).lower() in {"1", "true", "yes", "on"}
+    return row_matches_base_rules(
+        sheet,
+        row_number,
+        rules,
+        block=block,
+        require_route=not include_interlined,
+    )
 
 
 def row_matches_start_rules(sheet, row_number: int, rules: dict[str, str]) -> bool:
@@ -95,20 +119,22 @@ def fill_assignment_numbers(
         try:
             start_row, end_row, segment_block = find_assignment_segment(sheet, rules)
         except ValueError as exc:
-            raise ValueError(f"Rule {index}: {exc}") from exc
+            raise ValueError(f"Assignment {index}: {exc}") from exc
         matching_rows: list[int] = []
         for row_number in range(start_row, end_row + 1):
-            if row_matches_base_rules(sheet, row_number, rules, block=segment_block):
+            if row_matches_segment_row(sheet, row_number, rules, segment_block):
                 sheet.cell(row=row_number, column=COL_ASN).value = next_assignment
                 matching_rows.append(row_number)
 
         if not matching_rows:
-            raise ValueError(f"Rule {index}: a segment was found, but no blank Asn# rows were available to fill.")
+            raise ValueError(
+                f"Assignment {index}: a segment was found, but no blank Asn# rows were available to fill."
+            )
 
         matching_rows.sort()
         results.append(
             {
-                "rule": index,
+                "guideline": index,
                 "assignment": next_assignment,
                 "rows": matching_rows,
                 "count": len(matching_rows),
