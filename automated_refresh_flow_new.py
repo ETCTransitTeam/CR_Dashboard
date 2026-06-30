@@ -653,6 +653,7 @@ def fetch_and_process_data(project,schema):
     if baby_elvis_df is not None:
         baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
         baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+        baby_elvis_df = normalize_survey_columns_for_reports(baby_elvis_df)
         # baby_elvis_df = baby_elvis_df.drop(index=0).reset_index(drop=True)
 
     # -----------------------
@@ -699,6 +700,7 @@ def fetch_and_process_data(project,schema):
         if route_surveyed_code:
             df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
         
+        df = normalize_survey_columns_for_reports(df)
         # Fill missing Time_ONCode values from original df1
         if time_column_df and df1 is not None:
             time_column_df1 = check_all_characters_present(df1, ['timeoncode'])

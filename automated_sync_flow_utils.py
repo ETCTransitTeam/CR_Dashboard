@@ -63,6 +63,113 @@ def _ensure_standard_column(df: pd.DataFrame, standard_name: str, aliases: List[
     return df
 
 
+PARTICIPANT_GENDER_CODE_ALIASES = [
+    "YOUR_GENDERCode",
+    "YourGenderCode",
+    "GenderCode",
+    "GENDERCode",
+    "xYourGenderCode",
+    "XYOUR_GENDERCode",
+]
+
+
+def _is_refusal_observed_gender_column(col_name) -> bool:
+    """True for interviewer-observed refusal gender (not participant self-report)."""
+    c = clean_string(str(col_name))
+    return ("refus" in c or "observ" in c) and "gender" in c
+
+
+def _is_participant_gender_field_name(field_name) -> bool:
+    """True when a DATA DICTIONARY / question key refers to participant gender."""
+    c = clean_string(str(field_name or ""))
+    if not c or _is_refusal_observed_gender_column(field_name):
+        return False
+    if c in {
+        "yourgender",
+        "yourgendercode",
+        "gender",
+        "gendercode",
+        "xyourgender",
+        "xyourgendercode",
+    }:
+        return True
+    return "gender" in c and "code" in c
+
+
+def _find_participant_gender_code_columns(df) -> List[str]:
+    """Return participant gender *code* columns in priority order (excludes refusal-observed)."""
+    if df is None or df.empty:
+        return []
+
+    found: List[str] = []
+    seen = set()
+
+    for alias in PARTICIPANT_GENDER_CODE_ALIASES:
+        for col in check_all_characters_present(df, [alias]):
+            if col not in seen and not _is_refusal_observed_gender_column(col):
+                found.append(col)
+                seen.add(col)
+
+    for col in df.columns:
+        if col in seen or _is_refusal_observed_gender_column(col):
+            continue
+        c = clean_string(str(col))
+        if "gender" in c and "code" in c:
+            found.append(col)
+            seen.add(col)
+
+    return found
+
+
+def _coalesce_series_from_columns(df, columns, empty_values=None):
+    """Row-wise coalesce: first non-empty value across columns (left / high priority first)."""
+    if empty_values is None:
+        empty_values = {"", "nan", "none", "<na>"}
+
+    def is_empty(val):
+        if pd.isna(val):
+            return True
+        return str(val).strip().lower() in empty_values
+
+    if not columns:
+        return pd.Series([""] * len(df), index=df.index, dtype=object)
+
+    result = pd.Series([None] * len(df), index=df.index, dtype=object)
+    for col in columns:
+        if col not in df.columns:
+            continue
+        vals = df[col]
+        fill_mask = result.apply(is_empty)
+        if fill_mask.any():
+            result.loc[fill_mask] = vals.loc[fill_mask]
+
+    return result.fillna("").astype(str).replace({"nan": "", "None": "", "<NA>": ""})
+
+
+def _ensure_participant_gender_code(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure YOUR_GENDERCode exists by coalescing all known participant gender code columns.
+    Supports GenderCode, GENDERCode, YourGenderCode, xYourGenderCode, etc.
+    Does not use RefusGenderObsrvedCode (separate refusal-interviewer field).
+    """
+    if df is None:
+        return df
+
+    source_cols = _find_participant_gender_code_columns(df)
+    df["YOUR_GENDERCode"] = _coalesce_series_from_columns(df, source_cols)
+    return df
+
+
+def _resolve_participant_gender_column(df):
+    """Best participant gender code column for demographics / reports."""
+    cols = _find_participant_gender_code_columns(df)
+    if cols:
+        return cols[0]
+    if "YOUR_GENDERCode" in df.columns:
+        return "YOUR_GENDERCode"
+    return None
+
+
 def normalize_survey_columns_for_reports(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normalize frequently used survey/report columns so project-specific header
@@ -146,22 +253,199 @@ def normalize_survey_columns_for_reports(df: pd.DataFrame) -> pd.DataFrame:
     _ensure_standard_column(df, "HOME_ADDRESS_STATE", ["HomeAddressState"], default_value="")
     _ensure_standard_column(df, "HOME_ADDRESS_ZIP", ["HomeAddressZip"], default_value="")
 
+    # Refusal / demographic fields (optional — absent in some project surveys)
+    _ensure_participant_gender_code(df)
+    _ensure_standard_column(
+        df,
+        "REFUS_AGE_OBSERVEDCode",
+        ["RefusAgeObservedCode", "RefusalAgeObservedCode", "refusageobservedcode"],
+        default_value="",
+    )
+    _ensure_standard_column(
+        df,
+        "SELECT_LANGUAGECode",
+        ["SelectLanguageCode", "selectlanguagecode"],
+        default_value="",
+    )
+    _ensure_standard_column(
+        df,
+        "DATE_SUBMITTED",
+        ["LocalTime", "Completed", "DateSubmitted", "datesubmitted"],
+        default_value="",
+    )
+
     return df
 
 def clean_string(s):
     return s.replace('_', '').replace('[', '').replace(']', '').replace(' ','').replace('#','').lower()
 
 
+# Canonical column names for known time-period labels (used by Project Config + sync normalization).
+PERIOD_LABEL_FIELD_NAMES = {
+    "EARLY AM": {"cr_name": "CR_Early_AM", "db_name": "DB_Early_AM_Peak", "diff_name": "Early_AM_DIFFERENCE"},
+    "EARLY_AM": {"cr_name": "CR_Early_AM", "db_name": "DB_Early_AM_Peak", "diff_name": "Early_AM_DIFFERENCE"},
+    "AM PEAK": {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_PEAK_DIFFERENCE"},
+    "AM_PEAK": {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_PEAK_DIFFERENCE"},
+    "MIDDAY": {"cr_name": "CR_Midday", "db_name": "DB_Midday", "diff_name": "Midday_DIFFERENCE"},
+    "PM PEAK": {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE"},
+    "PM_PEAK": {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE"},
+    "EVENING": {"cr_name": "CR_Evening", "db_name": "DB_Evening", "diff_name": "Evening_DIFFERENCE"},
+}
+
+# Auto-generated all-caps Early AM names from older Project Config saves.
+LEGACY_PERIOD_FIELD_ALIASES = {
+    "CR_EARLY_AM": "CR_Early_AM",
+    "DB_EARLY_AM": "DB_Early_AM_Peak",
+    "EARLY_AM_DIFFERENCE": "Early_AM_DIFFERENCE",
+}
+
+
+def get_period_field_names(period_label):
+    """Return CR/DB/diff column names for a time-period label (Project Config + sync)."""
+    label = str(period_label or "").strip()
+    key_underscore = label.upper().replace(" ", "_")
+    key_spaced = label.upper()
+    if key_spaced in PERIOD_LABEL_FIELD_NAMES:
+        return dict(PERIOD_LABEL_FIELD_NAMES[key_spaced])
+    if key_underscore in PERIOD_LABEL_FIELD_NAMES:
+        return dict(PERIOD_LABEL_FIELD_NAMES[key_underscore])
+    slug = "_".join(part.capitalize() for part in label.split())
+    return {
+        "cr_name": f"CR_{slug}",
+        "db_name": f"DB_{slug}",
+        "diff_name": f"{slug}_DIFFERENCE",
+    }
+
+
+def _normalize_period_field_name(field_name):
+    if not field_name:
+        return field_name
+    return LEGACY_PERIOD_FIELD_ALIASES.get(str(field_name).strip(), field_name)
+
+
+def normalize_period_entry(period):
+    """Normalize one period dict: legacy aliases, cr_col type, codes list."""
+    p = dict(period)
+    for key in ("cr_name", "db_name", "diff_name"):
+        if key in p:
+            p[key] = _normalize_period_field_name(p[key])
+    if "cr_col" in p:
+        p["cr_col"] = str(p["cr_col"]).strip()
+    codes = p.get("codes")
+    if isinstance(codes, str):
+        p["codes"] = [c.strip() for c in codes.split(",") if c.strip()]
+    elif isinstance(codes, (list, tuple)):
+        p["codes"] = [str(c).strip() for c in codes if str(c).strip()]
+    elif codes is None:
+        p["codes"] = []
+    return p
+
+
+def normalize_periods(periods):
+    if not periods:
+        return []
+    return [normalize_period_entry(p) for p in periods]
+
+
 def deduplicate_periods(periods):
     """Remove duplicate time periods by (cr_name, db_name, diff_name), preserving order. Use everywhere time_period_config['periods'] is read."""
     if not periods:
         return []
+    periods = normalize_periods(periods)
     seen = {}
     for p in periods:
         key = (p.get("cr_name"), p.get("db_name"), p.get("diff_name"))
         if key not in seen:
             seen[key] = p
     return list(seen.values())
+
+
+def periods_include_early_am(periods):
+    """True if any configured period represents Early AM (case-insensitive)."""
+    for p in periods:
+        cr = str(p.get("cr_name", "")).upper()
+        if "EARLY" in cr and "AM" in cr:
+            return True
+    return False
+
+
+def resolve_overall_df_col(overalldf, cr_col):
+    """Resolve CR column index/name against Completion Report Overall sheet columns."""
+    cr_col_str = str(cr_col).strip()
+    if overalldf is None or overalldf.empty:
+        return cr_col_str
+    if cr_col_str in overalldf.columns:
+        return cr_col_str
+    try:
+        as_int = int(cr_col_str)
+        if as_int in overalldf.columns:
+            return as_int
+    except (ValueError, TypeError):
+        pass
+    for col in overalldf.columns:
+        if str(col).strip() == cr_col_str:
+            return col
+    return cr_col_str
+
+
+def ensure_period_columns(df, periods, include_diff=False, include_ids=False):
+    """Ensure configured period columns exist before vectorized math (avoids KeyError on empty frames)."""
+    for p in periods:
+        cr_name = p.get("cr_name")
+        db_name = p.get("db_name")
+        diff_name = p.get("diff_name")
+        if cr_name and cr_name not in df.columns:
+            df[cr_name] = 0
+        if db_name and db_name not in df.columns:
+            df[db_name] = 0
+        if include_diff and diff_name and diff_name not in df.columns:
+            df[diff_name] = 0
+        if include_ids and db_name and f"{db_name}_IDS" not in df.columns:
+            df[f"{db_name}_IDS"] = ""
+    return df
+
+
+def compute_period_differences(df, periods):
+    """Compute diff columns from configured CR/DB columns; columns are created if missing."""
+    ensure_period_columns(df, periods)
+    for p in periods:
+        cr_name = p["cr_name"]
+        db_name = p["db_name"]
+        diff_name = p["diff_name"]
+        df[diff_name] = (
+            pd.to_numeric(df[cr_name], errors="coerce").fillna(0)
+            - pd.to_numeric(df[db_name], errors="coerce").fillna(0)
+        ).clip(lower=0).apply(math.ceil)
+    return df
+
+
+def empty_route_level_df(periods):
+    """Empty route-level frame with all expected period columns for a configured project."""
+    periods = deduplicate_periods(periods)
+    cols = ["ROUTE_SURVEYEDCode", "CR_Overall_Goal"]
+    for p in periods:
+        cols.extend([p["cr_name"], p["db_name"], p["diff_name"]])
+    cols.extend(["CR_Total", "DB_Total", "Total_DIFFERENCE", "Overall_Goal_DIFFERENCE"])
+    return pd.DataFrame(columns=list(dict.fromkeys(cols)))
+
+
+def row_diff_value(row, *candidate_columns):
+    """Return first positive difference value found under any of the candidate column names."""
+    for col in candidate_columns:
+        if col not in row.index:
+            continue
+        val = row.get(col, 0)
+        if pd.notna(val) and val > 0:
+            return int(val)
+    return 0
+
+
+def sum_diff_column(df, *candidate_columns):
+    """Sum a difference column trying multiple legacy/canonical names."""
+    for col in candidate_columns:
+        if col in df.columns:
+            return df[col].sum()
+    return 0
 
 
 def get_distance_between_coordinates(lat1, lon1, lat2, lon2):
@@ -619,8 +903,11 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
     # Dynamic path: use time_period_config when provided (skip KCATA RAIL which has station-level logic)
     if time_period_config and time_period_config.get("periods") and project != "KCATA RAIL":
         periods = deduplicate_periods(time_period_config["periods"])
-        new_df = pd.DataFrame()
-        new_df["ROUTE_SURVEYEDCode"] = overalldf["LS_NAME_CODE"]
+        if overalldf is None or overalldf.empty:
+            new_df = pd.DataFrame(columns=["ROUTE_SURVEYEDCode"])
+        else:
+            new_df = pd.DataFrame()
+            new_df["ROUTE_SURVEYEDCode"] = overalldf["LS_NAME_CODE"]
 
         def safe_convert(x):
             try:
@@ -629,14 +916,23 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
                 return 0
 
         cr_cols = []
-        for p in periods:
-            cr_col = p["cr_col"]
-            cr_name = p["cr_name"]
-            overalldf[cr_col] = pd.to_numeric(overalldf[cr_col], errors="coerce").fillna(0)
-            new_df[cr_name] = overalldf[cr_col].apply(safe_convert)
-            cr_cols.append(cr_name)
+        if overalldf is not None and not overalldf.empty:
+            for p in periods:
+                cr_col = resolve_overall_df_col(overalldf, p["cr_col"])
+                cr_name = p["cr_name"]
+                overalldf[cr_col] = pd.to_numeric(overalldf[cr_col], errors="coerce").fillna(0)
+                new_df[cr_name] = overalldf[cr_col].apply(safe_convert)
+                cr_cols.append(cr_name)
+        else:
+            cr_cols = [p["cr_name"] for p in periods]
+            ensure_period_columns(new_df, periods)
 
-        new_df["CR_Total"] = new_df[cr_cols].sum(axis=1)
+        if cr_cols:
+            new_df["CR_Total"] = new_df[cr_cols].sum(axis=1)
+        else:
+            new_df["CR_Total"] = 0
+
+        ensure_period_columns(new_df, periods)
 
         for index, row in new_df.iterrows():
             route_code = row["ROUTE_SURVEYEDCode"]
@@ -652,12 +948,9 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
                 db_total += cnt
             new_df.at[index, "DB_Total"] = db_total
 
-        diff_cols = []
-        for p in periods:
-            diff_name = p["diff_name"]
-            new_df[diff_name] = (new_df[p["cr_name"]] - new_df[p["db_name"]]).clip(lower=0).apply(math.ceil)
-            diff_cols.append(diff_name)
-        new_df["Total_DIFFERENCE"] = new_df[diff_cols].sum(axis=1)
+        compute_period_differences(new_df, periods)
+        diff_cols = [p["diff_name"] for p in periods]
+        new_df["Total_DIFFERENCE"] = new_df[diff_cols].sum(axis=1) if diff_cols else 0
         return new_df
 
     if project=='KCATA' or project== 'ACTRANSIT':
@@ -1502,6 +1795,9 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             db_cols = [p["db_name"] for p in periods]
             diff_cols = [p["diff_name"] for p in periods]
 
+            if overall_df is None or overall_df.empty:
+                return empty_route_level_df(periods)
+
             def convert_string_to_integer(x):
                 try:
                     return float(x)
@@ -1533,7 +1829,8 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             new_df["ROUTE_SURVEYEDCode"] = overall_df["LS_NAME_CODE"]
 
             for p in periods:
-                new_df[p["cr_name"]] = safe_ceil(overall_df[p["cr_col"]])
+                cr_col = resolve_overall_df_col(overall_df, p["cr_col"])
+                new_df[p["cr_name"]] = safe_ceil(overall_df[cr_col])
 
             new_df[cr_cols] = new_df[cr_cols].applymap(convert_string_to_integer)
             new_df.fillna(0, inplace=True)
@@ -1557,6 +1854,10 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
 
                 new_df = new_df.merge(counts, on="ROUTE_SURVEYEDCode", how="left")
 
+            ensure_period_columns(new_df, periods)
+            for col in db_cols:
+                if col not in new_df.columns:
+                    new_df[col] = 0
             new_df[db_cols] = new_df[db_cols].fillna(0)
             new_df["DB_Total"] = new_df[db_cols].sum(axis=1)
 
@@ -1603,13 +1904,8 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             # Calculate differences
             # -----------------------------
 
-            for p in periods:
-                route_level_df[p["diff_name"]] = (
-                    (route_level_df[p["cr_name"]] - route_level_df[p["db_name"]])
-                    .fillna(0)
-                    .clip(lower=0)
-                    .apply(math.ceil)
-                )
+            ensure_period_columns(route_level_df, periods)
+            compute_period_differences(route_level_df, periods)
 
             route_level_df["Total_DIFFERENCE"] = route_level_df[diff_cols].sum(axis=1)
 
@@ -5204,20 +5500,31 @@ def process_route_comparison_data(cr_df, df, ke_df, project, time_period_config=
         periods = deduplicate_periods(time_period_config["periods"])
         
         # ---------------- CREATE CR DATAFRAME (DYNAMIC) ----------------
-        new_df = pd.DataFrame()
-        new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
+        if cr_df is None or cr_df.empty:
+            new_df = pd.DataFrame(columns=["ROUTE_SURVEYEDCode"])
+        else:
+            new_df = pd.DataFrame()
+            new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
         
         # Create CR columns dynamically from periods
-        for p in periods:
-            cr_col = p["cr_col"]
-            cr_name = p["cr_name"]
-            new_df[cr_name] = pd.to_numeric(cr_df[cr_col], errors='coerce').fillna(0)
+        if cr_df is not None and not cr_df.empty:
+            for p in periods:
+                cr_col = resolve_overall_df_col(cr_df, p["cr_col"])
+                cr_name = p["cr_name"]
+                new_df[cr_name] = pd.to_numeric(cr_df[cr_col], errors='coerce').fillna(0)
+        else:
+            ensure_period_columns(new_df, periods)
         
         # Calculate CR_Total per row
         cr_cols = [p["cr_name"] for p in periods]
-        new_df['CR_Total'] = new_df[cr_cols].sum(axis=1)
+        if cr_cols and not new_df.empty:
+            new_df['CR_Total'] = new_df[cr_cols].sum(axis=1)
+        else:
+            new_df['CR_Total'] = 0
         
         # ---------------- DB COUNTS (DYNAMIC) ----------------
+        ensure_period_columns(new_df, periods, include_ids=True)
+
         for index, row in new_df.iterrows():
             route_code = row['ROUTE_SURVEYEDCode']
 
@@ -5239,8 +5546,8 @@ def process_route_comparison_data(cr_df, df, ke_df, project, time_period_config=
             
             new_df.loc[index, 'DB_Total'] = db_total
         
-        # Add Early_AM columns for backward compatibility (set to 0 if not in periods)
-        if not any('Early_AM' in p.get('cr_name', '') for p in periods):
+        # Legacy route-comparison export columns (only when Early AM is not configured)
+        if not periods_include_early_am(periods):
             new_df['CR_Early_AM'] = 0
             new_df['DB_Early_AM'] = 0
             new_df['DB_Early_AM_IDS'] = ''
@@ -5437,23 +5744,15 @@ def create_route_level_comparison(new_df, time_period_config=None):
     # Calculate differences dynamically
     if time_period_config and time_period_config.get("periods"):
         periods = deduplicate_periods(time_period_config["periods"])
+        ensure_period_columns(route_level_df, periods)
+        compute_period_differences(route_level_df, periods)
         for index, row in route_level_df.iterrows():
-            try:
-                total_diff_sum = 0
-                for p in periods:
-                    cr_name = p["cr_name"]
-                    db_name = p["db_name"]
-                    diff_name = p["diff_name"]
-                    
-                    if cr_name in route_level_df.columns and db_name in route_level_df.columns:
-                        diff = row[cr_name] - row[db_name]
-                        route_level_df.loc[index, diff_name] = math.ceil(max(0, diff))
-                        total_diff_sum += math.ceil(max(0, diff))
-                
-                route_level_df.loc[index, 'Total_DIFFERENCE'] = total_diff_sum
-            except Exception as e:
-                print(f"Error calculating differences for index {index}: {e}")
-                route_level_df.loc[index, 'Total_DIFFERENCE'] = 0
+            total_diff_sum = 0
+            for p in periods:
+                diff_name = p["diff_name"]
+                if diff_name in route_level_df.columns:
+                    total_diff_sum += row.get(diff_name, 0) or 0
+            route_level_df.loc[index, 'Total_DIFFERENCE'] = total_diff_sum
     else:
         # Fallback to old hardcoded logic for backward compatibility
         for index, row in route_level_df.iterrows():
@@ -6897,19 +7196,28 @@ def create_survey_stats_master_table(df, race_label_map=None):
         df: DataFrame with survey data
         race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
     """
-    # Create a copy to work with
-    master_df = df.copy()
-    
+    # Normalize optional project-specific columns so missing survey fields do not crash sync
+    master_df = normalize_survey_columns_for_reports(df.copy() if df is not None else pd.DataFrame())
+    if master_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
     # Clean and standardize key columns
-    master_df['HAVE_5_MIN_FOR_SURVECode'] = master_df['HAVE_5_MIN_FOR_SURVECode'].astype(str).str.strip()
-    master_df['REFUS_AGE_OBSERVEDCode'] = master_df['REFUS_AGE_OBSERVEDCode'].astype(str).str.strip()
-    master_df['YOUR_GENDERCode'] = master_df['YOUR_GENDERCode'].astype(str).str.strip()
-    master_df['SELECT_LANGUAGECode'] = master_df['SELECT_LANGUAGECode'].astype(str).str.strip()
-    master_df['INTERV_INIT'] = master_df['INTERV_INIT'].astype(str).str.strip()
-    
+    for col in (
+        "HAVE_5_MIN_FOR_SURVECode",
+        "REFUS_AGE_OBSERVEDCode",
+        "YOUR_GENDERCode",
+        "SELECT_LANGUAGECode",
+        "INTERV_INIT",
+    ):
+        if col in master_df.columns:
+            master_df[col] = master_df[col].astype(str).str.strip()
+
     # Clean route names
-    master_df['ROUTE_MAIN'] = master_df['ROUTE_SURVEYEDCode'].astype(str).str.extract(r'(^.*)_\d\d$')
-    master_df['ROUTE_MAIN'] = master_df['ROUTE_MAIN'].fillna(master_df['ROUTE_SURVEYEDCode'])
+    if "ROUTE_SURVEYEDCode" in master_df.columns:
+        master_df["ROUTE_MAIN"] = master_df["ROUTE_SURVEYEDCode"].astype(str).str.extract(r"(^.*)_\d\d$")
+        master_df["ROUTE_MAIN"] = master_df["ROUTE_MAIN"].fillna(master_df["ROUTE_SURVEYEDCode"])
+    else:
+        master_df["ROUTE_MAIN"] = ""
     
     # Convert date
     master_df['DATE_SUBMITTED'] = pd.to_datetime(master_df['DATE_SUBMITTED'], errors='coerce')
@@ -7314,6 +7622,8 @@ def _resolve_elvis_column_name(df, name):
     for c in cols:
         if clean_string(str(c)) == target:
             return str(c)
+    if _is_participant_gender_field_name(s):
+        return _resolve_participant_gender_column(df)
     return None
 
 
@@ -7453,6 +7763,7 @@ def generate_demographic_summary(
       built from DATA DICTIONARY **Group Name** (preferred over regex/header inference when present).
     """
     elvis_df = elvis_df.copy()
+    elvis_df = normalize_survey_columns_for_reports(elvis_df)
     demographic_review = []
 
     # ===============================

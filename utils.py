@@ -970,6 +970,8 @@ def resolve_field_name_to_db_column(field_name, db_columns):
     """
     Return the actual column name from db_columns matching FIELD NAME (clean match), or None.
     If db_columns is None, returns stripped field_name (best effort).
+    Participant gender fields (Gender, GenderCode, YOUR_GENDER, etc.) resolve to the best
+    matching gender code column, excluding refusal-observed gender fields.
     """
     fn = str(field_name).strip()
     if not fn:
@@ -980,7 +982,48 @@ def resolve_field_name_to_db_column(field_name, db_columns):
     for c in db_columns:
         if clean_string_for_demographic_match(str(c).strip()) == cf:
             return str(c).strip()
+    # Participant gender synonyms (GenderCode on Oahu, YOUR_GENDER on AC Transit, etc.)
+    if _is_participant_gender_field_name_for_resolve(fn):
+        priority = [
+            "YOUR_GENDERCode",
+            "YourGenderCode",
+            "GenderCode",
+            "GENDERCode",
+            "xYourGenderCode",
+        ]
+        col_map = {clean_string_for_demographic_match(str(c)): str(c).strip() for c in db_columns}
+        for alias in priority:
+            key = clean_string_for_demographic_match(alias)
+            if key in col_map and not _is_refusal_gender_column_name(col_map[key]):
+                return col_map[key]
+        for c in db_columns:
+            cc = clean_string_for_demographic_match(str(c))
+            if "refus" in cc or "observ" in cc:
+                continue
+            if "gender" in cc and "code" in cc:
+                return str(c).strip()
     return None
+
+
+def _is_refusal_gender_column_name(col_name):
+    cc = clean_string_for_demographic_match(str(col_name))
+    return ("refus" in cc or "observ" in cc) and "gender" in cc
+
+
+def _is_participant_gender_field_name_for_resolve(field_name):
+    cf = clean_string_for_demographic_match(str(field_name or ""))
+    if not cf or _is_refusal_gender_column_name(field_name):
+        return False
+    if cf in {
+        "yourgender",
+        "yourgendercode",
+        "gender",
+        "gendercode",
+        "xyourgender",
+        "xyourgendercode",
+    }:
+        return True
+    return "gender" in cf and "code" in cf
 
 
 def build_group_option_column_maps(dd_df, db_columns=None):

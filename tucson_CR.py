@@ -15,7 +15,13 @@ from automated_refresh_flow_new import (
     refresh_projects,
     ensure_project_configs_elvis_project_name_column,
 )
-from automated_sync_flow_utils import check_all_characters_present, clean_string
+from automated_sync_flow_utils import (
+    check_all_characters_present,
+    clean_string,
+    get_period_field_names,
+    row_diff_value,
+    sum_diff_column,
+)
 from utils import (
     create_csv,
     download_csv,
@@ -3980,16 +3986,22 @@ else:
                             # Build the "What's Needed" description
                             needs = []
                             
-                            if row.get('EARLY_AM_DIFFERENCE', 0) > 0:
-                                needs.append(f"{int(row['EARLY_AM_DIFFERENCE'])} Early AM")
-                            if row.get('AM_DIFFERENCE', 0) > 0:
-                                needs.append(f"{int(row['AM_DIFFERENCE'])} AM")
-                            if row.get('Midday_DIFFERENCE', 0) > 0:
-                                needs.append(f"{int(row['Midday_DIFFERENCE'])} Midday")
-                            if row.get('PM_DIFFERENCE', 0) > 0:
-                                needs.append(f"{int(row['PM_DIFFERENCE'])} PM")
-                            if row.get('Evening_DIFFERENCE', 0) > 0:
-                                needs.append(f"{int(row['Evening_DIFFERENCE'])} Evening")
+                            early_am_diff = row_diff_value(row, 'Early_AM_DIFFERENCE', 'EARLY_AM_DIFFERENCE')
+                            am_diff = row_diff_value(row, 'AM_DIFFERENCE', 'AM_PEAK_DIFFERENCE')
+                            midday_diff = row_diff_value(row, 'Midday_DIFFERENCE')
+                            pm_diff = row_diff_value(row, 'PM_DIFFERENCE', 'PM_PEAK_DIFFERENCE')
+                            evening_diff = row_diff_value(row, 'Evening_DIFFERENCE')
+
+                            if early_am_diff > 0:
+                                needs.append(f"{early_am_diff} Early AM")
+                            if am_diff > 0:
+                                needs.append(f"{am_diff} AM")
+                            if midday_diff > 0:
+                                needs.append(f"{midday_diff} Midday")
+                            if pm_diff > 0:
+                                needs.append(f"{pm_diff} PM")
+                            if evening_diff > 0:
+                                needs.append(f"{evening_diff} Evening")
                             
                             if needs:
                                 needs_text = ", ".join(needs) + " record"
@@ -4048,11 +4060,11 @@ else:
                             
                             # Calculate totals by time period
                             time_period_totals = {
-                                'Early AM': shortages_df['EARLY_AM_DIFFERENCE'].sum(),
-                                'AM': shortages_df['AM_DIFFERENCE'].sum(),
-                                'Midday': shortages_df['Midday_DIFFERENCE'].sum(),
-                                'PM': shortages_df['PM_DIFFERENCE'].sum(),
-                                'Evening': shortages_df['Evening_DIFFERENCE'].sum()
+                                'Early AM': sum_diff_column(shortages_df, 'Early_AM_DIFFERENCE', 'EARLY_AM_DIFFERENCE'),
+                                'AM': sum_diff_column(shortages_df, 'AM_DIFFERENCE', 'AM_PEAK_DIFFERENCE'),
+                                'Midday': sum_diff_column(shortages_df, 'Midday_DIFFERENCE'),
+                                'PM': sum_diff_column(shortages_df, 'PM_DIFFERENCE', 'PM_PEAK_DIFFERENCE'),
+                                'Evening': sum_diff_column(shortages_df, 'Evening_DIFFERENCE')
                             }
                             
                             # Display as metrics
@@ -6626,25 +6638,13 @@ else:
                                 "TIME_ON_CODE": lambda x: list(x)
                             }).reset_index()
                             
-                            # Generate period names based on PERIOD_NAME
-                            period_name_mapping = {
-                                "AM PEAK": {"cr_name": "CR_AM_Peak", "db_name": "DB_AM_Peak", "diff_name": "AM_PEAK_DIFFERENCE"},
-                                "MIDDAY": {"cr_name": "CR_Midday", "db_name": "DB_Midday", "diff_name": "Midday_DIFFERENCE"},
-                                "PM PEAK": {"cr_name": "CR_PM_Peak", "db_name": "DB_PM_Peak", "diff_name": "PM_PEAK_DIFFERENCE"},
-                                "EVENING": {"cr_name": "CR_Evening", "db_name": "DB_Evening", "diff_name": "Evening_DIFFERENCE"}
-                            }
-                            
+                            # Generate period names based on PERIOD_NAME (shared with sync normalization)
                             for i, row in periods_by_code.iterrows():
                                 period_code = int(row["TIME_PERIOD_CODE"])
                                 period_name = str(row["TIME_PERIOD_NAME"]).strip()
                                 codes_list = row["TIME_ON_CODE"]
                                 
-                                # Get period config (use defaults or generate from period name)
-                                period_config = period_name_mapping.get(period_name.upper(), {
-                                    "cr_name": f"CR_{period_name.replace(' ', '_')}",
-                                    "db_name": f"DB_{period_name.replace(' ', '_')}",
-                                    "diff_name": f"{period_name.replace(' ', '_')}_DIFFERENCE"
-                                })
+                                period_config = get_period_field_names(period_name)
                                 
                                 codes_str = ",".join(str(c).strip() for c in codes_list if str(c).strip())
                                 
