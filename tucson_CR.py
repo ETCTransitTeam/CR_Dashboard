@@ -41,7 +41,7 @@ from utils import (
     build_group_option_column_maps,
     demographic_display_key_for_group_name,
 )
-from authentication.auth import get_projects,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page
+from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -121,7 +121,7 @@ if str(st.query_params.get("page") or "").lower() == "tracker":
     render_public_survey_tracker_page(private_key_bytes, _tracker_project_code_param())
     st.stop()
 
-schema_value = get_projects()
+schema_value = get_frontend_projects()
 
 # Helper function to read Excel from S3
 def read_excel_from_s3(bucket_name, file_key, sheet_name):
@@ -224,6 +224,7 @@ else:
             unsafe_allow_html=True
         )
     else:
+        enforce_client_project_session()
         if current_page == "admin_portal_select":
             admin_portal_select_page()
             st.stop()
@@ -5474,7 +5475,7 @@ else:
                 return
             
             # Refresh project list from DB so newly added projects appear in dropdown
-            projects = refresh_projects()
+            projects = filter_frontend_projects(refresh_projects())
             
             # Initialize session state for file management
             if "file_mgmt_upload_key" not in st.session_state:
@@ -5860,7 +5861,7 @@ else:
                 return
 
             # Refresh project list from DB so newly added projects appear in dropdown
-            projects = refresh_projects()
+            projects = filter_frontend_projects(refresh_projects())
 
             available_projects = sorted(projects.keys())
             selected_project = st.selectbox(
@@ -6178,7 +6179,7 @@ else:
             st.header("Add New Project")
             st.caption("Client signup URLs use project name directly and respect APP_PUBLIC_BASE_URL.")
 
-            existing_projects = list(get_projects().keys())
+            existing_projects = list(get_frontend_projects().keys())
             if existing_projects:
                 with st.expander("Project-specific client signup URLs", expanded=False):
                     selected_for_link = st.selectbox(
@@ -6809,21 +6810,26 @@ else:
                 st.info("No project configs found.")
                 return
 
-            project_map = {
-                r[0]: {
-                    "BASE_SCHEMA": r[1] or "",
-                    "ELVIS_DATABASE": r[2] or "",
-                    "ELVIS_TABLE": r[3] or "",
-                    "MAIN_DATABASE": r[4] or "",
-                    "MAIN_TABLE": r[5] or "",
-                    "DETAILS_FILE_NAME": _display_xlsx_name_only(r[6] or ""),
-                    "CR_FILE_NAME": _display_xlsx_name_only(r[7] or ""),
-                    "KINGELVIS_FILE_NAME": _display_xlsx_name_only(r[8] or ""),
-                    "ELVIS_PROJECT_NAME": r[9] or "",
-                    "IS_ACTIVE": bool(r[10]),
+            project_map = filter_frontend_projects(
+                {
+                    r[0]: {
+                        "BASE_SCHEMA": r[1] or "",
+                        "ELVIS_DATABASE": r[2] or "",
+                        "ELVIS_TABLE": r[3] or "",
+                        "MAIN_DATABASE": r[4] or "",
+                        "MAIN_TABLE": r[5] or "",
+                        "DETAILS_FILE_NAME": _display_xlsx_name_only(r[6] or ""),
+                        "CR_FILE_NAME": _display_xlsx_name_only(r[7] or ""),
+                        "KINGELVIS_FILE_NAME": _display_xlsx_name_only(r[8] or ""),
+                        "ELVIS_PROJECT_NAME": r[9] or "",
+                        "IS_ACTIVE": bool(r[10]),
+                    }
+                    for r in rows
                 }
-                for r in rows
-            }
+            )
+            if not project_map:
+                st.info("No visible project configs found.")
+                return
             project_names = list(project_map.keys())
 
             selected_project_name = st.selectbox(

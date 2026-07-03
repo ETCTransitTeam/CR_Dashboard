@@ -3,7 +3,7 @@ Refusal / No Answer (Blanks) report builder — used by refresh pipeline and das
 """
 import pandas as pd
 
-from automated_sync_flow_utils import _resolve_elvis_column_name
+from automated_sync_flow_utils import _resolve_elvis_column_name, normalize_survey_columns_for_reports
 
 
 def _is_blank_value(val):
@@ -18,12 +18,15 @@ def _is_blank_value(val):
 
 
 def _preprocess_elvis_for_blanks(elvis_df):
-    df = elvis_df.copy()
-    if df is None or df.empty:
-        return df
+    """Keep only useable survey records: HAVE_5_MIN = Yes and non-test (INTERV_INIT != 999)."""
+    if elvis_df is None or elvis_df.empty:
+        return elvis_df
+    df = normalize_survey_columns_for_reports(elvis_df.copy())
     if "INTERV_INIT" in df.columns:
-        df["INTERV_INIT"] = df["INTERV_INIT"].astype(str)
+        df["INTERV_INIT"] = df["INTERV_INIT"].astype(str).str.strip()
         df = df[df["INTERV_INIT"] != "999"]
+    if "HAVE_5_MIN_FOR_SURVECode" in df.columns:
+        df = df[df["HAVE_5_MIN_FOR_SURVECode"] == "1"]
     if len(df) > 1:
         df = df.iloc[1:].copy()
     return df.reset_index(drop=True)

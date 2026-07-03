@@ -98,6 +98,18 @@ def user_connect_to_snowflake():
 
 # schema_value = {'TUCSON': 'tucson_bus','TUCSON RAIL': 'tucson_rail','VTA': 'public', 'UTA': 'uta_rail', 'STL':'stl_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail', 'ACTRANSIT': 'actransit_bus', 'SALEM': 'salem_bus'}
 # schema_value = {'LACMTA_FEEDER': 'lacmta_feeder_bus', 'SALEM': 'salem_bus', 'ACTRANSIT': 'actransit_bus', 'KCATA': 'kcata_bus', 'KCATA RAIL': 'kcata_rail'}
+FRONTEND_HIDDEN_PROJECTS = frozenset({
+    "LACMTA_FEEDER",
+    "ACTRANSIT",
+    "SALEM",
+    "PARKCITY",
+})
+
+
+def is_frontend_visible_project(project_name: str) -> bool:
+    return (project_name or "").strip() not in FRONTEND_HIDDEN_PROJECTS
+
+
 def get_projects():
     conn = user_connect_to_snowflake()
     cur = conn.cursor()
@@ -115,6 +127,17 @@ def get_projects():
     conn.close()
 
     return projects
+
+
+def filter_frontend_projects(projects):
+    """Remove projects hidden from dashboard/login dropdowns."""
+    if not projects:
+        return projects
+    return {k: v for k, v in projects.items() if k not in FRONTEND_HIDDEN_PROJECTS}
+
+
+def get_frontend_projects():
+    return filter_frontend_projects(get_projects())
 
 
 def ensure_client_project_access_table():
@@ -140,7 +163,7 @@ def ensure_client_project_access_table():
 
 
 def get_client_allowed_projects(email: str):
-    """Return active project names assigned to a client user email."""
+    """Return active, frontend-visible project names assigned to a client user email."""
     ensure_client_project_access_table()
     conn = user_connect_to_snowflake()
     cur = conn.cursor()
@@ -155,7 +178,11 @@ def get_client_allowed_projects(email: str):
             """,
             (email,),
         )
-        return [row[0] for row in (cur.fetchall() or []) if row and row[0]]
+        return [
+            row[0]
+            for row in (cur.fetchall() or [])
+            if row and row[0] and is_frontend_visible_project(row[0])
+        ]
     finally:
         cur.close()
         conn.close()
@@ -759,7 +786,7 @@ def _resolve_signup_project_name():
     if not project:
         return None
 
-    projects = get_projects()
+    projects = get_frontend_projects()
     for name in projects.keys():
         if name.strip().lower() == project.lower():
             return name
@@ -967,7 +994,7 @@ def login(client_mode: bool = False):
     """Displays a login form and handles authentication."""
     def login_content():
 
-        schema_value = get_projects()
+        schema_value = get_frontend_projects()
         project_names = list(schema_value.keys())
         with st.form(key="login_form"):
             # Email and Password labels will be black if theme textColor is set to black
@@ -1031,7 +1058,10 @@ def login(client_mode: bool = False):
                         if allowed_projects:
                             valid_allowed = [p for p in allowed_projects if p in schema_value]
                             if not valid_allowed:
-                                st.error("Your assigned project access is inactive. Contact administrator.")
+                                st.error(
+                                    "Your assigned projects are no longer available in the client portal. "
+                                    "Please contact your administrator."
+                                )
                                 return
                             if len(valid_allowed) == 1:
                                 selected_project = valid_allowed[0]
@@ -1221,6 +1251,56 @@ def _portal_select_styles() -> None:
     )
 
 
+def enforce_client_project_session():
+    """
+    Block CLIENT users from hidden or unassigned projects (e.g. stale browser session).
+    No-op for non-client roles. May call st.rerun() when redirecting.
+    """
+    user = st.session_state.get("user") or {}
+    if str(user.get("role", "")).upper() != "CLIENT":
+        return
+
+    selected = st.session_state.get("selected_project")
+    if not selected:
+        return
+
+    email = user.get("email", "")
+    allowed = get_client_allowed_projects(email)
+    visible = get_frontend_projects()
+
+    session_ok = False
+    if is_frontend_visible_project(selected):
+        if allowed:
+            session_ok = selected in allowed
+        else:
+            session_ok = selected in visible
+
+    if session_ok:
+        return
+
+    st.session_state.pop("selected_project", None)
+    st.session_state.pop("schema", None)
+
+    if allowed:
+        st.session_state["client_candidate_projects"] = allowed
+        if len(allowed) == 1:
+            st.session_state["selected_project"] = allowed[0]
+            st.session_state["schema"] = visible[allowed[0]]
+            st.rerun()
+        st.query_params["page"] = "client_project_select"
+        st.warning("Please choose an available project to continue.")
+        st.rerun()
+
+    st.session_state["logged_in"] = False
+    st.session_state.pop("client_candidate_projects", None)
+    st.query_params["page"] = "client_login"
+    st.error(
+        "Your assigned projects are no longer available in the client portal. "
+        "Please contact your administrator."
+    )
+    st.rerun()
+
+
 def client_project_select_page():
     """Post-login page for client users with multiple allowed projects."""
     user = st.session_state.get("user", {})
@@ -1231,7 +1311,7 @@ def client_project_select_page():
         return
 
     projects = st.session_state.get("client_candidate_projects") or []
-    schema_value = get_projects()
+    schema_value = get_frontend_projects()
     projects = [p for p in projects if p in schema_value]
     if not projects:
         st.error("No active projects found for your account. Contact administrator.")
