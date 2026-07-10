@@ -901,7 +901,7 @@ def _step_title(step: int, title: str) -> None:
 
 
 def _render_page_header() -> None:
-    from authentication.auth import is_super_admin, logout
+    from authentication.auth import allowed_portals, logout
 
     st.markdown(
         """
@@ -1024,6 +1024,8 @@ def _render_page_header() -> None:
     display_name = _display_name_for_portal(user)
     initials = _user_initials(user)
     email = str(user.get("email", ""))
+    role = str(user.get("role", ""))
+    user_portals = allowed_portals(email, role)
 
     st.markdown('<div class="fa-header-marker"></div>', unsafe_allow_html=True)
     title_col, actions_col = st.columns([5.4, 2.8], vertical_alignment="center")
@@ -1059,12 +1061,12 @@ def _render_page_header() -> None:
         switch_col, logout_col = st.columns([1.35, 1], gap="small")
         with switch_col:
             st.markdown('<div class="fa-header-btn-switch"></div>', unsafe_allow_html=True)
-            if is_super_admin(email):
+            if len(user_portals) > 1:
                 if st.button("Switch Portal", type="secondary"):
-                    st.query_params["page"] = "admin_portal_select"
+                    st.query_params["page"] = "portal_select"
                     st.rerun()
-            elif st.button("OD Dashboard", type="secondary"):
-                st.query_params["page"] = "main"
+            elif "od" in user_portals and st.button("OD Dashboard", type="secondary"):
+                st.query_params["page"] = "od_project_select"
                 st.rerun()
         with logout_col:
             st.markdown('<div class="fa-header-btn-logout"></div>', unsafe_allow_html=True)

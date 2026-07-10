@@ -1,7 +1,9 @@
 
 import os
 import re
+import sys
 import datetime
+from pathlib import Path
 from urllib.parse import quote_plus
 import numpy as np
 import pandas as pd
@@ -41,7 +43,7 @@ from utils import (
     build_group_option_column_maps,
     demographic_display_key_for_group_name,
 )
-from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page
+from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -53,6 +55,11 @@ import boto3
 from io import BytesIO, StringIO
 from public_survey_tracker import render_public_survey_tracker_page, survey_tracker_setup_page
 from field_assignments.page import render_field_assignments_page
+
+_RCD_ROOT = Path(__file__).resolve().parent / "REVIEW_CYCLE_DASHBOARD"
+if str(_RCD_ROOT) not in sys.path:
+    sys.path.insert(0, str(_RCD_ROOT))
+from embed import render_review_cycle
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -225,8 +232,28 @@ else:
         )
     else:
         enforce_client_project_session()
-        if current_page == "admin_portal_select":
-            admin_portal_select_page()
+        if current_page in ("admin_portal_select", "portal_select"):
+            portal_select_page()
+            st.stop()
+        if current_page == "od_project_select":
+            od_project_select_page()
+            st.stop()
+        if current_page == "review_cycle":
+            _rc_user = st.session_state.get("user", {})
+            _rc_email = str(_rc_user.get("email", ""))
+            _rc_role = str(_rc_user.get("role", "")).upper()
+            if PORTAL_REVIEW_CYCLE not in allowed_portals(_rc_email, _rc_role):
+                st.error("You do not have access to Review Cycle Dashboard. Contact an administrator.")
+                if st.button("Back to portal selection"):
+                    st.query_params["page"] = "portal_select"
+                    st.rerun()
+                st.stop()
+            try:
+                _rcd_role = od_role_to_rcd_role(_rc_email, _rc_role)
+            except ValueError as exc:
+                st.error(str(exc))
+                st.stop()
+            render_review_cycle(_rc_user, _rcd_role)
             st.stop()
         if current_page == "field_assignments":
             _fa_user = st.session_state.get("user", {})
@@ -241,6 +268,13 @@ else:
                 st.stop()
             render_field_assignments_page()
             st.stop()
+
+        _gate_user = st.session_state.get("user", {})
+        _gate_email = str(_gate_user.get("email", ""))
+        _gate_role = str(_gate_user.get("role", "")).upper()
+        if _gate_role in ("CLEANING", "USER"):
+            st.query_params["page"] = "review_cycle"
+            st.rerun()
 
         selected_schema = st.session_state.get("schema", None)
         selected_project = str(st.session_state.get("selected_project", "")).lower()
@@ -1646,6 +1680,7 @@ else:
             # --- Survey Assignment Manager (super admins + ADMIN role) ---
             current_user_email = st.session_state.get("user", {}).get("email", "")
             current_user_role = st.session_state.get("user", {}).get("role", "")
+            user_portals = allowed_portals(current_user_email, current_user_role)
             if can_access_survey_assignment_manager(current_user_email, current_user_role):
                 st.markdown(
                     '<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">',
@@ -1663,18 +1698,18 @@ else:
                 )
                 st.markdown("<div class='section-label'>Management</div>", unsafe_allow_html=True)
 
+            if len(user_portals) > 1:
                 if st.button("Switch Portal", use_container_width=True):
-                    st.query_params["page"] = "admin_portal_select"
+                    st.query_params["page"] = "portal_select"
                     st.rerun()
 
-                # Single button to go to Accounts Management page
+            if is_super_admin(current_user_email):
                 if st.button("Accounts Management", use_container_width=True, type="primary"):
                     st.session_state.selected_page = "🏠︎   Home"
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = "accounts_management"
                     st.rerun()
-                    
                 if st.button("Projects Configuration", use_container_width=True, type="primary"):
                     st.session_state.selected_page = "🏠︎   Home"
                     if "selected_management_page" in st.session_state:
@@ -7260,7 +7295,7 @@ else:
             "accounts_management", "projects_configuration", "create_accounts",
             "password_update", "file_management", "view_s3_files", "demographic_setup",
             "survey_tracker_setup", "edit_project_configs", "field_assignments",
-            "admin_portal_select",
+            "admin_portal_select", "portal_select", "od_project_select",
         }
         if current_page not in PAGES_NOT_REQUIRING_DATA and not has_project_data:
             st.warning("⚠️ No project data available yet.")

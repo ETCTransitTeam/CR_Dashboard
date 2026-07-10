@@ -650,34 +650,32 @@ def create_new_user(email, username, password, role):
         conn.close()
 
 def create_new_user_page():
-    """Admin panel page to create new users."""
+    """Public staff registration (Review Cycle cleaning team); role defaults to CLEANING."""
     def create_user_content():
+        st.caption(
+            "Create a staff account for the Review Cycle workflow. "
+            "An activation email is sent before you can sign in."
+        )
         with st.form(key="create_new_user_form"):
-            # First row - Username and Email
             col1, col2 = st.columns(2)
             with col1:
                 username = st.text_input("Username", placeholder="Enter username")
             with col2:
-                email = st.text_input("Email", placeholder="Enter user email")
-            
-            # Second row - Role and Password
+                email = st.text_input("Email", placeholder="Enter work email")
             col3, col4 = st.columns(2)
             with col3:
                 password = st.text_input("Password", type="password", placeholder="Enter password")
             with col4:
                 confirm_password = st.text_input("Confirm Password", type="password", placeholder="Re-enter password")
-            
-            # Third row - Confirm Password (full width)
-            role = st.selectbox("Role", ["USER", "ADMIN"])
 
-            if st.form_submit_button("Create User", type="primary", use_container_width=True):
+            if st.form_submit_button("Create staff account", type="primary", use_container_width=True):
                 if not all([username, email, password, confirm_password]):
                     st.error("Please complete all fields.")
                 elif password != confirm_password:
                     st.error("Passwords do not match.")
                 else:
                     try:
-                        if create_new_user(email, username, password, role):
+                        if create_new_user(email, username, password, "CLEANING"):
                             st.success(f"User **{username}** created successfully! Activation email sent.")
                             time.sleep(2)
                             st.markdown('<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
@@ -703,7 +701,7 @@ def create_new_user_page():
             </div>
             """, unsafe_allow_html=True)
 
-    render_auth_layout(create_user_content, "Create User", "")
+    render_auth_layout(create_user_content, "Staff Registration", "Request access to ETC Institute staff tools")
 
 def register_new_user(email, username, password, role):
     conn = user_connect_to_snowflake()
@@ -990,6 +988,61 @@ def can_access_survey_assignment_manager(email: str, role: str | None = None) ->
     return str(role or "").upper() == "ADMIN"
 
 
+PORTAL_OD = "od"
+PORTAL_REVIEW_CYCLE = "review_cycle"
+PORTAL_SAM = "sam"
+
+VALID_STAFF_ROLES = {"USER", "ADMIN", "CLEANING", "CLIENT"}
+
+
+def allowed_portals(email: str, role: str | None = None) -> list[str]:
+    """Portals a user may open after login."""
+    role_u = str(role or "").upper()
+    if is_super_admin(email):
+        return [PORTAL_OD, PORTAL_REVIEW_CYCLE, PORTAL_SAM]
+    if role_u == "CLIENT":
+        return [PORTAL_OD]
+    if role_u == "CLEANING":
+        return [PORTAL_REVIEW_CYCLE]
+    if role_u == "ADMIN":
+        return [PORTAL_OD, PORTAL_REVIEW_CYCLE, PORTAL_SAM]
+    if role_u == "USER":
+        return [PORTAL_REVIEW_CYCLE]
+    return [PORTAL_OD]
+
+
+def od_role_to_rcd_role(email: str, role: str | None = None) -> str:
+    """Map unified OD role to Review Cycle internal role."""
+    if is_super_admin(email):
+        return "admin"
+    role_u = str(role or "").upper()
+    if role_u == "ADMIN":
+        return "manager"
+    if role_u == "CLEANING":
+        return "cleaning"
+    if role_u == "USER":
+        return "field"
+    raise ValueError(f"No Review Cycle access for role {role_u or 'unknown'}")
+
+
+def _portal_entry_page(portal: str) -> str:
+    if portal == PORTAL_OD:
+        return "od_project_select"
+    if portal == PORTAL_SAM:
+        return "field_assignments"
+    if portal == PORTAL_REVIEW_CYCLE:
+        return "review_cycle"
+    return "portal_select"
+
+
+def page_after_login(email: str, role: str | None = None) -> str:
+    """First page to open after successful staff login."""
+    portals = allowed_portals(email, role)
+    if len(portals) == 1:
+        return _portal_entry_page(portals[0])
+    return "portal_select"
+
+
 def login(client_mode: bool = False):
     """Displays a login form and handles authentication."""
     def login_content():
@@ -997,53 +1050,23 @@ def login(client_mode: bool = False):
         schema_value = get_frontend_projects()
         project_names = list(schema_value.keys())
         with st.form(key="login_form"):
-            # Email and Password labels will be black if theme textColor is set to black
             email = st.text_input("Email", placeholder="Enter your email address")
             password = st.text_input("Password", type="password", placeholder="Enter your password")
-            project_widget_label = "Select a Project"
-            selected_project_from_form = None
-            if not client_mode:
-                selected_project_from_form = st.selectbox(project_widget_label, project_names)
-            # Forgot Password link, right-aligned and red
             st.markdown(
                 '<div style="text-align: right; margin-bottom: 8px;">'
                 '<a href="/?page=forgot_password" style="color: red; text-decoration: underline;">Forgot Password?</a>'
                 '</div>',
                 unsafe_allow_html=True
             )
-            # Login button
-            login_od = st.form_submit_button("Login", type="primary", use_container_width=True)
-            if not client_mode:
-                st.markdown(
-                    """
-                    <div style="margin: 14px 0 8px 0; text-align: center;">
-                        <p style="margin: 0; font-size: 16px; font-weight: 700; color: #1d2e40;">
-                            Survey Assignment Manager
-                        </p>
-                        <p style="margin: 6px 0 0 0; font-size: 13px; color: #63758a;">
-                            Log in to upload RunCut files and export assignment reports →
-                        </p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                login_sam = st.form_submit_button(
-                    "Log in to Survey Assignment Manager",
-                    use_container_width=True,
-                )
-            else:
-                login_sam = False
+            login_submit = st.form_submit_button("Login", type="primary", use_container_width=True)
 
-            if login_od or login_sam:
-                assignment_login = bool(login_sam and not client_mode)
+            if login_submit:
                 user = check_user_login(email, password)
                 if user == "inactive":
                     st.error("Your account is not active. Please verify your email before logging in.")
                 elif user:
-                    selected_project = selected_project_from_form
                     user_role = str(user.get("role", "")).upper()
                     if client_mode and user_role != "CLIENT":
-                        # Prevent stale portal state if someone tests client login with non-client account.
                         st.session_state.pop("user", None)
                         st.session_state.pop("logged_in", None)
                         st.session_state.pop("token", None)
@@ -1053,7 +1076,7 @@ def login(client_mode: bool = False):
                         st.error("This login page is for client accounts only.")
                         return
 
-                    if str(user.get("role", "")).upper() == "CLIENT":
+                    if user_role == "CLIENT":
                         allowed_projects = get_client_allowed_projects(user["email"])
                         if allowed_projects:
                             valid_allowed = [p for p in allowed_projects if p in schema_value]
@@ -1065,21 +1088,30 @@ def login(client_mode: bool = False):
                                 return
                             if len(valid_allowed) == 1:
                                 selected_project = valid_allowed[0]
-                            else:
-                                # Persist authenticated client session before moving to project-card picker.
                                 store_user_in_session(user)
                                 st.session_state["logged_in"] = True
                                 st.session_state["jwt_token"] = generate_jwt(
                                     user["email"], user["username"], user["role"]
                                 )
                                 st.session_state["login_redirect_page"] = "client_login"
-                                st.session_state["client_candidate_projects"] = valid_allowed
+                                st.session_state["selected_project"] = selected_project
+                                st.session_state["schema"] = schema_value[selected_project]
                                 st.query_params["logged_in"] = "true"
-                                st.query_params["page"] = "client_project_select"
+                                st.query_params["page"] = "main"
                                 st.rerun()
                                 return
-                        elif client_mode:
-                            # Compatibility mode for existing CLIENT users without mapping.
+                            store_user_in_session(user)
+                            st.session_state["logged_in"] = True
+                            st.session_state["jwt_token"] = generate_jwt(
+                                user["email"], user["username"], user["role"]
+                            )
+                            st.session_state["login_redirect_page"] = "client_login"
+                            st.session_state["client_candidate_projects"] = valid_allowed
+                            st.query_params["logged_in"] = "true"
+                            st.query_params["page"] = "client_project_select"
+                            st.rerun()
+                            return
+                        if client_mode:
                             store_user_in_session(user)
                             st.session_state["logged_in"] = True
                             st.session_state["jwt_token"] = generate_jwt(
@@ -1092,43 +1124,20 @@ def login(client_mode: bool = False):
                             st.rerun()
                             return
 
-                    if not selected_project:
-                        st.error("Please select a project to continue.")
-                        return
-                    if selected_project not in schema_value:
-                        st.error("Selected project is invalid or inactive.")
-                        return
-
-                    # Persist session only after all authorization/project checks pass.
                     store_user_in_session(user)
                     st.success(f"Welcome {user['username']}!")
                     jwt_token = generate_jwt(user["email"], user["username"], user["role"])
                     st.session_state["logged_in"] = True
                     st.session_state["jwt_token"] = jwt_token
                     st.session_state["login_redirect_page"] = "client_login" if client_mode else "login"
-                    st.session_state["selected_project"] = selected_project
-                    st.session_state["schema"] = schema_value[selected_project]
+                    st.session_state.pop("selected_project", None)
+                    st.session_state.pop("schema", None)
                     st.query_params["logged_in"] = "true"
-
-                    if assignment_login:
-                        if user_role == "CLIENT":
-                            st.error("Client accounts cannot access Survey Assignment Manager.")
-                            return
-                        if not can_access_survey_assignment_manager(user["email"], user_role):
-                            st.error("You do not have access to Survey Assignment Manager. Contact an administrator.")
-                            return
-                        st.query_params["page"] = "field_assignments"
-                        st.rerun()
-
-                    if is_super_admin(user["email"]):
-                        st.query_params["page"] = "admin_portal_select"
-                    else:
-                        st.query_params["page"] = "main"
+                    st.query_params["page"] = page_after_login(user["email"], user_role)
                     st.rerun()
                 else:
                     st.error("Incorrect email or password")
 
-        # "Do not have an account? Create Account" link, right-aligned
         st.markdown(
             '''
             <div style="
@@ -1147,7 +1156,8 @@ def login(client_mode: bool = False):
             ">
                 <h5 style="color: #2d3436;padding-bottom:10px">Need Access?</h5>
                 <p style="color: #636e72; margin: 0; font-size: 14px;">
-                    No account yet? Reach out to admin to get started!
+                    Staff member? <a href="/?page=create_user">Register here</a>.
+                    Client project signup uses your project link from your administrator.
                 </p>
             </div>
             ''',
@@ -1372,23 +1382,97 @@ def client_project_select_page():
                 st.query_params["page"] = "main"
                 st.rerun()
 
-def admin_portal_select_page():
-    """Post-login portal picker for super admins: Field Assignments or OD Dashboard."""
+def od_project_select_page():
+    """Post-login project picker for staff OD Dashboard access."""
     user = st.session_state.get("user", {})
-    email = str(user.get("email", ""))
-    if not is_super_admin(email):
-        st.error("This page is only for super administrators.")
+    role = str(user.get("role", "")).upper()
+    if role == "CLIENT":
+        st.error("Client users should use the client project picker.")
+        st.query_params["page"] = "client_project_select"
+        st.rerun()
+        return
+
+    schema_value = get_frontend_projects()
+    projects = list(schema_value.keys())
+    if not projects:
+        st.error("No active projects found. Contact an administrator.")
+        return
+
+    if len(projects) == 1:
+        chosen = projects[0]
+        st.session_state["selected_project"] = chosen
+        st.session_state["schema"] = schema_value[chosen]
         st.query_params["page"] = "main"
         st.rerun()
         return
 
-    selected_project = st.session_state.get("selected_project", "—")
     _portal_select_styles()
     st.markdown(
         """
         <div class="project-hero">
+            <p class="project-hero-title">Pick Your Project</p>
+            <p class="project-hero-sub">Choose an OD Collection project to open the dashboard.</p>
+        </div>
+        <div class="project-select-wrap">
+            <p class="project-select-title">Choose Your Project</p>
+            <p class="project-select-sub">You can switch projects later from the dashboard sidebar.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(2)
+    for idx, project_name in enumerate(projects):
+        col = cols[idx % 2]
+        with col:
+            st.markdown(
+                f"""
+                <div class="project-card">
+                    <p class="project-card-name">{project_name}</p>
+                    <p class="project-card-meta">OD Collection Dashboard</p>
+                    <span class="project-chip">Available</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                f"Enter {project_name}",
+                key=f"od_project_card_{idx}_{project_name}",
+                use_container_width=True,
+                type="primary",
+            ):
+                st.session_state["selected_project"] = project_name
+                st.session_state["schema"] = schema_value[project_name]
+                st.query_params["page"] = "main"
+                st.rerun()
+
+    st.divider()
+    portals = allowed_portals(str(user.get("email", "")), role)
+    if len(portals) > 1:
+        if st.button("← Back to portal selection", use_container_width=True):
+            st.query_params["page"] = "portal_select"
+            st.rerun()
+
+
+def portal_select_page():
+    """Post-login portal picker (OD Dashboard, Review Cycle, Survey Assignment Manager)."""
+    user = st.session_state.get("user", {})
+    email = str(user.get("email", ""))
+    role = str(user.get("role", "")).upper()
+    username = str(user.get("username") or email)
+    portals = allowed_portals(email, role)
+
+    if not portals:
+        st.error("No portals are configured for your account. Contact an administrator.")
+        return
+
+    selected_project = st.session_state.get("selected_project") or "—"
+    _portal_select_styles()
+    st.markdown(
+        f"""
+        <div class="project-hero">
             <p class="project-hero-title">Pick Your Portal</p>
-            <p class="project-hero-sub">Choose Survey Assignment Manager or the OD Collection Dashboard to continue.</p>
+            <p class="project-hero-sub">Signed in as {username}. Choose where to continue.</p>
         </div>
         <div class="project-select-wrap">
             <p class="project-select-title">Choose Your Portal</p>
@@ -1398,36 +1482,70 @@ def admin_portal_select_page():
         unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(
-            """
-            <div class="project-card">
-                <p class="project-card-name">Survey Assignment Manager</p>
-                <p class="project-card-meta">RunCut upload, assignment rules, Word report export</p>
-                <span class="project-chip">Transit Field Staff</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
+    portal_cards: list[tuple[str, str, str, str, str | None]] = []
+    if PORTAL_OD in portals:
+        portal_cards.append(
+            (
+                "od",
+                "OD Collection Dashboard",
+                "Survey collection, refusal analysis, project reports",
+                f"Project: {selected_project}",
+                "od_project_select",
+            )
         )
-        if st.button("Enter Survey Assignment Manager", key="admin_portal_field_assignments", use_container_width=True, type="primary"):
-            st.query_params["page"] = "field_assignments"
-            st.rerun()
+    if PORTAL_REVIEW_CYCLE in portals:
+        portal_cards.append(
+            (
+                "review_cycle",
+                "Review Cycle Dashboard",
+                "Elvis review, cleaning, flags, and field workflows",
+                "Review workspace",
+                "review_cycle",
+            )
+        )
+    if PORTAL_SAM in portals and can_access_survey_assignment_manager(email, role):
+        portal_cards.append(
+            (
+                "sam",
+                "Survey Assignment Manager",
+                "RunCut upload, assignment rules, Word report export",
+                "Transit field staff",
+                "field_assignments",
+            )
+        )
 
-    with col2:
-        st.markdown(
-            f"""
-            <div class="project-card">
-                <p class="project-card-name">OD Collection Dashboard</p>
-                <p class="project-card-meta">Survey collection, refusal analysis, project reports</p>
-                <span class="project-chip">Project: {selected_project}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Enter OD Dashboard", key="admin_portal_od_dashboard", use_container_width=True, type="primary"):
-            st.query_params["page"] = "main"
-            st.rerun()
+    cols = st.columns(min(len(portal_cards), 3) or 1)
+    for idx, (key, title, meta, chip, target_page) in enumerate(portal_cards):
+        col = cols[idx % len(cols)]
+        with col:
+            st.markdown(
+                f"""
+                <div class="project-card">
+                    <p class="project-card-name">{title}</p>
+                    <p class="project-card-meta">{meta}</p>
+                    <span class="project-chip">{chip}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if target_page:
+                if st.button(
+                    f"Enter {title}",
+                    key=f"portal_select_{key}",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    st.query_params["page"] = target_page
+                    st.rerun()
+
+    st.divider()
+    if st.button("Sign out", use_container_width=True, type="secondary"):
+        logout()
+
+
+def admin_portal_select_page():
+    """Backward-compatible alias for portal_select_page."""
+    portal_select_page()
 
 def is_authenticated():
     if "logged_in" in st.session_state and st.session_state.get("logged_in", False):
@@ -2320,8 +2438,8 @@ def admin_update_user_role(email: str, new_role: str) -> tuple[bool, str]:
         return False, "Cannot change role for super admin accounts."
 
     role = str(new_role or "").upper()
-    if role not in {"USER", "ADMIN", "CLIENT"}:
-        return False, "Invalid role. Choose USER, ADMIN, or CLIENT."
+    if role not in {"USER", "ADMIN", "CLIENT", "CLEANING"}:
+        return False, "Invalid role. Choose USER, ADMIN, CLIENT, or CLEANING."
 
     conn = user_connect_to_snowflake()
     cursor = conn.cursor()
@@ -2925,7 +3043,7 @@ def accounts_management_page():
     start = (page_num - 1) * page_size
     page_users = filtered_users[start:start + page_size]
     col_ratios = [1.45, 2.0, 1.0, 0.85, 1.0, 1.8]
-    role_options = ["USER", "ADMIN", "CLIENT"]
+    role_options = ["USER", "ADMIN", "CLIENT", "CLEANING"]
 
     with st.container(border=True):
         st.markdown('<div class="acct-table-anchor"></div>', unsafe_allow_html=True)
@@ -3101,7 +3219,7 @@ def create_accounts_page():
             password = st.text_input("Password *", type="password", placeholder="Enter password")
             confirm_password = st.text_input("Confirm Password *", type="password", placeholder="Re-enter password")
         
-        role = st.selectbox("Role *", ["ADMIN", "CLIENT"], help="Select user role")
+        role = st.selectbox("Role *", ["ADMIN", "CLIENT", "CLEANING"], help="Select user role")
         
         st.markdown("**Note:** Accounts created by super admins are automatically activated.")
         

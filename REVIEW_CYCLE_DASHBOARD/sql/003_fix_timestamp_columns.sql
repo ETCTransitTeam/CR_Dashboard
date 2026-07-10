@@ -1,0 +1,14 @@
+-- Repair timestamp columns that were created as NUMBER by write_pandas auto_create_table.
+-- Applied automatically via core/schema.py ensure_migrations() (add/rename/drop per column).
+
+-- Affected columns (when type is not TIMESTAMP_*):
+--   RECORDS: INGESTED_AT, UPDATED_AT
+--   COMBINED_CHECKS: UPDATED_AT
+--   DECISION_HISTORY: CREATED_AT
+--   ASSIGNMENTS: ASSIGNED_AT, DEFER_UNTIL
+--   REVIEWER_STATS: CREATED_AT
+--   SYNC_STATE: LAST_PULL_TS, LAST_OD_SYNC_SEEN, LAST_KINGELVIS_EXPORT_TS, UPDATED_AT
+--   ORIGINAL_RECORDS: CAPTURED_AT
+--   NOTIFICATIONS, QUALITY_ALERTS, DEMOGRAPHIC_CHECKS: CREATED_AT
+--   USERS: CREATED_AT, UPDATED_AT
+--   PROJECTS: SYNCED_AT
