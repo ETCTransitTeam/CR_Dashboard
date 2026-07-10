@@ -601,11 +601,16 @@ def seed_projects_from_app_config() -> int:
         return 0
 
     rows = []
+    active_names: list[str] = []
     for _, row in projects.iterrows():
-        pipeline_code = str(row.get("ELVIS_PROJECT_NAME") or row["PROJECT_NAME"]).upper().replace(" ", "_")
+        project_name = str(row["PROJECT_NAME"]).strip()
+        if not project_name:
+            continue
+        active_names.append(project_name)
+        pipeline_code = str(row.get("ELVIS_PROJECT_NAME") or project_name).upper().replace(" ", "_")
         rows.append(
             {
-                "PROJECT_NAME": row["PROJECT_NAME"],
+                "PROJECT_NAME": project_name,
                 "BASE_SCHEMA": row.get("BASE_SCHEMA"),
                 "ELVIS_DATABASE": row.get("ELVIS_DATABASE"),
                 "ELVIS_TABLE": row.get("ELVIS_TABLE"),
@@ -620,11 +625,29 @@ def seed_projects_from_app_config() -> int:
                 "SYNCED_AT": datetime.utcnow(),
             }
         )
+    if not rows:
+        return 0
+
     merge_upsert(
         pd.DataFrame(rows),
         "PROJECTS",
         key_columns=["PROJECT_NAME"],
     )
+
+    # Hide projects that are no longer active in APP_CONFIG (matches OD Dashboard).
+    if active_names:
+        placeholders = ", ".join(["%s"] * len(active_names))
+        execute(
+            f"""
+            UPDATE {fq_table('PROJECTS')}
+            SET IS_ACTIVE = FALSE,
+                SYNCED_AT = CURRENT_TIMESTAMP()::TIMESTAMP_NTZ
+            WHERE PROJECT_NAME NOT IN ({placeholders})
+              AND IS_ACTIVE = TRUE
+            """,
+            tuple(active_names),
+            schema="PUBLIC",
+        )
     return len(rows)
 
 

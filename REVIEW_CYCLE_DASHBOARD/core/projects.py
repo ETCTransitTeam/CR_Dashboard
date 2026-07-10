@@ -5,10 +5,55 @@ from typing import Any
 
 import pandas as pd
 
-from core.config import env, fq_table
+from core.config import APP_CONFIG_SCHEMA, env, fq_table
 from core.snowflake_conn import execute, fetch_df
 
 _SYNC_TS_COLUMNS = frozenset({"LAST_PULL_TS", "LAST_OD_SYNC_SEEN", "LAST_KINGELVIS_EXPORT_TS"})
+
+# Keep in sync with authentication.auth.FRONTEND_HIDDEN_PROJECTS (OD Dashboard dropdown).
+FRONTEND_HIDDEN_PROJECTS = frozenset({
+    "LACMTA_FEEDER",
+    "ACTRANSIT",
+    "SALEM",
+    "PARKCITY",
+})
+
+
+def is_frontend_visible_project(project_name: str) -> bool:
+    return (project_name or "").strip() not in FRONTEND_HIDDEN_PROJECTS
+
+
+def _active_app_config_names() -> set[str] | None:
+    """Live active project names from APP_CONFIG (same source as OD Dashboard)."""
+    try:
+        df = fetch_df(
+            f"""
+            SELECT PROJECT_NAME
+            FROM {fq_table('PROJECT_CONFIGS', APP_CONFIG_SCHEMA)}
+            WHERE IS_ACTIVE = TRUE
+            """,
+            schema="PUBLIC",
+        )
+    except Exception:
+        return None
+    if df.empty or "PROJECT_NAME" not in df.columns:
+        return set()
+    return {str(name).strip() for name in df["PROJECT_NAME"].tolist() if str(name).strip()}
+
+
+def _filter_od_visible_projects(df: pd.DataFrame) -> pd.DataFrame:
+    """Match OD Dashboard dropdown: active in APP_CONFIG and not frontend-hidden."""
+    if df.empty or "PROJECT_NAME" not in df.columns:
+        return df
+    names = df["PROJECT_NAME"].astype(str)
+    visible = names.map(is_frontend_visible_project)
+    filtered = df.loc[visible].copy()
+    app_names = _active_app_config_names()
+    if app_names is not None:
+        filtered = filtered.loc[
+            filtered["PROJECT_NAME"].astype(str).str.strip().isin(app_names)
+        ].copy()
+    return filtered.reset_index(drop=True)
 
 
 def list_projects(active_only: bool = True) -> pd.DataFrame:
@@ -21,10 +66,13 @@ def list_projects(active_only: bool = True) -> pd.DataFrame:
 
 def _list_projects_uncached(active_only: bool = True) -> pd.DataFrame:
     where = "WHERE IS_ACTIVE = TRUE" if active_only else ""
-    return fetch_df(
+    df = fetch_df(
         f"SELECT * FROM {fq_table('PROJECTS')} {where} ORDER BY PROJECT_NAME",
         schema="PUBLIC",
     )
+    if active_only:
+        return _filter_od_visible_projects(df)
+    return df
 
 
 def get_project(project_name: str | None) -> dict[str, Any] | None:
