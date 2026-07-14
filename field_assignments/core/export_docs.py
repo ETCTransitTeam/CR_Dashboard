@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from docx import Document
-from docx.enum.section import WD_ORIENT
+from docx.enum.section import WD_ORIENT, WD_SECTION, WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -170,25 +170,17 @@ def add_labeled_header_line(container, label: str, value: str) -> None:
     value_run.font.size = Pt(10)
 
 
-def build_document(assignment: str, rows: list[dict[str, object]], headers: list[str], output_path: Path | None = None) -> bytes:
-    rows = sorted(
+def _sort_assignment_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
         rows,
         key=lambda row: (
             time_to_minutes(row.get("Start Time")) is None,
             time_to_minutes(row.get("Start Time")) or 0,
         ),
     )
-    first_row = rows[0]
-    last_row = rows[-1]
 
-    report_location = display_value("Start Location", first_row.get("Start Location"))
-    first_start = first_row.get("Start Time")
-    last_end = last_row.get("End Time")
-    shift = f"{format_time(first_start)} - {format_time(last_end)}"
-    blocks = ", ".join(unique_values(rows, "Block"))
 
-    document = Document()
-    section = document.sections[0]
+def _configure_landscape_section(section) -> None:
     section.orientation = WD_ORIENT.LANDSCAPE
     section.page_width = Inches(11)
     section.page_height = Inches(8.5)
@@ -199,13 +191,27 @@ def build_document(assignment: str, rows: list[dict[str, object]], headers: list
     section.header_distance = Inches(0.25)
     section.footer_distance = Inches(0.25)
 
-    styles = document.styles
-    styles["Normal"].font.name = "Arial"
-    styles["Normal"].font.size = Pt(9)
+
+def _clear_header_paragraphs(header) -> None:
+    for paragraph in list(header.paragraphs):
+        element = paragraph._element
+        parent = element.getparent()
+        if parent is not None:
+            parent.remove(element)
+
+
+def _populate_assignment_header(section, assignment: str, rows: list[dict[str, object]]) -> None:
+    first_row = rows[0]
+    last_row = rows[-1]
+    report_location = display_value("Start Location", first_row.get("Start Location"))
+    first_start = first_row.get("Start Time")
+    last_end = last_row.get("End Time")
+    shift = f"{format_time(first_start)} - {format_time(last_end)}"
+    blocks = ", ".join(unique_values(rows, "Block"))
 
     header = section.header
-    if header.paragraphs:
-        header.paragraphs[0]._element.getparent().remove(header.paragraphs[0]._element)
+    header.is_linked_to_previous = False
+    _clear_header_paragraphs(header)
     add_labeled_header_line(header, "Assignment #:", assignment)
     add_labeled_header_line(header, "Report Location:", report_location)
     add_labeled_header_line(header, "Report Time:", subtract_minutes(first_start, 15))
@@ -213,10 +219,13 @@ def build_document(assignment: str, rows: list[dict[str, object]], headers: list
     add_labeled_header_line(header, "Shift:", shift)
 
     footer = section.footer
+    footer.is_linked_to_previous = False
     if footer.paragraphs:
         footer.paragraphs[0].text = ""
         footer.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
+
+def _add_assignment_table(document, headers: list[str], rows: list[dict[str, object]]) -> None:
     spacer = document.add_paragraph()
     spacer.paragraph_format.space_after = Pt(120)
 
@@ -258,6 +267,32 @@ def build_document(assignment: str, rows: list[dict[str, object]], headers: list
             run.font.size = Pt(9)
             run.font.color.rgb = RGBColor(80, 80, 80)
 
+
+def _append_assignment_section(
+    document,
+    assignment: str,
+    rows: list[dict[str, object]],
+    headers: list[str],
+    *,
+    new_page: bool,
+) -> None:
+    sorted_rows = _sort_assignment_rows(rows)
+    if new_page:
+        section = document.add_section(WD_SECTION.NEW_PAGE)
+    else:
+        section = document.sections[0]
+    _configure_landscape_section(section)
+    _populate_assignment_header(section, assignment, sorted_rows)
+    _add_assignment_table(document, headers, sorted_rows)
+
+
+def build_document(assignment: str, rows: list[dict[str, object]], headers: list[str], output_path: Path | None = None) -> bytes:
+    document = Document()
+    styles = document.styles
+    styles["Normal"].font.name = "Arial"
+    styles["Normal"].font.size = Pt(9)
+    _append_assignment_section(document, assignment, rows, headers, new_page=False)
+
     buffer = BytesIO()
     document.save(buffer)
     data = buffer.getvalue()
@@ -267,26 +302,58 @@ def build_document(assignment: str, rows: list[dict[str, object]], headers: list
     return data
 
 
+def build_combined_document(
+    headers: list[str],
+    assignments: OrderedDict[str, list[dict[str, object]]] | dict[str, list[dict[str, object]]],
+) -> bytes:
+    """Build one master Word document with every assignment on its own landscape page."""
+    items = sorted(assignments.items(), key=assignment_sort_key)
+    if not items:
+        raise ValueError("No assignments available for the combined document.")
+
+    document = Document()
+    styles = document.styles
+    styles["Normal"].font.name = "Arial"
+    styles["Normal"].font.size = Pt(9)
+
+    for index, (assignment, rows) in enumerate(items):
+        _append_assignment_section(
+            document,
+            assignment,
+            rows,
+            headers,
+            new_page=index > 0,
+        )
+
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+COMBINED_DOC_FILENAME = "_ALL_Assignments_Combined.docx"
+
+
 def export_reports_zip(
     source: bytes,
     sheet_name: str | None = None,
     wanted: set[str] | None = None,
-) -> tuple[bytes, list[dict[str, str]]]:
+) -> tuple[bytes, list[dict[str, str]], bytes]:
+    """
+    Export individual Word docs (ZIP) plus a master combined document.
+
+    Returns (zip_bytes, summaries, combined_doc_bytes).
+    """
     headers, assignments = read_assignments(source, sheet_name)
     summaries: list[dict[str, str]] = []
     archive = BytesIO()
+    selected: OrderedDict[str, list[dict[str, object]]] = OrderedDict()
 
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for assignment, rows in sorted(assignments.items(), key=assignment_sort_key):
             if wanted is not None and assignment not in wanted:
                 continue
-            sorted_rows = sorted(
-                rows,
-                key=lambda row: (
-                    time_to_minutes(row.get("Start Time")) is None,
-                    time_to_minutes(row.get("Start Time")) or 0,
-                ),
-            )
+            sorted_rows = _sort_assignment_rows(rows)
+            selected[assignment] = sorted_rows
             filename = assignment_filename(assignment, sorted_rows)
             doc_bytes = build_document(assignment, sorted_rows, headers)
             zf.writestr(filename, doc_bytes)
@@ -304,7 +371,11 @@ def export_reports_zip(
                 }
             )
 
-    if not summaries:
-        raise ValueError("No assignments matched the export criteria.")
+        if not summaries:
+            raise ValueError("No assignments matched the export criteria.")
 
-    return archive.getvalue(), summaries
+        combined_bytes = build_combined_document(headers, selected)
+        zf.writestr(COMBINED_DOC_FILENAME, combined_bytes)
+
+    return archive.getvalue(), summaries, combined_bytes
+

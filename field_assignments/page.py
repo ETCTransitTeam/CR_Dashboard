@@ -6,10 +6,12 @@ import html
 import streamlit as st
 
 from field_assignments.core.assign import fill_assignment_numbers
-from field_assignments.core.export_docs import export_reports_zip
+from field_assignments.core.constants import ANY_LOCATION, ANY_ROUTE
+from field_assignments.core.export_docs import COMBINED_DOC_FILENAME, export_reports_zip
 from field_assignments.core.storage import list_workbook_versions, load_workbook_version, save_workbook_version
 from field_assignments.core.summary import (
-    route_coverage_summary,
+    coverage_summary,
+    default_tod_ranges,
     start_location_routes_summary,
     style_coverage_dataframe,
     style_start_location_dataframe,
@@ -18,10 +20,17 @@ from field_assignments.core.time_utils import parse_assignment_filter
 from field_assignments.core.workbook import build_header_template, workbook_options
 
 MAX_ASSIGNMENT_GUIDELINES = 50
+MAX_ASSIGNMENTS_PER_GUIDELINE = 50
 FA_TABS = {
     "export": "📄 Export Reports",
     "assign": "✏️ Create Assignments",
     "summary": "📊 Summary & Versions",
+}
+COVERAGE_VIEWS = {
+    "route": "Overall Route",
+    "route_direction": "Route Direction",
+    "route_tod": "Overall Route & Time of Day",
+    "route_direction_tod": "Route Direction & Time of Day",
 }
 
 
@@ -73,6 +82,8 @@ _ASSIGNMENT_WIDGET_SUFFIXES = (
     "start_to",
     "end_from",
     "end_to",
+    "count",
+    "route_only",
 )
 
 
@@ -92,8 +103,13 @@ def _get_guideline_store(index: int) -> dict[str, str]:
             "route": "",
             "start_loc": "",
             "end_loc": "",
+            "count": "1",
+            "route_only": "false",
         }
-    return st.session_state[key]
+    store = st.session_state[key]
+    store.setdefault("count", "1")
+    store.setdefault("route_only", "false")
+    return store
 
 
 def _save_guideline_store(index: int) -> None:
@@ -110,6 +126,11 @@ def _save_guideline_store(index: int) -> None:
     store["end_loc"] = str(
         st.session_state.get(_assignment_widget_key(index, "end_loc"), store["end_loc"]) or ""
     )
+    count_val = st.session_state.get(_assignment_widget_key(index, "count"), store.get("count", "1"))
+    store["count"] = str(count_val if count_val is not None else "1")
+    store["route_only"] = (
+        "true" if st.session_state.get(_assignment_widget_key(index, "route_only"), False) else "false"
+    )
 
 
 def _restore_guideline_store_to_widgets(index: int) -> None:
@@ -119,13 +140,90 @@ def _restore_guideline_store_to_widgets(index: int) -> None:
         value = store.get(suffix, "")
         if value:
             st.session_state[_assignment_widget_key(index, suffix)] = value
+    try:
+        st.session_state[_assignment_widget_key(index, "count")] = int(float(store.get("count", "1") or "1"))
+    except ValueError:
+        st.session_state[_assignment_widget_key(index, "count")] = 1
+    st.session_state[_assignment_widget_key(index, "route_only")] = store.get("route_only") == "true"
     if store.get("route"):
         st.session_state[_loc_route_key(index)] = store["route"]
 
 
-def _restore_all_guideline_stores() -> None:
-    for index in range(1, _assignment_guideline_count() + 1):
-        _restore_guideline_store_to_widgets(index)
+def _seed_assignment_guideline_defaults(index: int) -> None:
+    use_key = _assignment_widget_key(index, "use")
+    if use_key in st.session_state:
+        return
+    st.session_state[use_key] = True
+    st.session_state[_assignment_widget_key(index, "block")] = "(All blocks)"
+    for suffix in ("route", "start_loc", "end_loc"):
+        st.session_state[_assignment_widget_key(index, suffix)] = ""
+    st.session_state[_assignment_widget_key(index, "count")] = 1
+    st.session_state[_assignment_widget_key(index, "route_only")] = False
+
+
+def _selectbox_options(options: list[str], current: str, *, include_blank: bool = True) -> list[str]:
+    """Build selectbox options and keep the current session value even if not in the route map."""
+    ordered: list[str] = [""] if include_blank else []
+    seen = set(ordered)
+    for value in options:
+        text = str(value)
+        if text and text not in seen:
+            ordered.append(text)
+            seen.add(text)
+    text = str(current or "")
+    if text and text not in seen:
+        ordered.append(text)
+    return ordered
+
+
+def _location_options(
+    route_sel: str,
+    route_map: dict[str, list[str]],
+    fallback: list[str],
+) -> list[str]:
+    if not route_sel or route_sel == ANY_ROUTE:
+        return list(fallback or [])
+    if route_sel in route_map:
+        return list(route_map[route_sel] or [])
+    for key, values in route_map.items():
+        if str(key) == str(route_sel):
+            return list(values or [])
+    return list(fallback or [])
+
+
+def _clear_guidelines_after_fill() -> None:
+    """Reset guideline widgets so the user can keep adding on the updated workbook."""
+    count = _assignment_guideline_count()
+    for index in range(1, count + 1):
+        _clear_assignment_widget_state(index)
+        st.session_state.pop(_guideline_store_key(index), None)
+    st.session_state["fa_assignment_count"] = 1
+    _seed_assignment_guideline_defaults(1)
+
+
+def _reset_to_new_runcut() -> None:
+    """Clear workbook and assignment state so a new RunCut can be uploaded."""
+    count = _assignment_guideline_count()
+    for index in range(1, count + 1):
+        _clear_assignment_widget_state(index)
+        st.session_state.pop(_guideline_store_key(index), None)
+    for key in (
+        "fa_workbook_bytes",
+        "fa_workbook_name",
+        "fa_sheet_name",
+        "fa_workbook_options",
+        "fa_rules_loaded",
+        "fa_updated_workbook",
+        "fa_last_export_zip",
+        "fa_last_export_summary",
+        "fa_last_export_combined",
+        "fa_assignment_count",
+        "fa_restore_guidelines",
+        "fa_pending_remove_index",
+        "fa_fill_success",
+        "fa_coverage_ready",
+    ):
+        st.session_state.pop(key, None)
 
 
 def _loc_route_key(index: int) -> str:
@@ -146,50 +244,15 @@ def _apply_route_location_binding(index: int, route_sel: str) -> None:
         st.session_state[_loc_route_key(index)] = route_sel
 
 
-def _selectbox_options(options: list[str], current: str) -> list[str]:
-    """Build selectbox options and keep the current session value even if not in the route map."""
-    ordered: list[str] = [""]
-    seen = {""}
-    for value in options:
-        text = str(value)
-        if text and text not in seen:
-            ordered.append(text)
-            seen.add(text)
-    text = str(current or "")
-    if text and text not in seen:
-        ordered.append(text)
-    return ordered
-
-
-def _seed_assignment_guideline_defaults(index: int) -> None:
-    use_key = _assignment_widget_key(index, "use")
-    if use_key in st.session_state:
-        return
-    st.session_state[use_key] = True
-    st.session_state[_assignment_widget_key(index, "block")] = "(All blocks)"
-    for suffix in ("route", "start_loc", "end_loc"):
-        st.session_state[_assignment_widget_key(index, suffix)] = ""
-
-
-def _location_options(
-    route_sel: str,
-    route_map: dict[str, list[str]],
-    fallback: list[str],
-) -> list[str]:
-    if not route_sel:
-        return list(fallback or [])
-    if route_sel in route_map:
-        return list(route_map[route_sel] or [])
-    for key, values in route_map.items():
-        if str(key) == str(route_sel):
-            return list(values or [])
-    return list(fallback or [])
-
-
 def _clear_assignment_widget_state(index: int) -> None:
     for suffix in _ASSIGNMENT_WIDGET_SUFFIXES:
         st.session_state.pop(_assignment_widget_key(index, suffix), None)
     st.session_state.pop(_loc_route_key(index), None)
+
+
+def _restore_all_guideline_stores() -> None:
+    for index in range(1, _assignment_guideline_count() + 1):
+        _restore_guideline_store_to_widgets(index)
 
 
 def _remove_assignment_guideline(index: int) -> None:
@@ -231,7 +294,6 @@ def _build_guidelines_list(
     *,
     scan_order: str,
     tolerance: int,
-    include_interlined: bool,
 ) -> list[dict[str, str]]:
     blocks = ["(All blocks)"] + list(opts.get("blocks") or [])
     guidelines_list: list[dict[str, str]] = []
@@ -242,25 +304,34 @@ def _build_guidelines_list(
             continue
 
         block_sel = st.session_state.get(f"fa_assignment_{index}_block", blocks[0])
-        route_sel = st.session_state.get(f"fa_assignment_{index}_route", "")
-        start_loc = st.session_state.get(f"fa_assignment_{index}_start_loc", "")
-        end_loc = st.session_state.get(f"fa_assignment_{index}_end_loc", "")
+        route_sel = str(st.session_state.get(f"fa_assignment_{index}_route", "") or "")
+        start_loc = str(st.session_state.get(f"fa_assignment_{index}_start_loc", "") or "")
+        end_loc = str(st.session_state.get(f"fa_assignment_{index}_end_loc", "") or "")
         start_from = st.session_state.get(f"fa_assignment_{index}_start_from")
         start_to = st.session_state.get(f"fa_assignment_{index}_start_to")
         end_from = st.session_state.get(f"fa_assignment_{index}_end_from")
         end_to = st.session_state.get(f"fa_assignment_{index}_end_to")
+        count_raw = st.session_state.get(f"fa_assignment_{index}_count", 1)
+        route_only = bool(st.session_state.get(f"fa_assignment_{index}_route_only", False))
 
+        # Route/locations may be specific or Any; blank is not enough on its own.
         if not route_sel or not start_loc or not end_loc:
             continue
         if not all([start_from, start_to, end_from, end_to]):
             continue
 
+        try:
+            count = max(1, min(MAX_ASSIGNMENTS_PER_GUIDELINE, int(count_raw or 1)))
+        except (TypeError, ValueError):
+            count = 1
+
+        include_interlined = not route_only
         guidelines_list.append(
             {
-                "block": "" if block_sel == "(All blocks)" else block_sel,
-                "route": route_sel,
-                "start_location": start_loc,
-                "end_location": end_loc,
+                "block": "" if block_sel == "(All blocks)" else str(block_sel),
+                "route": "" if route_sel == ANY_ROUTE else route_sel,
+                "start_location": "" if start_loc == ANY_LOCATION else start_loc,
+                "end_location": "" if end_loc == ANY_LOCATION else end_loc,
                 "start_from": start_from.strftime("%H:%M"),
                 "start_to": start_to.strftime("%H:%M"),
                 "shift_from": end_from.strftime("%H:%M"),
@@ -268,6 +339,9 @@ def _build_guidelines_list(
                 "scan_order": scan_order,
                 "tolerance": str(tolerance),
                 "include_interlined": "true" if include_interlined else "false",
+                "mode": "route_only" if route_only else "block",
+                "route_only": "true" if route_only else "false",
+                "count": str(count),
             }
         )
 
@@ -286,7 +360,10 @@ def _render_assign_guidelines_and_output() -> None:
     c1.metric("Blank Asn# rows", int(opts["blank_rows"]))
     c2.metric("Next Asn#", int(opts["next_assignment"]))
     c3.metric("Sheet", str(opts["sheet"]))
-    st.caption("Each completed assignment guideline creates one new assignment number.")
+    st.caption(
+        "Each guideline can create one or more assignment numbers. "
+        "After filling, keep adding from step 3 on the updated workbook."
+    )
 
     with st.container(border=True):
         _step_title(2, "Assignment settings")
@@ -301,6 +378,10 @@ def _render_assign_guidelines_and_output() -> None:
                     ("+/- 15 minutes", 15),
                     ("+/- 20 minutes", 20),
                     ("+/- 30 minutes", 30),
+                    ("+/- 45 minutes", 45),
+                    ("+/- 60 minutes", 60),
+                    ("+/- 90 minutes", 90),
+                    ("+/- 120 minutes", 120),
                 ],
                 format_func=lambda item: item[0],
                 index=3,
@@ -309,24 +390,24 @@ def _render_assign_guidelines_and_output() -> None:
         with set_col2:
             scan_order = st.selectbox(
                 "Scan order",
-                options=[("Top to bottom", "top_to_bottom"), ("Bottom to top", "bottom_to_top")],
+                options=[
+                    ("Top to bottom", "top_to_bottom"),
+                    ("Bottom to top", "bottom_to_top"),
+                    ("Random", "random"),
+                ],
                 format_func=lambda item: item[0],
                 key="fa_scan_order",
             )[1]
-        include_interlined = st.checkbox(
-            "Include same-block interlined routes between start and end",
-            value=True,
-            key="fa_include_interlined",
-            help=(
-                "When enabled, blank rows on the same block between the selected route's start and end "
-                "are included even if the route changes (interlining)."
-            ),
+        st.caption(
+            "Default mode stays on the same block (interlining). "
+            "Enable **No Interline (Route Only)** on a guideline to stay on one route across blocks."
         )
 
     route_start = opts.get("route_start_locations") or {}
     route_end = opts.get("route_end_locations") or {}
     blocks = ["(All blocks)"] + list(opts.get("blocks") or [])
     routes = list(opts.get("routes") or [])
+    route_choices = [ANY_ROUTE] + routes
 
     if _process_pending_guideline_removals():
         st.rerun()
@@ -339,7 +420,8 @@ def _render_assign_guidelines_and_output() -> None:
         _step_title(3, "Assignment guidelines")
         st.caption(
             "Start Location and Start From/To find the first row. "
-            "Final End Location and End From/To find the last row."
+            "Final End Location and End From/To find the last row. "
+            "Use (Any route) / (Any location) for bulk searches across routes."
         )
         add_col, remove_col, info_col = st.columns([1, 1, 2])
         with add_col:
@@ -395,6 +477,8 @@ def _render_assign_guidelines_and_output() -> None:
             route_key = _assignment_widget_key(index, "route")
             start_key = _assignment_widget_key(index, "start_loc")
             end_key = _assignment_widget_key(index, "end_loc")
+            count_key = _assignment_widget_key(index, "count")
+            route_only_key = _assignment_widget_key(index, "route_only")
             store = _get_guideline_store(index)
             route_sel = str(st.session_state.get(route_key, store.get("route", "")) or "")
 
@@ -410,7 +494,7 @@ def _render_assign_guidelines_and_output() -> None:
                 with c2:
                     st.selectbox(
                         "Route",
-                        _selectbox_options(routes, route_sel),
+                        _selectbox_options(route_choices, route_sel),
                         key=route_key,
                     )
                 route_sel = str(st.session_state.get(route_key, "") or "")
@@ -429,7 +513,7 @@ def _render_assign_guidelines_and_output() -> None:
                     st.selectbox(
                         "Start location",
                         _selectbox_options(
-                            start_locs,
+                            [ANY_LOCATION] + start_locs,
                             str(st.session_state.get(start_key, store.get("start_loc", ""))),
                         ),
                         key=start_key,
@@ -438,7 +522,7 @@ def _render_assign_guidelines_and_output() -> None:
                     st.selectbox(
                         "Final end location",
                         _selectbox_options(
-                            end_locs,
+                            [ANY_LOCATION] + end_locs,
                             str(st.session_state.get(end_key, store.get("end_loc", ""))),
                         ),
                         key=end_key,
@@ -454,20 +538,46 @@ def _render_assign_guidelines_and_output() -> None:
                 with t4:
                     st.time_input("End to", key=f"fa_assignment_{index}_end_to")
 
+                opt1, opt2 = st.columns(2)
+                with opt1:
+                    if count_key not in st.session_state:
+                        try:
+                            st.session_state[count_key] = int(float(store.get("count", "1") or "1"))
+                        except ValueError:
+                            st.session_state[count_key] = 1
+                    st.number_input(
+                        "Number of Assignments",
+                        min_value=1,
+                        max_value=MAX_ASSIGNMENTS_PER_GUIDELINE,
+                        step=1,
+                        key=count_key,
+                        help="Create multiple assignments from the same search criteria (batch/bulk).",
+                    )
+                with opt2:
+                    if route_only_key not in st.session_state:
+                        st.session_state[route_only_key] = store.get("route_only") == "true"
+                    st.checkbox(
+                        "No Interline (Route Only)",
+                        key=route_only_key,
+                        help=(
+                            "Stay on the selected route across blocks. Next trip must start where the "
+                            "previous ended, within 60 minutes. Ends early when the next gap exceeds 60 minutes."
+                        ),
+                    )
+
             _save_guideline_store(index)
 
             route_sel = st.session_state.get(f"fa_assignment_{index}_route", "")
             start_loc = st.session_state.get(f"fa_assignment_{index}_start_loc", "")
             end_loc = st.session_state.get(f"fa_assignment_{index}_end_loc", "")
             if not route_sel or not start_loc or not end_loc:
-                st.warning(f"Assignment #{index}: fill route and both locations.")
+                st.warning(f"Assignment #{index}: select route and both locations (or Any).")
 
     guidelines_list = _build_guidelines_list(
         opts,
         guideline_count,
         scan_order=scan_order,
         tolerance=tolerance,
-        include_interlined=include_interlined,
     )
 
     with st.container(border=True):
@@ -488,20 +598,32 @@ def _render_assign_guidelines_and_output() -> None:
                 st.session_state["fa_workbook_options"] = workbook_options(
                     updated_bytes, st.session_state.get("fa_sheet_name")
                 )
-                zip_bytes, summaries = export_reports_zip(updated_bytes, st.session_state.get("fa_sheet_name"))
+                zip_bytes, summaries, combined_bytes = export_reports_zip(
+                    updated_bytes, st.session_state.get("fa_sheet_name")
+                )
                 st.session_state["fa_last_export_summary"] = summaries
                 st.session_state["fa_last_export_zip"] = zip_bytes
+                st.session_state["fa_last_export_combined"] = combined_bytes
                 st.session_state["fa_updated_workbook"] = updated_bytes
+                _clear_guidelines_after_fill()
                 parts = [f"assignment {item['assignment']} on {item['count']} row(s)" for item in results]
-                st.success(f"Created {len(results)} assignment(s): " + "; ".join(parts) + ".")
+                st.session_state["fa_fill_success"] = (
+                    f"Created {len(results)} assignment(s): " + "; ".join(parts) + ". "
+                    "You can keep adding from step 3, or start a new RunCut in step 6."
+                )
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
 
+    fill_success = st.session_state.pop("fa_fill_success", None)
+    if fill_success:
+        st.success(fill_success)
+
     updated_bytes = st.session_state.get("fa_updated_workbook")
     zip_bytes = st.session_state.get("fa_last_export_zip")
-    if updated_bytes or zip_bytes:
-        d1, d2 = st.columns(2)
+    combined_bytes = st.session_state.get("fa_last_export_combined")
+    if updated_bytes or zip_bytes or combined_bytes:
+        d1, d2, d3 = st.columns(3)
         with d1:
             if updated_bytes:
                 st.download_button(
@@ -520,12 +642,31 @@ def _render_assign_guidelines_and_output() -> None:
                     mime="application/zip",
                     use_container_width=True,
                 )
+        with d3:
+            if combined_bytes:
+                st.download_button(
+                    "Download combined Word (Print All)",
+                    data=combined_bytes,
+                    file_name=COMBINED_DOC_FILENAME,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                )
 
     summaries = st.session_state.get("fa_last_export_summary")
     if summaries:
         with st.container(border=True):
             _step_title(5, "Export summary")
             st.dataframe(summaries, use_container_width=True, hide_index=True)
+
+    with st.container(border=True):
+        _step_title(6, "Start new RunCut")
+        st.caption(
+            "To upload a different RunCut file, reset here. "
+            "Or keep adding assignments from step 3 using the workbook still in session."
+        )
+        if st.button("Refresh page / upload new RunCut", key="fa_reset_runcut", use_container_width=True):
+            _reset_to_new_runcut()
+            st.rerun()
 
 
 def _display_name_for_portal(user: dict) -> str:
@@ -1139,23 +1280,39 @@ def _render_export_generate_section() -> None:
             return
         try:
             wanted = parse_assignment_filter(assignment_filter)
-            zip_bytes, summaries = export_reports_zip(data, st.session_state.get("fa_sheet_name"), wanted)
+            zip_bytes, summaries, combined_bytes = export_reports_zip(
+                data, st.session_state.get("fa_sheet_name"), wanted
+            )
             st.session_state["fa_last_export_summary"] = summaries
             st.session_state["fa_last_export_zip"] = zip_bytes
-            st.success(f"Exported {len(summaries)} Word document(s).")
+            st.session_state["fa_last_export_combined"] = combined_bytes
+            st.success(f"Exported {len(summaries)} Word document(s) plus a combined Print All file.")
         except Exception as exc:
             st.error(str(exc))
 
     zip_bytes = st.session_state.get("fa_last_export_zip")
-    if zip_bytes:
-        st.download_button(
-            "Download ZIP",
-            data=zip_bytes,
-            file_name="RunCut_Assignment_Documents.zip",
-            mime="application/zip",
-            type="primary",
-            use_container_width=True,
-        )
+    combined_bytes = st.session_state.get("fa_last_export_combined")
+    if zip_bytes or combined_bytes:
+        d1, d2 = st.columns(2)
+        with d1:
+            if zip_bytes:
+                st.download_button(
+                    "Download ZIP",
+                    data=zip_bytes,
+                    file_name="RunCut_Assignment_Documents.zip",
+                    mime="application/zip",
+                    type="primary",
+                    use_container_width=True,
+                )
+        with d2:
+            if combined_bytes:
+                st.download_button(
+                    "Download combined Word (Print All)",
+                    data=combined_bytes,
+                    file_name=COMBINED_DOC_FILENAME,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                )
 
 
 def _render_assign_tab() -> None:
@@ -1204,26 +1361,206 @@ def _render_assign_upload_section() -> None:
         c3.metric("Sheet", str(opts.get("sheet", "")))
 
 
+def _ensure_tod_ranges() -> None:
+    if "fa_tod_ranges" not in st.session_state:
+        st.session_state["fa_tod_ranges"] = default_tod_ranges()
+
+
+def _tod_count() -> int:
+    _ensure_tod_ranges()
+    return len(st.session_state["fa_tod_ranges"])
+
+
+def _add_tod_range() -> None:
+    _ensure_tod_ranges()
+    ranges = st.session_state["fa_tod_ranges"]
+    if not ranges:
+        st.session_state["fa_tod_ranges"] = default_tod_ranges()
+        return
+    # Split the last range: previous end becomes midpoint; new range continues to 23:59:59.
+    from datetime import datetime, timedelta
+
+    last = ranges[-1]
+    start = datetime.strptime(last.get("start", "00:00:00"), "%H:%M:%S")
+    end = datetime.strptime("23:59:59", "%H:%M:%S")
+    # If last already ends at end of day, set previous end to noon-ish mid or keep user-editable.
+    mid = start + (end - start) / 2
+    mid = mid.replace(second=0, microsecond=0)
+    mid_end = mid
+    new_start = mid_end + timedelta(seconds=1)
+    last["end"] = mid_end.strftime("%H:%M:%S")
+    last["label"] = last.get("label") or f"TOD {len(ranges)}"
+    ranges.append(
+        {
+            "label": f"TOD {len(ranges) + 1}",
+            "start": new_start.strftime("%H:%M:%S"),
+            "end": "23:59:59",
+        }
+    )
+    # Relabel sequentially
+    for i, item in enumerate(ranges, start=1):
+        if not item.get("label") or item["label"].startswith("TOD ") or item["label"] == "All Day":
+            item["label"] = f"TOD {i}" if len(ranges) > 1 else "All Day"
+    st.session_state["fa_tod_ranges"] = ranges
+
+
+def _remove_tod_range(index: int) -> None:
+    _ensure_tod_ranges()
+    ranges = st.session_state["fa_tod_ranges"]
+    if len(ranges) <= 1 or index < 0 or index >= len(ranges):
+        return
+    ranges.pop(index)
+    # Chain times: first starts 00:00:00, last ends 23:59:59, middles link.
+    from datetime import datetime, timedelta
+
+    for i, item in enumerate(ranges):
+        if i == 0:
+            item["start"] = "00:00:00"
+        else:
+            prev_end = datetime.strptime(ranges[i - 1]["end"], "%H:%M:%S")
+            item["start"] = (prev_end + timedelta(seconds=1)).strftime("%H:%M:%S")
+        if i == len(ranges) - 1:
+            item["end"] = "23:59:59"
+        item["label"] = f"TOD {i + 1}" if len(ranges) > 1 else "All Day"
+    st.session_state["fa_tod_ranges"] = ranges
+
+
+def _sync_tod_from_widgets() -> list[dict[str, str]]:
+    """Read TOD widget values and keep ranges contiguous with no gaps."""
+    from datetime import datetime, time, timedelta
+
+    _ensure_tod_ranges()
+    ranges = st.session_state["fa_tod_ranges"]
+    updated: list[dict[str, str]] = []
+    for i in range(len(ranges)):
+        label = str(st.session_state.get(f"fa_tod_label_{i}", ranges[i].get("label", f"TOD {i + 1}")))
+        start_t = st.session_state.get(f"fa_tod_start_{i}")
+        end_t = st.session_state.get(f"fa_tod_end_{i}")
+        if isinstance(start_t, time):
+            start_s = start_t.strftime("%H:%M:%S")
+        else:
+            start_s = ranges[i].get("start", "00:00:00")
+        if isinstance(end_t, time):
+            end_s = end_t.strftime("%H:%M:%S")
+        else:
+            end_s = ranges[i].get("end", "23:59:59")
+        updated.append({"label": label or f"TOD {i + 1}", "start": start_s, "end": end_s})
+
+    if not updated:
+        return default_tod_ranges()
+
+    # Enforce chain: first start 00:00:00, each next start = prev end + 1s, last end 23:59:59.
+    updated[0]["start"] = "00:00:00"
+    for i in range(len(updated)):
+        if i > 0:
+            prev_end = datetime.strptime(updated[i - 1]["end"][:8], "%H:%M:%S")
+            updated[i]["start"] = (prev_end + timedelta(seconds=1)).strftime("%H:%M:%S")
+        if i == len(updated) - 1:
+            updated[i]["end"] = "23:59:59"
+    st.session_state["fa_tod_ranges"] = updated
+    return updated
+
+
 def _render_summary_tab() -> None:
+    from datetime import datetime, time
+
     _tab_intro(
         "Summary & Versions",
-        "Review route coverage and manage saved workbook versions for this project.",
+        "Review route coverage by direction and time of day, and manage saved workbook versions.",
     )
-
+    _ensure_tod_ranges()
     data = _workbook_bytes()
-    with st.container(border=True):
-        _step_title(1, "Route coverage")
-        if data:
-            try:
-                df = route_coverage_summary(data, st.session_state.get("fa_sheet_name"))
-                st.dataframe(style_coverage_dataframe(df), use_container_width=True, hide_index=True)
-            except Exception as exc:
-                st.error(str(exc))
-        else:
-            st.info("Upload a workbook on the Export or Assign tab to see route coverage.")
 
     with st.container(border=True):
-        _step_title(2, "Start Location & Routes")
+        _step_title(1, "Time of Day Assignment")
+        st.caption(
+            "Define TOD ranges used by coverage views. "
+            "New ranges start one second after the previous end; the last range always ends at 11:59:59 PM."
+        )
+        tod_ranges = st.session_state["fa_tod_ranges"]
+        add_col, info_col = st.columns([1, 3])
+        with add_col:
+            if st.button("Add TOD", key="fa_add_tod", use_container_width=True):
+                _sync_tod_from_widgets()
+                _add_tod_range()
+                st.rerun()
+        with info_col:
+            st.caption(f"{len(tod_ranges)} Time of Day range(s).")
+
+        for i, tod in enumerate(tod_ranges):
+            row = st.columns([2, 2, 2, 1], vertical_alignment="bottom")
+            with row[0]:
+                st.text_input("Label", value=tod.get("label", f"TOD {i + 1}"), key=f"fa_tod_label_{i}")
+            with row[1]:
+                try:
+                    start_default = datetime.strptime(tod.get("start", "00:00:00")[:8], "%H:%M:%S").time()
+                except ValueError:
+                    start_default = time(0, 0, 0)
+                st.time_input(
+                    "Start",
+                    value=start_default,
+                    key=f"fa_tod_start_{i}",
+                    disabled=i > 0,
+                    help="First TOD starts at 12:00 AM. Later TODs start right after the previous end.",
+                )
+            with row[2]:
+                try:
+                    end_default = datetime.strptime(tod.get("end", "23:59:59")[:8], "%H:%M:%S").time()
+                except ValueError:
+                    end_default = time(23, 59, 59)
+                st.time_input(
+                    "End",
+                    value=end_default,
+                    key=f"fa_tod_end_{i}",
+                    disabled=i == len(tod_ranges) - 1,
+                    help="Last TOD always ends at 11:59:59 PM.",
+                )
+            with row[3]:
+                if len(tod_ranges) > 1 and st.button("Remove", key=f"fa_remove_tod_{i}", use_container_width=True):
+                    _sync_tod_from_widgets()
+                    _remove_tod_range(i)
+                    st.rerun()
+
+    with st.container(border=True):
+        _step_title(2, "Route coverage")
+        view_key = st.selectbox(
+            "Coverage view",
+            options=list(COVERAGE_VIEWS.keys()),
+            format_func=lambda key: COVERAGE_VIEWS[key],
+            key="fa_coverage_view",
+        )
+        refresh = st.button(
+            "Generate / refresh table",
+            key="fa_refresh_coverage",
+            type="primary",
+            use_container_width=True,
+        )
+        if refresh or st.session_state.get("fa_coverage_ready"):
+            st.session_state["fa_coverage_ready"] = True
+            if data:
+                try:
+                    tod_ranges = _sync_tod_from_widgets()
+                    df = coverage_summary(
+                        data,
+                        st.session_state.get("fa_sheet_name"),
+                        group_by=view_key,
+                        tod_ranges=tod_ranges,
+                    )
+                    if df.empty:
+                        st.info("No route rows found in the workbook.")
+                    else:
+                        st.dataframe(style_coverage_dataframe(df), use_container_width=True, hide_index=True)
+                except Exception as exc:
+                    st.error(str(exc))
+            else:
+                st.info("Upload a workbook on the Export or Assign tab to see route coverage.")
+        elif not data:
+            st.info("Upload a workbook on the Export or Assign tab to see route coverage.")
+        else:
+            st.caption("Click **Generate / refresh table** after setting Time of Day ranges.")
+
+    with st.container(border=True):
+        _step_title(3, "Start Location & Routes")
         if data:
             try:
                 location_df = start_location_routes_summary(data, st.session_state.get("fa_sheet_name"))
@@ -1241,7 +1578,7 @@ def _render_summary_tab() -> None:
             st.info("Upload a workbook on the Export or Assign tab to see start location route coverage.")
 
     with st.container(border=True):
-        _step_title(3, "Version history")
+        _step_title(4, "Version history")
         label = st.text_input(
             "Project / city label for S3 versions",
             value=st.session_state.get("selected_project", "general"),
