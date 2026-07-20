@@ -15,7 +15,15 @@ from views.filters import (
     review_dashboard_record_ids,
 )
 from views.record_card import render_record_card
-from views.ui import empty_state, info_strip, page_header, section_title, stats_bar
+from views.ui import (
+    empty_state,
+    info_strip,
+    loading,
+    page_header,
+    section_title,
+    set_operation_flash,
+    stats_bar,
+)
 
 HISTORY_DISPLAY_COLS = [
     "CREATED_AT",
@@ -58,11 +66,12 @@ def _supervisor_display(records: pd.DataFrame, project: str) -> pd.DataFrame:
 def _render_supervisor_history(project: str) -> None:
     section_title("Review-team history")
     info_strip("Review-team changes for records on Combined Checks and Supervisor View Only.")
-    dashboard_ids = review_dashboard_record_ids(project)
+    with loading("Loading supervisor review history..."):
+        dashboard_ids = review_dashboard_record_ids(project)
+        history = history_svc.load_history(project) if dashboard_ids else pd.DataFrame()
     if not dashboard_ids:
         st.info("No review-dashboard records in this project.")
         return
-    history = history_svc.load_history(project)
     if history.empty:
         st.info("No history recorded yet for this project.")
         return
@@ -74,9 +83,11 @@ def _render_supervisor_history(project: str) -> None:
     cols = [c for c in HISTORY_DISPLAY_COLS if c in view.columns]
     info_strip(f"{len(view)} history entries")
     st.dataframe(view[cols], use_container_width=True, hide_index=True)
+    with loading("Preparing the supervisor history CSV download..."):
+        history_csv = view[cols].to_csv(index=False).encode("utf-8")
     st.download_button(
         "Download history (CSV)",
-        data=view[cols].to_csv(index=False).encode("utf-8"),
+        data=history_csv,
         file_name=f"{project}_supervisor_review_history.csv",
         mime="text/csv",
         key="sup_history_csv",
@@ -105,16 +116,18 @@ def _open_record(
     if assignments is not None and not assignments.empty:
         match = assignments[assignments["RECORD_ID"].astype(str) == str(selected_id)]
         if not match.empty and st.button("Defer record (push to bottom)", key=f"{key}_defer_{selected_id}"):
-            assignment_svc.defer_assignment(int(match.iloc[0]["ASSIGNMENT_ID"]))
-            st.success("Record deferred.")
+            with loading("Deferring this record..."):
+                assignment_svc.defer_assignment(int(match.iloc[0]["ASSIGNMENT_ID"]))
+            set_operation_flash("Record deferred.")
             st.rerun()
 
     with st.expander("2X review decision"):
         f1, f2 = st.columns(2)
         flag = f1.selectbox("2X flag", ["", "Pass", "Fail", "Needs work"], key=f"{key}_2x_flag_{selected_id}")
         if f2.button("Record 2X review", key=f"{key}_2x_btn_{selected_id}"):
-            history_svc.set_two_x_review(project, selected_id, actor, flag, actor, role)
-            st.success("2X review recorded.")
+            with loading("Saving the 2X review decision..."):
+                history_svc.set_two_x_review(project, selected_id, actor, flag, actor, role)
+            set_operation_flash("2X review recorded.")
             st.rerun()
 
     render_record_card(
@@ -143,8 +156,9 @@ def render_supervisor_page(user: dict) -> None:
     if not project:
         return
 
-    records = load_records(project)
-    supervisor_records = filter_supervisor_tosia_records(records)
+    with loading("Loading supervisor-view records..."):
+        records = load_records(project)
+        supervisor_records = filter_supervisor_tosia_records(records)
     stats_bar([("Supervisor-view records", str(len(supervisor_records))), ("Active project", project)])
 
     tab_all, tab_assign, tab_history = st.tabs(["Combined Checks", "My assignments", "Record History"])
@@ -153,7 +167,8 @@ def render_supervisor_page(user: dict) -> None:
         if supervisor_records.empty:
             st.info("No supervisor-view records for this project (blank Final Usage + FINAL_REVIEWER = Tosia).")
         else:
-            display = _supervisor_display(supervisor_records, project)
+            with loading("Preparing combined-check records..."):
+                display = _supervisor_display(supervisor_records, project)
             display = apply_record_filters(display, key_prefix="sup_all", include_usage=False)
             info_strip(f"{len(display)} supervisor-view record(s)")
             display = render_combined_checks_table(
@@ -168,7 +183,8 @@ def render_supervisor_page(user: dict) -> None:
 
     with tab_assign:
         section_title("My review assignments (supervisor view)")
-        assignments = load_assignments(assigned_to=actor, team="review", project_name=project)
+        with loading("Loading your supervisor assignments..."):
+            assignments = load_assignments(assigned_to=actor, team="review", project_name=project)
         if assignments.empty:
             st.info("Nothing assigned to you in the supervisor queue.")
         else:
@@ -177,7 +193,8 @@ def render_supervisor_page(user: dict) -> None:
             if subset.empty:
                 st.info("Your review assignments do not include any supervisor-view records.")
             else:
-                display = _supervisor_display(subset, project)
+                with loading("Preparing assigned supervisor records..."):
+                    display = _supervisor_display(subset, project)
                 display = apply_record_filters(display, key_prefix="sup_assign", include_usage=False)
                 info_strip(f"{len(display)} assigned supervisor-view record(s)")
                 assign_subset = assignments[assignments["RECORD_ID"].astype(str).isin(set(subset["RECORD_ID"].astype(str)))]

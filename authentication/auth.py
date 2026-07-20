@@ -18,6 +18,7 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 import logging
+import streamlit.components.v1 as components
 
 # Set up basic logging (warnings/errors only in production runtime)
 logging.basicConfig(level=logging.WARNING)
@@ -462,7 +463,73 @@ def add_custom_css():
     """, unsafe_allow_html=True)
 
 
+_OVERLAY_CLEANUP_JS = """
+(function () {
+    function scrub(doc) {
+        if (!doc || !doc.body) return;
+        // Only delete nodes we detached onto document.body.
+        // Never touch Streamlit-managed nodes — that causes removeChild crashes.
+        Array.from(doc.body.children).forEach(function (element) {
+            try {
+                var id = element.id || "";
+                var cls = element.className || "";
+                if (
+                    id === "ref-notif-panel" ||
+                    id === "ref-user-panel" ||
+                    id === "ref-notif-backdrop" ||
+                    (typeof cls === "string" && (
+                        cls.indexOf("ref-notif-panel") >= 0 ||
+                        cls.indexOf("ref-user-panel") >= 0 ||
+                        cls.indexOf("ref-notif-backdrop") >= 0
+                    ))
+                ) {
+                    element.remove();
+                }
+            } catch (error) {}
+        });
+        // Close any still-managed open menus without deleting them.
+        try {
+            doc.querySelectorAll(".ref-notif-panel.ref-open, .ref-user-panel.ref-open, .ref-notif-backdrop.ref-open, .ref-bell-wrap.ref-open, .ref-user-menu.ref-open")
+                .forEach(function (element) { element.classList.remove("ref-open"); });
+        } catch (error) {}
+    }
+    try {
+        scrub(document);
+        if (window.parent && window.parent.document) scrub(window.parent.document);
+    } catch (error) {}
+})();
+"""
+
+
+def _cleanup_detached_dashboard_overlays():
+    """Hide leftover RCD menus on auth pages without breaking Streamlit's DOM."""
+    st.markdown(
+        """
+        <style>
+        #ref-notif-panel,
+        #ref-user-panel,
+        #ref-notif-backdrop,
+        .ref-notif-panel,
+        .ref-user-panel,
+        .ref-notif-backdrop {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+            opacity: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    components.html(
+        f"<script>{_OVERLAY_CLEANUP_JS}</script>",
+        height=0,
+        width=0,
+    )
+
+
 def render_auth_layout(content_function, title, subtitle=None, dashboard_type="supervisor"):
+    _cleanup_detached_dashboard_overlays()
     add_custom_css()
 
     subtitle_html = f"<p class='subtitle'>{subtitle}</p>" if subtitle else ""
@@ -1170,6 +1237,8 @@ def login(client_mode: bool = False):
 
 def logout():
     redirect_page = st.session_state.get("login_redirect_page", "login")
+    # Scrub detached RCD overlays before the login page paints.
+    _cleanup_detached_dashboard_overlays()
     st.session_state.clear()
     st.success("Logged out successfully!")
     st.query_params["page"] = redirect_page

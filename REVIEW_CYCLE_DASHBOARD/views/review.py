@@ -5,12 +5,19 @@ import streamlit as st
 
 from core.data_access import load_assignments, load_combined_checks, load_records, records_to_elvis_review
 from services import assignments as assignment_svc
-from services import history as history_svc
 from services import notifications as notify_svc
 from views.combined_checks_fields import render_combined_checks_table
-from views.filters import apply_record_filters, record_id_column
-from views.record_card import render_record_card
-from views.ui import empty_state, info_strip, page_header, section_title, stats_bar
+from views.filters import apply_record_filters
+from views.ui import (
+    empty_state,
+    info_strip,
+    loading,
+    page_header,
+    progress_status,
+    section_title,
+    set_operation_flash,
+    stats_bar,
+)
 
 
 def _default_review_assignee(members: list[str]) -> str:
@@ -46,7 +53,8 @@ def render_review_page(user: dict) -> None:
     if not project:
         return
 
-    queue = assignment_svc.build_priority_queue(project, exclude_active=True, team="review")
+    with loading("Loading the review priority queue..."):
+        queue = assignment_svc.build_priority_queue(project, exclude_active=True, team="review")
     stats_bar([("Unassigned flagged records", str(len(queue))), ("Active project", project)])
 
     with st.container(border=True):
@@ -64,15 +72,22 @@ def render_review_page(user: dict) -> None:
         for col, count in ((c1, 25), (c2, 50), (c3, 100)):
             if col.button(f"Assign next {count}", key=f"pull_{count}"):
                 if assignee and assignee != "(no review users)":
-                    ids = assignment_svc.pull_next(project, assignee, count, team="review")
-                    notify_svc.notify(assignee, notify_svc.NEW_ASSIGNMENT, f"Pulled {len(ids)} review records for {project}", project)
-                    st.success(f"Assigned {len(ids)} record(s) to {assignee}.")
+                    with progress_status(
+                        f"Assigning review records to {assignee}...",
+                        complete_label="Review records assigned",
+                    ) as update:
+                        update(1, 2, "Building and assigning the review queue...")
+                        ids = assignment_svc.pull_next(project, assignee, count, team="review")
+                        update(2, 2, "Sending assignment notification...")
+                        notify_svc.notify(assignee, notify_svc.NEW_ASSIGNMENT, f"Pulled {len(ids)} review records for {project}", project)
+                    set_operation_flash(f"Assigned {len(ids)} record(s) to {assignee}.")
                     st.rerun()
         custom = c4.number_input("Custom N", min_value=1, max_value=500, value=10)
         if c4.button("Assign next N"):
             if assignee and assignee != "(no review users)":
-                ids = assignment_svc.pull_next(project, assignee, int(custom), team="review")
-                st.success(f"Assigned {len(ids)} record(s) to {assignee}.")
+                with loading(f"Assigning {int(custom)} review records to {assignee}..."):
+                    ids = assignment_svc.pull_next(project, assignee, int(custom), team="review")
+                set_operation_flash(f"Assigned {len(ids)} record(s) to {assignee}.")
                 st.rerun()
 
         with st.expander("Manager: reallocate for clean (Jason)"):
@@ -80,11 +95,18 @@ def render_review_page(user: dict) -> None:
             manager_count = rc1.number_input("Move N flagged to cleaning", min_value=1, max_value=200, value=25)
             manager_user = rc2.text_input("Assign to", value="Jason")
             if st.button("Reallocate to cleaning"):
-                clean_ids = assignment_svc.build_priority_queue(project, limit=int(manager_count), team="review")
-                id_list = clean_ids["RECORD_ID"].astype(str).tolist() if not clean_ids.empty else []
-                assignment_svc.assign_records(project, id_list, manager_user, team="cleaning", priority=50)
-                notify_svc.notify(manager_user, notify_svc.NEW_ASSIGNMENT, f"{len(id_list)} records for manager clean ({project})", project)
-                st.success(f"Assigned {len(id_list)} to {manager_user} for cleaning.")
+                with progress_status(
+                    f"Reallocating records to {manager_user}...",
+                    complete_label="Records reallocated",
+                ) as update:
+                    update(1, 3, "Selecting flagged records...")
+                    clean_ids = assignment_svc.build_priority_queue(project, limit=int(manager_count), team="review")
+                    id_list = clean_ids["RECORD_ID"].astype(str).tolist() if not clean_ids.empty else []
+                    update(2, 3, "Assigning records to cleaning...")
+                    assignment_svc.assign_records(project, id_list, manager_user, team="cleaning", priority=50)
+                    update(3, 3, "Sending assignment notification...")
+                    notify_svc.notify(manager_user, notify_svc.NEW_ASSIGNMENT, f"{len(id_list)} records for manager clean ({project})", project)
+                set_operation_flash(f"Assigned {len(id_list)} to {manager_user} for cleaning.")
                 st.rerun()
 
     tab_labels = ["My assignments"]
@@ -95,7 +117,8 @@ def render_review_page(user: dict) -> None:
     tab_idx = 0
     if is_admin_view:
         with tabs[tab_idx]:
-            subset, _ = _flagged_records(project)
+            with loading("Loading flagged records..."):
+                subset, _ = _flagged_records(project)
             if subset.empty:
                 st.info("No flagged records for this project.")
             else:
@@ -105,17 +128,18 @@ def render_review_page(user: dict) -> None:
                 display = render_combined_checks_table(
                     display, subset, user, editor_key="rev_all_editor", project_name=project
                 )
-                _open_record(project, display, subset, user, role, key="rev_all_open")
         tab_idx += 1
 
     with tabs[tab_idx]:
         section_title("My review queue")
-        assignments = load_assignments(assigned_to=actor, team="review", project_name=project)
-        records = load_records(project)
+        with loading("Loading your review assignments..."):
+            assignments = load_assignments(assigned_to=actor, team="review", project_name=project)
+            records = load_records(project)
         if assignments.empty:
             st.info("Nothing assigned to you. Use 'Assign next' to pull from the queue.")
             if not is_admin_view:
-                subset, _ = _flagged_records(project)
+                with loading("Loading flagged records..."):
+                    subset, _ = _flagged_records(project)
                 if subset.empty:
                     return
                 browse = records_to_elvis_review(subset)
@@ -123,7 +147,6 @@ def render_review_page(user: dict) -> None:
                 browse = render_combined_checks_table(
                     browse, subset, user, editor_key="rev_browse_editor", project_name=project
                 )
-                _open_record(project, browse, subset, user, role, key="rev_browse_open")
             return
 
         ids = assignments["RECORD_ID"].astype(str).tolist()
@@ -134,38 +157,3 @@ def render_review_page(user: dict) -> None:
         display = render_combined_checks_table(
             display, subset, user, editor_key="rev_queue_editor", project_name=project
         )
-        _open_record(project, display, records, user, role, key="rev_open", assignments=assignments)
-
-
-def _open_record(project, display, records, user, role, key, assignments=None) -> None:
-    id_col = record_id_column(display)
-    if not id_col or display.empty:
-        return
-    section_title("Open record details")
-    selected_id = st.selectbox("Open record", options=display[id_col].astype(str).tolist(), key=key)
-    if not selected_id:
-        return
-    actor = user.get("name") or user.get("EMAIL")
-
-    if assignments is not None and not assignments.empty:
-        match = assignments[assignments["RECORD_ID"].astype(str) == str(selected_id)]
-        if not match.empty and st.button("Defer record (push to bottom)", key=f"{key}_defer_{selected_id}"):
-            assignment_svc.defer_assignment(int(match.iloc[0]["ASSIGNMENT_ID"]))
-            st.success("Record deferred.")
-            st.rerun()
-
-    with st.expander("2X review decision"):
-        f1, f2 = st.columns(2)
-        flag = f1.selectbox("2X flag", ["", "Pass", "Fail", "Needs work"], key=f"{key}_2x_flag_{selected_id}")
-        if f2.button("Record 2X review", key=f"{key}_2x_btn_{selected_id}"):
-            history_svc.set_two_x_review(project, selected_id, actor, flag, actor, role)
-            st.success("2X review recorded.")
-            st.rerun()
-
-    render_record_card(
-        project,
-        selected_id,
-        user,
-        allow_admin=role in ("admin", "manager"),
-        widget_key_prefix=key,
-    )

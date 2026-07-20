@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
+from threading import Lock, Thread
+from time import monotonic
 from typing import Any
 
 import pandas as pd
@@ -10,6 +13,10 @@ from core.config import APP_CONFIG_SCHEMA, REVIEW_CYCLE_SCHEMA, env, fq_table
 from core.snowflake_conn import cursor, execute, fetch_df, merge_upsert
 
 BOOTSTRAP_SCHEMA = "PUBLIC"
+logger = logging.getLogger(__name__)
+_PROJECT_REFRESH_LOCK = Lock()
+_last_project_refresh = 0.0
+_project_refresh_running = False
 
 
 def _qualified(name: str) -> str:
@@ -666,4 +673,52 @@ def refresh_projects() -> int:
     """Re-load PROJECTS from APP_CONFIG without recreating all tables."""
     if not schema_is_ready():
         raise RuntimeError("Run Initialize database schema first.")
-    return seed_projects_from_app_config()
+    count = seed_projects_from_app_config()
+    try:
+        from core.streamlit_cache import clear_project_cache
+
+        clear_project_cache()
+    except Exception:
+        # Cache support is optional for CLI and background pipeline entry points.
+        pass
+    return count
+
+
+def _refresh_projects_in_background() -> None:
+    global _project_refresh_running
+
+    try:
+        refresh_projects()
+    except Exception:
+        logger.exception("Background APP_CONFIG project refresh failed")
+    finally:
+        with _PROJECT_REFRESH_LOCK:
+            _project_refresh_running = False
+
+
+def refresh_projects_if_due(interval_seconds: int = 600) -> bool:
+    """Schedule a non-blocking APP_CONFIG refresh at most once per interval."""
+    global _last_project_refresh, _project_refresh_running
+
+    now = monotonic()
+    if _project_refresh_running or (
+        _last_project_refresh and now - _last_project_refresh < interval_seconds
+    ):
+        return False
+
+    with _PROJECT_REFRESH_LOCK:
+        now = monotonic()
+        if _project_refresh_running or (
+            _last_project_refresh and now - _last_project_refresh < interval_seconds
+        ):
+            return False
+        # Throttle attempts as well as successes so a temporary Snowflake error
+        # cannot make every Streamlit rerun retry the synchronization.
+        _last_project_refresh = monotonic()
+        _project_refresh_running = True
+        Thread(
+            target=_refresh_projects_in_background,
+            name="rcd-project-refresh",
+            daemon=True,
+        ).start()
+        return True

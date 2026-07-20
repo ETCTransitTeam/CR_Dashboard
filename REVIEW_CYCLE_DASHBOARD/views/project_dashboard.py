@@ -10,6 +10,7 @@ from services import quality
 from views.ui import (
     drill_section_label,
     empty_state,
+    loading,
     metric_row,
     page_header,
     section_title,
@@ -29,7 +30,8 @@ def render_project_dashboard(user: dict) -> None:
         "Portfolio view of records across all projects.",
     )
 
-    projects = list_projects()
+    with loading("Loading project portfolio…"):
+        projects = list_projects()
     if projects.empty:
         empty_state(
             "No projects configured",
@@ -37,27 +39,28 @@ def render_project_dashboard(user: dict) -> None:
         )
         return
 
-    rows = []
-    all_records = load_records()
-    for project in projects["PROJECT_NAME"].tolist():
-        proj_records = (
-            all_records[all_records["PROJECT_NAME"] == project]
-            if not all_records.empty
-            else pd.DataFrame()
-        )
-        summary = analytics.status_summary(project, records=proj_records)
-        rows.append(
-            {
-                "Project": project,
-                "Total": summary["total"],
-                "New": summary["new"],
-                "Cleaned (Use)": summary["cleaned"],
-                "Reviewed": summary["reviewed"],
-                "Removed": summary["removed"],
-                "Pending": summary["pending"],
-            }
-        )
-    overview = pd.DataFrame(rows)
+    with loading("Preparing project portfolio metrics…"):
+        rows = []
+        all_records = load_records()
+        for project in projects["PROJECT_NAME"].tolist():
+            proj_records = (
+                all_records[all_records["PROJECT_NAME"] == project]
+                if not all_records.empty
+                else pd.DataFrame()
+            )
+            summary = analytics.status_summary(project, records=proj_records)
+            rows.append(
+                {
+                    "Project": project,
+                    "Total": summary["total"],
+                    "New": summary["new"],
+                    "Cleaned (Use)": summary["cleaned"],
+                    "Reviewed": summary["reviewed"],
+                    "Removed": summary["removed"],
+                    "Pending": summary["pending"],
+                }
+            )
+        overview = pd.DataFrame(rows)
 
     totals = overview[["Total", "Cleaned (Use)", "Reviewed", "Removed", "Pending"]].sum()
     total_n = int(totals["Total"])
@@ -95,14 +98,15 @@ def render_project_dashboard(user: dict) -> None:
         if not all_records.empty
         else pd.DataFrame()
     )
-    score = analytics.project_quality_score(project, records=proj_records)
+    with loading(f"Loading {project} quality details…"):
+        score = analytics.project_quality_score(project, records=proj_records)
+        alerts = quality.list_alerts(project)
     metric_row([
         ("Quality score", str(score["quality_score"]), "Project health index"),
         ("Removal rate", f"{score['removal_rate']}%", "Share of removed records"),
         ("Removed", f"{score['removed']:,} / {score['total']:,}", "Removed vs total"),
     ], columns=3, variant="analytics")
 
-    alerts = quality.list_alerts(project)
     if alerts.empty:
         empty_state("No alerts", "No data quality alerts for this project.")
     else:

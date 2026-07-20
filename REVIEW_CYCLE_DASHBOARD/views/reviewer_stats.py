@@ -4,7 +4,15 @@ import streamlit as st
 
 from core.data_access import load_reviewer_stats
 from pipeline.ingest import format_ingest_counts, sync_project
-from views.ui import action_row, info_strip, page_header, section_title
+from views.ui import (
+    action_row,
+    info_strip,
+    loading,
+    page_header,
+    progress_status,
+    section_title,
+    set_operation_flash,
+)
 
 
 def _friendly_error(exc: Exception) -> str:
@@ -44,15 +52,19 @@ def render_reviewer_stats_page(user: dict) -> None:
 
     with action_row():
         if st.button("Run reviewer stats", type="primary"):
-            with st.spinner("Running reviewer stats…"):
-                try:
-                    result = sync_project(project, phase="stats")
-                    st.success(format_ingest_counts(result.get("counts", {})))
-                    st.rerun()
-                except Exception as exc:
-                    st.error(_friendly_error(exc))
+            try:
+                with progress_status(
+                    "Running reviewer statistics...",
+                    complete_label="Reviewer statistics complete",
+                ) as update:
+                    result = sync_project(project, phase="stats", progress=update)
+                set_operation_flash(format_ingest_counts(result.get("counts", {})))
+                st.rerun()
+            except Exception as exc:
+                st.error(_friendly_error(exc))
 
-    stats = load_reviewer_stats(project)
+    with loading("Loading reviewer performance metrics…"):
+        stats = load_reviewer_stats(project)
     if stats.empty:
         st.info(
             "No reviewer stats yet. Click **Run reviewer stats**, or generate review flags "

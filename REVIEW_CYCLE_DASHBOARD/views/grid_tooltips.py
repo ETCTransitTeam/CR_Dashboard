@@ -148,8 +148,9 @@ def render_history_data_editor(
 
     disabled = [col for col in grid.columns if col not in editable_fields]
     disabled.extend(extra_disabled or [])
-    if "Assigned to me" in grid.columns and "Assigned to me" not in disabled:
-        disabled.append("Assigned to me")
+    for col in ("Assigned to me", "Assigned To"):
+        if col in grid.columns and col not in disabled:
+            disabled.append(col)
 
     return st.data_editor(
         grid,

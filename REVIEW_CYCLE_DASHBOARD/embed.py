@@ -21,9 +21,9 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
     """Render Review Cycle Dashboard inside the unified OD Collection app."""
     _ensure_rcd_path()
 
-    from rc_auth.access import allowed_pages
+    from rc_auth.access import allowed_pages, is_cleaning_head
     from core.config import REVIEW_CYCLE_SCHEMA, env
-    from core.schema import bootstrap_database, ensure_migrations, repair_timestamp_columns, schema_is_ready
+    from core.schema import bootstrap_database, refresh_projects_if_due, schema_is_ready
     from views.admin import render_admin_page
     from views.cleaning import render_cleaning_page
     from views.demographic import render_demographic_page
@@ -36,7 +36,15 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
     from views.reviewer_stats import render_reviewer_stats_page
     from views.supervisor import render_supervisor_page
     from views.sync_admin import render_sync_admin_page
-    from views.ui import inject_global_css, set_header_context, sidebar_account_label, sidebar_brand, sidebar_nav_label
+    from views.ui import (
+        inject_global_css,
+        loading,
+        render_operation_flash,
+        set_header_context,
+        sidebar_account_label,
+        sidebar_brand,
+        sidebar_nav_label,
+    )
 
     PAGE_HANDLERS = {
         "project_dashboard": ("Project Dashboard", render_project_dashboard),
@@ -68,17 +76,24 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
 
     inject_global_css(auth_mode=False)
 
-    if not schema_is_ready():
+    schema_ready = bool(st.session_state.get("rcd_schema_ready"))
+    if not schema_ready:
+        with loading("Opening your Review Cycle workspace..."):
+            schema_ready = schema_is_ready()
+        if schema_ready:
+            st.session_state["rcd_schema_ready"] = True
+    if not schema_ready:
         bootstrap_key = f"rcd_bootstrap_done_{REVIEW_CYCLE_SCHEMA}"
         if not st.session_state.get(bootstrap_key):
             database = env("SNOWFLAKE_DATABASE") or "(database not set)"
-            with st.spinner(f"Setting up Review Cycle schema `{database}.{REVIEW_CYCLE_SCHEMA}`..."):
+            with st.spinner("Preparing Review Cycle for first use...", show_time=True):
                 try:
                     result = bootstrap_database()
                     st.session_state[bootstrap_key] = True
+                    st.session_state["rcd_schema_ready"] = True
                     st.success(
-                        f"Initialized **{result['database']}.{result['schema']}** "
-                        f"with **{result['projects_seeded']}** project(s) from APP_CONFIG."
+                        f"Your Review Cycle workspace is ready with "
+                        f"**{result['projects_seeded']}** project(s)."
                     )
                     st.rerun()
                 except Exception as exc:
@@ -100,18 +115,9 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
                 st.rerun()
             return
 
-    try:
-        if not st.session_state.get("schema_migrations_applied"):
-            ensure_migrations()
-            st.session_state["schema_migrations_applied"] = True
-            st.session_state["timestamp_columns_repaired"] = True
-        elif not st.session_state.get("timestamp_columns_repaired"):
-            repair_timestamp_columns()
-            st.session_state["timestamp_columns_repaired"] = True
-    except Exception as exc:
-        st.session_state["schema_migration_error"] = str(exc)
-
     pages = allowed_pages(role)
+    if role == "cleaning" and not is_cleaning_head(user):
+        pages = [page for page in pages if page != "history"]
     labels = [PAGE_HANDLERS[key][0] for key in pages if key in PAGE_HANDLERS]
     keys = [key for key in pages if key in PAGE_HANDLERS]
     if not keys:
@@ -139,6 +145,9 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
 
             logout()
 
+    # Keep APP_CONFIG projects current without blocking page loads or sign-out.
+    refresh_projects_if_due()
+
     selected_key = keys[labels.index(selected_label)]
     set_header_context(
         user_name=username,
@@ -150,6 +159,7 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
     from views.ui.notifications import handle_pending_notification_actions
 
     handle_pending_notification_actions(user)
+    render_operation_flash()
     PAGE_HANDLERS[selected_key][1](user)
 
 

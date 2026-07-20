@@ -7,6 +7,8 @@ import html
 import pandas as pd
 import streamlit as st
 
+from views.ui.loading import loading, set_operation_flash
+
 
 MARK_ALL_BRIDGE_LABEL = "RCD_MARK_ALL_READ"
 MARK_ALL_BRIDGE_KEY = "rcd_mark_all_bridge"
@@ -86,10 +88,11 @@ def handle_pending_notification_actions(user: dict) -> None:
     flag = st.query_params.get("ref_notif_mark_all")
     if str(flag or "") != "1":
         return
-    _mark_all_read_for_user(user)
+    with loading("Marking notifications as read..."):
+        _mark_all_read_for_user(user)
     params = {key: value for key, value in st.query_params.items() if key != "ref_notif_mark_all"}
     st.query_params.from_dict(params)
-    st.toast("All notifications marked as read.")
+    set_operation_flash("All notifications marked as read.")
     st.rerun()
 
 
@@ -133,7 +136,13 @@ def build_notification_panel_html(user: dict, version: int) -> str:
     if items.empty:
         return '<div class="ref-notif-empty">No notifications.</div>'
 
-    parts = ['<div class="ref-notif-panel-head">Notifications</div>']
+    parts = [
+        '<div class="ref-notif-panel-head">'
+        "<span>Notifications</span>"
+        '<button type="button" class="ref-notif-close" data-ref-notif-close '
+        'aria-label="Close notifications">&times;</button>'
+        "</div>"
+    ]
     has_unread = any(_is_unread(row.get("IS_READ")) for _, row in items.iterrows())
     if has_unread:
         # Button only — never an <a href> (Streamlit/browser may open those in a new tab).
@@ -167,6 +176,7 @@ def render_notification_actions(user: dict) -> None:
         unsafe_allow_html=True,
     )
     if st.button(MARK_ALL_BRIDGE_LABEL, key=MARK_ALL_BRIDGE_KEY):
-        _mark_all_read_for_user(user)
-        st.toast("All notifications marked as read.")
+        with loading("Marking notifications as read..."):
+            _mark_all_read_for_user(user)
+        set_operation_flash("All notifications marked as read.")
         st.rerun()

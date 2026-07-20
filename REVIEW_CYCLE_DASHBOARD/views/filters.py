@@ -11,7 +11,6 @@ REVIEWER_TOSIA = "tosia"
 
 ROUTE_CANDIDATES = ["ROUTE_SURVEYEDCode", "ROUTE_SURVEYED_CODE", "ROUTE_SURVEYED"]
 INTERVIEWER_CANDIDATES = ["INTERV_INIT"]
-DATE_CANDIDATES = ["DATE", "Elvis_Date", "DATE_SUBMITTED"]
 USAGE_CANDIDATES = ["Final_Usage", "Final Usage", "FINAL_USAGE"]
 ID_CANDIDATES = ["elvis_id", "id", "RECORD_ID"]
 
@@ -101,13 +100,13 @@ def apply_record_filters(
     key_prefix: str,
     include_usage: bool = True,
 ) -> pd.DataFrame:
-    """Render route/interviewer/date/usage filters and return the filtered frame."""
+    """Render route/interviewer/id/usage filters and return the filtered frame."""
     if display.empty:
         return display
 
     route_col = _first_present(display, ROUTE_CANDIDATES)
     interviewer_col = _first_present(display, INTERVIEWER_CANDIDATES)
-    date_col = _first_present(display, DATE_CANDIDATES)
+    id_col = record_id_column(display)
     usage_col = _first_present(display, USAGE_CANDIDATES) if include_usage else None
 
     cols = st.columns(4)
@@ -125,12 +124,12 @@ def apply_record_filters(
     if usage_col:
         usages = sorted(x for x in filtered[usage_col].fillna("").astype(str).unique() if x != "")
         usage_filter = cols[2].multiselect("Final_Usage", usages, key=f"{key_prefix}_usage")
-    date_text = ""
-    if date_col:
-        date_text = cols[3].text_input(
-            "Date contains",
-            help="Filter rows where DATE, Elvis_Date, or DATE_SUBMITTED contains this text (e.g. 2026-06).",
-            key=f"{key_prefix}_date",
+    id_text = ""
+    if id_col:
+        id_text = cols[3].text_input(
+            "ID",
+            help="Filter rows by elvis_id, id, or RECORD_ID.",
+            key=f"{key_prefix}_id",
         )
 
     if route_filter:
@@ -139,7 +138,7 @@ def apply_record_filters(
         filtered = filtered[filtered[interviewer_col].astype(str).isin(interviewer_filter)]
     if usage_filter:
         filtered = filtered[filtered[usage_col].fillna("").astype(str).isin(usage_filter)]
-    if date_text:
-        filtered = filtered[filtered[date_col].astype(str).str.contains(date_text, case=False, na=False)]
+    if id_text:
+        filtered = filtered[filtered[id_col].astype(str).str.contains(id_text, case=False, na=False)]
 
     return filtered

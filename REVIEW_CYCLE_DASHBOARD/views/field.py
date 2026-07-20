@@ -18,7 +18,15 @@ from services.field_team import (
 )
 from views.filters import apply_record_filters, subset_records_for_display
 from views.grid_tooltips import grid_widget_key
-from views.ui import action_row, empty_state, info_strip, page_header, section_title
+from views.ui import (
+    action_row,
+    empty_state,
+    info_strip,
+    loading,
+    page_header,
+    progress_status,
+    section_title,
+)
 
 
 def _norm(value) -> str:
@@ -67,7 +75,8 @@ def _render_field_sheet(
         key=grid_widget_key(editor_key, prepared),
     )
     if _frames_differ(prepared, edited, editable_fields):
-        saved = persist_fn(prepared, edited, records, user)
+        with loading("Saving field-team changes..."):
+            saved = persist_fn(prepared, edited, records, user)
         if saved:
             st.success(f"Saved {saved} field change(s).")
             st.rerun()
@@ -86,14 +95,16 @@ def render_field_page(user: dict) -> None:
     if not project:
         return
 
-    records = load_records(project)
+    with loading("Loading field-team records..."):
+        records = load_records(project)
     if records.empty:
         empty_state("No records available", "Run Fetch latest records on Elvis Review or Sync & Admin for this project.")
         return
 
-    elvis_review = records_to_elvis_review(records)
-    remove_sheet = build_remove_or_delete_sheet(records, elvis_review=elvis_review)
-    supervisor_sheet = build_supervisor_remark_sheet(records, project, elvis_review=elvis_review)
+    with loading("Preparing field-team worksheets..."):
+        elvis_review = records_to_elvis_review(records)
+        remove_sheet = build_remove_or_delete_sheet(records, elvis_review=elvis_review)
+        supervisor_sheet = build_supervisor_remark_sheet(records, project, elvis_review=elvis_review)
 
     tab_remove, tab_supervisor = st.tabs(["Remove or Delete", "Supervisor Remark"])
 
@@ -135,10 +146,12 @@ def render_field_page(user: dict) -> None:
 
     st.divider()
     section_title("Export")
+    with loading("Preparing field-team Excel download..."):
+        workbook_bytes = field_team_workbook_bytes(remove_sheet, supervisor_sheet)
     with action_row():
         st.download_button(
             "Download field-team Excel",
-            data=field_team_workbook_bytes(remove_sheet, supervisor_sheet),
+            data=workbook_bytes,
             file_name=f"{project}_Removed_or_Deleted_Records_by_{date.today():%Y%m%d}.xlsx".replace(" ", "_"),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
@@ -147,9 +160,12 @@ def render_field_page(user: dict) -> None:
     with action_row():
         if st.button("Generate Removed IDs export"):
             try:
-                with st.spinner("Running field-team script..."):
+                with progress_status(
+                    "Generating Removed IDs export...",
+                    complete_label="Removed IDs export is ready",
+                ) as update:
                     ctx = build_context(project)
-                    outputs = run_post_cleaning_pipeline(ctx)
+                    outputs = run_post_cleaning_pipeline(ctx, progress=update)
                 removed_path = outputs.get("removed_ids_xlsx")
                 if removed_path and removed_path.exists():
                     with open(removed_path, "rb") as handle:

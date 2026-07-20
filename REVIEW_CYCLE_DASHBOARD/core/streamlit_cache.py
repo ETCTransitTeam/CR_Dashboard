@@ -122,6 +122,12 @@ def cached_get_project(_version: int, project_name: str) -> dict[str, Any] | Non
     return _get_project_uncached(project_name)
 
 
+def clear_project_cache() -> None:
+    """Make project additions and configuration changes visible immediately."""
+    cached_list_projects.clear()
+    cached_get_project.clear()
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def cached_unread_count(_version: int, recipient: str) -> int:
     from services import notifications as notify_svc

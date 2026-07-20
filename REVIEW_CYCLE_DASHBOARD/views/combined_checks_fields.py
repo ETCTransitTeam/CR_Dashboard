@@ -18,6 +18,7 @@ from views.record_fields import (
     editable_column_config,
     prepare_editable_display,
 )
+from views.ui import loading
 
 TWO_X_FLAG_OPTIONS = ["", "Pass", "Fail", "Needs work"]
 
@@ -189,7 +190,10 @@ def render_combined_checks_table(
                 parts.append(f"{rid}:{vals}")
             signature = "\n".join(parts)
             if st.session_state.get(sig_key) != signature:
-                changed = persist_combined_changes(compare_before, compare_after, records, user)
+                with loading("Saving combined-check changes..."):
+                    changed = persist_combined_changes(
+                        compare_before, compare_after, records, user
+                    )
                 if changed:
                     st.session_state[sig_key] = signature
                     st.toast(f"Saved {changed} field change(s).")

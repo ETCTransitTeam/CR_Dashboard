@@ -5,29 +5,39 @@ import streamlit as st
 from core.data_access import load_records
 from services import quality
 from services import demographic_rules
-from views.ui import action_row, empty_state, info_strip, page_header, section_title, stats_bar
+from views.ui import (
+    action_row,
+    empty_state,
+    info_strip,
+    loading,
+    page_header,
+    section_title,
+    set_operation_flash,
+    stats_bar,
+)
 
 
 def _ensure_demographics(project: str, *, force: bool = False) -> bool:
     """Generate demographic checks from Elvis Review + Elvis export when data is stale."""
-    records = load_records(project)
+    with loading("Checking demographic source data..."):
+        records = load_records(project)
+        fingerprint = quality.demographics_data_fingerprint(project)
+        output = quality.load_demographic_checks(project, status="fail")
     if records.empty:
         return False
 
-    fingerprint = quality.demographics_data_fingerprint(project)
     cache_key = f"demo_gen_fp_{project}"
-    output = quality.load_demographic_checks(project, status="fail")
     stale = st.session_state.get(cache_key) != fingerprint
     if not force and not stale and not output.empty:
         return True
 
     label = "Regenerating demographic checks..." if force else "Generating configured demographic checks..."
-    with st.spinner(label):
+    with loading(label):
         try:
             result = quality.generate_demographic_checks_from_review(project)
             st.session_state[cache_key] = fingerprint
             if force:
-                st.success(f"Regenerated {len(result)} failed check row(s).")
+                set_operation_flash(f"Regenerated {len(result)} failed check row(s).")
             elif stale or output.empty:
                 info_strip(f"Loaded {len(result)} configured demographic check row(s).")
             return True
@@ -53,7 +63,9 @@ def render_demographic_page(user: dict) -> None:
     if not project:
         return
 
-    if load_records(project).empty:
+    with loading("Loading demographic review records..."):
+        records = load_records(project)
+    if records.empty:
         empty_state("No records yet", "Run Sync & Admin or Fetch latest records on Elvis Review first.")
         return
 
@@ -65,7 +77,8 @@ def render_demographic_page(user: dict) -> None:
         else:
             _ensure_demographics(project)
 
-    output = demographic_rules.evaluate_project_script_output(project)
+    with loading("Evaluating demographic review results..."):
+        output = demographic_rules.evaluate_project_script_output(project)
     if output.empty:
         st.info(
             "No failed demographic checks, or checks could not be generated. "
@@ -90,7 +103,7 @@ def render_demographic_page(user: dict) -> None:
     with action_row():
         st.download_button(
             "Download CSV",
-            data=demographic_rules.export_results_csv(project),
+            data=output.to_csv(index=False).encode("utf-8"),
             file_name=f"{project}_demographic_checks.csv".replace(" ", "_"),
             mime="text/csv",
         )

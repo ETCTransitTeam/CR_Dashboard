@@ -129,6 +129,10 @@ def sync_project(project_name: str | None, phase: str = "auto", progress=None) -
     outputs: dict[str, Any] | None = None
     try:
         outputs = run_full_pipeline(project_name, phase=phase, progress=progress)
+        if progress is not None and hasattr(progress, "set_total") and hasattr(progress, "update"):
+            final_step = int(getattr(progress, "total", 1)) + 1
+            progress.set_total(final_step)
+            progress.update(final_step, "Saving pipeline results to Snowflake...")
         counts = ingest_pipeline_outputs(project_name, outputs)
         return {"outputs": outputs, "counts": counts}
     finally:
@@ -146,6 +150,10 @@ def sync_and_export(
 ) -> dict[str, Any]:
     result = sync_project(project_name, phase=phase, progress=progress)
     if export:
+        if progress is not None and hasattr(progress, "set_total") and hasattr(progress, "update"):
+            final_step = int(getattr(progress, "total", 1)) + 1
+            progress.set_total(final_step)
+            progress.update(final_step, "Building and uploading the KingElvis workbook...")
         result["kingelvis_location"] = export_kingelvis(project_name)
     try:
         from core.streamlit_cache import bump_data_cache

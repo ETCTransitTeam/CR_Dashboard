@@ -6,7 +6,15 @@ import pandas as pd
 import streamlit as st
 
 from services import demographic_rules
-from views.ui import empty_state, info_strip, page_header, section_title, stats_bar
+from views.ui import (
+    empty_state,
+    info_strip,
+    loading,
+    page_header,
+    section_title,
+    set_operation_flash,
+    stats_bar,
+)
 
 
 def _actor(user: dict) -> str:
@@ -161,40 +169,41 @@ def _render_new_flag_builder(project: str, user: dict) -> None:
                 raise ValueError("Add at least one condition.")
             expression_key = "all" if logic == "All conditions" else "any"
             params = {"expression": {expression_key: parsed_conditions}}
-            demographic_rules.create_or_update_flag_definition(
-                {
-                    "FLAG_KEY": flag_key,
-                    "LABEL": label.strip(),
-                    "CATEGORY": category,
-                    "DESCRIPTION": description.strip(),
-                    "SEVERITY": severity,
-                    "DEFAULT_ENABLED": False,
-                    "DEFAULT_PARAMS": params,
-                    "MESSAGE_TEMPLATE": message.strip() or label.strip(),
-                    "DISPLAY_ORDER": 500,
-                },
-                _actor(user),
-            )
-            demographic_rules.save_project_flag_config(
-                project,
-                pd.DataFrame(
-                    [
-                        {
-                            "FLAG_KEY": flag_key,
-                            "EFFECTIVE_ENABLED": enabled,
-                            "EFFECTIVE_LABEL": label.strip(),
-                            "EFFECTIVE_DESCRIPTION": description.strip(),
-                            "EFFECTIVE_SEVERITY": severity,
-                            "EFFECTIVE_MESSAGE": message.strip() or label.strip(),
-                            "PARAMS": params,
-                            "DEFAULT_PARAMS": params,
-                            "FIELD_ALIASES": {},
-                        }
-                    ]
-                ),
-                _actor(user),
-            )
-            st.success(f"Created flag column '{flag_key}' for {project}.")
+            with loading(f"Creating demographic flag '{flag_key}'..."):
+                demographic_rules.create_or_update_flag_definition(
+                    {
+                        "FLAG_KEY": flag_key,
+                        "LABEL": label.strip(),
+                        "CATEGORY": category,
+                        "DESCRIPTION": description.strip(),
+                        "SEVERITY": severity,
+                        "DEFAULT_ENABLED": False,
+                        "DEFAULT_PARAMS": params,
+                        "MESSAGE_TEMPLATE": message.strip() or label.strip(),
+                        "DISPLAY_ORDER": 500,
+                    },
+                    _actor(user),
+                )
+                demographic_rules.save_project_flag_config(
+                    project,
+                    pd.DataFrame(
+                        [
+                            {
+                                "FLAG_KEY": flag_key,
+                                "EFFECTIVE_ENABLED": enabled,
+                                "EFFECTIVE_LABEL": label.strip(),
+                                "EFFECTIVE_DESCRIPTION": description.strip(),
+                                "EFFECTIVE_SEVERITY": severity,
+                                "EFFECTIVE_MESSAGE": message.strip() or label.strip(),
+                                "PARAMS": params,
+                                "DEFAULT_PARAMS": params,
+                                "FIELD_ALIASES": {},
+                            }
+                        ]
+                    ),
+                    _actor(user),
+                )
+            set_operation_flash(f"Created flag column '{flag_key}' for {project}.")
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
@@ -247,7 +256,8 @@ def render_demographic_config_page(user: dict) -> None:
     _render_new_flag_builder(project, user)
 
     section_title("Flag rules")
-    editor = _editor_frame(project)
+    with loading("Loading project demographic flag rules..."):
+        editor = _editor_frame(project)
     if editor.empty:
         empty_state("No flags", "Default flag definitions could not be loaded.")
         return
@@ -299,15 +309,17 @@ def render_demographic_config_page(user: dict) -> None:
                 save_frame = editor.copy()
                 for col in visible_columns:
                     save_frame[col] = edited[col]
-                count = demographic_rules.save_project_flag_config(project, save_frame, _actor(user))
-                st.success(f"Saved {count} configuration row(s).")
+                with loading("Saving demographic flag configuration..."):
+                    count = demographic_rules.save_project_flag_config(project, save_frame, _actor(user))
+                set_operation_flash(f"Saved {count} configuration row(s).")
                 st.rerun()
             except Exception as exc:
                 st.error(str(exc))
     with c2:
         if st.button("Preview current results", use_container_width=True):
             try:
-                preview = demographic_rules.preview_project_rules(project)
+                with loading("Evaluating demographic rules against preview records..."):
+                    preview = demographic_rules.preview_project_rules(project)
                 if preview.empty:
                     st.info("Preview found no failed checks.")
                 else:

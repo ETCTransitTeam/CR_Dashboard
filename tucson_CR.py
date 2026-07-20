@@ -230,6 +230,7 @@ else:
             f'<meta http-equiv="refresh" content="0;url=/?page={redirect_page}">',
             unsafe_allow_html=True
         )
+        st.stop()
     else:
         enforce_client_project_session()
         if current_page in ("admin_portal_select", "portal_select"):
@@ -276,8 +277,9 @@ else:
             st.query_params["page"] = "review_cycle"
             st.rerun()
 
-        selected_schema = st.session_state.get("schema", None)
-        selected_project = str(st.session_state.get("selected_project", "")).lower()
+        selected_schema = st.session_state.get("schema") or ""
+        selected_project = str(st.session_state.get("selected_project", "") or "").lower()
+        schema_key = str(selected_schema).lower()
         def create_snowflake_connection():
             # Get selected project and agency
             selected_agency = st.session_state.get("selected_agency", None)
@@ -946,7 +948,27 @@ else:
             return PAGE_MAPPING.get(selected_page, "main")
         
 
-        user = st.session_state["user"]
+        user = st.session_state.get("user")
+        if not isinstance(user, dict) or not user:
+            # Recover from a rare case where JWT is still valid but user dict was dropped.
+            from authentication.auth import decode_jwt
+
+            decoded = decode_jwt(st.session_state.get("token")) if st.session_state.get("token") else None
+            if decoded:
+                user = {
+                    "email": decoded.get("email", ""),
+                    "username": decoded.get("username", ""),
+                    "role": decoded.get("role", ""),
+                }
+                st.session_state["user"] = user
+            else:
+                st.error("Session incomplete. Please log in again.")
+                st.session_state["logged_in"] = False
+                st.markdown(
+                    '<meta http-equiv="refresh" content="0;url=/?page=login">',
+                    unsafe_allow_html=True,
+                )
+                st.stop()
         username = user["username"]
         email = user["email"]
         role = user["role"]
@@ -1589,23 +1611,23 @@ else:
                     menu_items.extend(["🚫  Refusal Analysis",
                     "🗺️  Location Maps","👥  Demographic Review"])
 
-                if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in selected_schema.lower()):
+                if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in schema_key):
                     menu_items.append("↺   Clone Records")
 
                 if any(p in selected_project for p in ['lacmta_feeder', 'kcata', 'actransit', 'salem']):
                     menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
 
-                if 'rail' in selected_schema.lower():
+                if 'rail' in schema_key:
                     menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
 
                 # New/unknown projects (e.g. LACMTA_TEST_4): show full dashboard menu when nothing above matched
                 if len(menu_items) == 4 and selected_project:
                     menu_items.extend(["🚫  Refusal Analysis",
                         "🗺️  Location Maps", "👥  Demographic Review"])
-                    if 'rail' not in selected_schema.lower():
+                    if 'rail' not in schema_key:
                         menu_items.append("↺   Clone Records")
                     menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
-                    if 'rail' in selected_schema.lower():
+                    if 'rail' in schema_key:
                         menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
 
             # --- Session State ---
@@ -7303,7 +7325,7 @@ else:
             st.stop()
 
             
-        if 'rail' in selected_schema.lower():
+        if 'rail' in schema_key:
         
             if current_page == "weekday":
                 weekday_page()

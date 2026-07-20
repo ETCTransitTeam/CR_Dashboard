@@ -15,7 +15,15 @@ from pipeline.runner import build_context, cleanup_workspace, run_post_cleaning_
 from services import notifications as notify_svc
 from services import quality
 from services import sync as sync_svc
-from views.ui import info_strip, page_header, section_title, stats_bar
+from views.ui import (
+    info_strip,
+    loading,
+    page_header,
+    progress_status,
+    section_title,
+    set_operation_flash,
+    stats_bar,
+)
 
 
 def _require_project(project: str | None) -> bool:
@@ -64,7 +72,8 @@ def render_sync_admin_page(user: dict) -> None:
     )
     actor = user.get("name") or user.get("EMAIL")
 
-    projects = list_projects()
+    with loading("Loading available projects..."):
+        projects = list_projects()
     project_names = projects["PROJECT_NAME"].tolist() if not projects.empty else []
 
     if not project_names:
@@ -74,11 +83,12 @@ def render_sync_admin_page(user: dict) -> None:
         )
         if st.button("Refresh projects from APP_CONFIG", type="primary"):
             try:
-                count = refresh_projects()
+                with loading("Refreshing projects from APP_CONFIG..."):
+                    count = refresh_projects()
                 if count == 0:
                     st.warning("Query succeeded but returned 0 active projects.")
                 else:
-                    st.success(f"Loaded {count} project(s).")
+                    set_operation_flash(f"Loaded {count} project(s).")
                     st.rerun()
             except Exception as exc:
                 st.error(str(exc))
@@ -96,7 +106,8 @@ def render_sync_admin_page(user: dict) -> None:
 
         if project:
             render_sync_banner(project)
-            state = get_sync_state(project)
+            with loading("Loading project sync status..."):
+                state = get_sync_state(project)
             if state:
                 _render_project_sync_state(state)
             else:
@@ -120,42 +131,63 @@ def render_sync_admin_page(user: dict) -> None:
                     use_container_width=True,
                 ):
                     if _require_project(project):
-                        with st.spinner("Running auto-approval pipeline..."):
-                            try:
-                                result = sync_and_export(project, phase="auto", export=False)
-                                st.success(format_ingest_counts(result["counts"]))
+                        try:
+                            with progress_status(
+                                f"Running weekly cycle for {project}...",
+                                complete_label="Weekly cycle complete",
+                            ) as update:
+                                result = sync_and_export(project, phase="auto", export=False, progress=update)
+                                update(1, 1, "Sending weekly cycle notification...")
                                 notify_svc.notify(actor, notify_svc.SYNC_COMPLETED, f"Weekly cycle complete for {project}", project)
-                            except Exception as exc:
-                                st.error(str(exc))
+                            st.success(format_ingest_counts(result["counts"]))
+                        except Exception as exc:
+                            st.error(str(exc))
         with c2:
             with st.container(border=True):
                 st.markdown("**Review flags**")
                 st.caption("Generate flags and combined checks.")
                 if st.button(
                     "Generate review flags",
-                    disabled=not project_names,
+                    disabled=not project,
                     help="Flag chain -> FLAGS / COMBINED_CHECKS",
                     use_container_width=True,
                 ):
                     if _require_project(project):
-                        with st.spinner("Running flags + stats pipeline..."):
-                            try:
-                                result = sync_and_export(project, phase="flags", export=False)
-                                st.success(format_ingest_counts(result["counts"]))
-                                quality.compute_quality_alerts(project)
-                            except Exception as exc:
-                                st.error(str(exc))
+                        try:
+                            with progress_status(
+                                f"Generating review flags for {project}...",
+                                complete_label="Review flags and quality alerts complete",
+                            ) as update:
+                                result = sync_and_export(project, phase="flags", export=False, progress=update)
+                                update(1, 2, "Computing quality alerts...")
+                                alerts = quality.compute_quality_alerts(project)
+                                update(2, 2, "Notifying administrators about quality alerts...")
+                                for admin in notify_svc.admins():
+                                    notify_svc.notify(
+                                        admin,
+                                        notify_svc.DATA_QUALITY_ALERT,
+                                        f"{len(alerts)} quality alert(s) for {project}",
+                                        project,
+                                    )
+                            st.success(format_ingest_counts(result["counts"]))
+                        except Exception as exc:
+                            st.error(str(exc))
         with c3:
             with st.container(border=True):
                 st.markdown("**Removed IDs**")
                 st.caption("Create the field-team removed/deleted export.")
-                if st.button("Generate removed IDs", disabled=not project_names, help="Removed_ids_field_team.py", use_container_width=True):
+                if st.button("Generate removed IDs", disabled=not project, help="Removed_ids_field_team.py", use_container_width=True):
                     if _require_project(project):
-                        with st.spinner("Running field-team script..."):
-                            ctx = None
-                            try:
+                        ctx = None
+                        try:
+                            with progress_status(
+                                f"Generating removed IDs for {project}...",
+                                complete_label="Removed IDs export ready",
+                            ) as update:
                                 ctx = build_context(project)
-                                outputs = run_post_cleaning_pipeline(ctx)
+                                outputs = run_post_cleaning_pipeline(ctx, progress=update)
+                                update.set_total(update.total + 1)
+                                update.advance("Preparing removed IDs download...")
                                 removed_path = outputs.get("removed_ids_xlsx")
                                 if removed_path and removed_path.exists():
                                     with open(removed_path, "rb") as handle:
@@ -168,21 +200,22 @@ def render_sync_admin_page(user: dict) -> None:
                                         )
                                 else:
                                     st.warning("Removed IDs file was not generated.")
-                            except Exception as exc:
-                                st.error(str(exc))
-                            finally:
-                                if ctx is not None:
-                                    cleanup_workspace(ctx)
+                        except Exception as exc:
+                            st.error(str(exc))
+                        finally:
+                            if ctx is not None:
+                                cleanup_workspace(ctx)
 
         c4, c5, c6 = st.columns(3)
         with c4:
             with st.container(border=True):
                 st.markdown("**KingElvis export**")
                 st.caption("Export the current review file.")
-                if st.button("Export KingElvis", disabled=not project_names, use_container_width=True):
+                if st.button("Export KingElvis", disabled=not project, use_container_width=True):
                     if _require_project(project):
                         try:
-                            location = export_kingelvis(project)
+                            with loading(f"Exporting KingElvis review file for {project}..."):
+                                location = export_kingelvis(project)
                             st.success(f"Exported to {location}")
                         except Exception as exc:
                             st.error(str(exc))
@@ -190,13 +223,19 @@ def render_sync_admin_page(user: dict) -> None:
             with st.container(border=True):
                 st.markdown("**Quality alerts**")
                 st.caption("Recompute data-quality alert rows.")
-                if st.button("Recompute quality alerts", disabled=not project_names, use_container_width=True):
+                if st.button("Recompute quality alerts", disabled=not project, use_container_width=True):
                     if _require_project(project):
                         try:
-                            alerts = quality.compute_quality_alerts(project)
+                            with progress_status(
+                                f"Recomputing quality alerts for {project}...",
+                                complete_label="Quality alerts recomputed",
+                            ) as update:
+                                update(1, 2, "Computing quality alert rows...")
+                                alerts = quality.compute_quality_alerts(project)
+                                update(2, 2, "Notifying administrators...")
+                                for admin in notify_svc.admins():
+                                    notify_svc.notify(admin, notify_svc.DATA_QUALITY_ALERT, f"{len(alerts)} quality alert(s) for {project}", project)
                             st.success(f"{len(alerts)} alert(s) computed.")
-                            for admin in notify_svc.admins():
-                                notify_svc.notify(admin, notify_svc.DATA_QUALITY_ALERT, f"{len(alerts)} quality alert(s) for {project}", project)
                         except Exception as exc:
                             st.error(str(exc))
         with c6:
@@ -205,17 +244,17 @@ def render_sync_admin_page(user: dict) -> None:
                 st.caption("Run configured demographic checks.")
                 if st.button(
                     "Run demographic checks",
-                    disabled=not project_names,
+                    disabled=not project,
                     help="Configured demographic rules -> DEMOGRAPHIC_CHECKS",
                     use_container_width=True,
                 ):
                     if _require_project(project):
-                        with st.spinner("Running configured demographic checks..."):
-                            try:
+                        try:
+                            with loading(f"Running configured demographic checks for {project}..."):
                                 demo_df = quality.generate_demographic_checks_from_review(project)
-                                st.success(f"Ingested {len(demo_df)} demographic check row(s).")
-                            except Exception as exc:
-                                st.error(str(exc))
+                            st.success(f"Ingested {len(demo_df)} demographic check row(s).")
+                        except Exception as exc:
+                            st.error(str(exc))
 
     st.divider()
     section_title("Maintenance actions")
@@ -229,23 +268,29 @@ def render_sync_admin_page(user: dict) -> None:
             )
             if st.button(
                 "Backfill route codes",
-                disabled=not project_names,
+                disabled=not project,
                 use_container_width=True,
                 help="Backfill ROUTE_SURVEYEDCode from Elvis export",
             ):
                 if _require_project(project):
-                    with st.spinner("Staging Elvis export and backfilling route codes..."):
-                        ctx = None
-                        try:
+                    ctx = None
+                    try:
+                        with progress_status(
+                            f"Backfilling route codes for {project}...",
+                            complete_label="Route code backfill complete",
+                        ) as update:
+                            update(1, 3, "Preparing pipeline workspace...")
                             ctx = build_context(project)
+                            update(2, 3, "Staging the Elvis export...")
                             stage_inputs(ctx)
+                            update(3, 3, "Backfilling route codes...")
                             count = ensure_route_codes_for_project(project)
-                            st.success(f"Updated {count} record(s) with route codes.")
-                        except Exception as exc:
-                            st.error(str(exc))
-                        finally:
-                            if ctx is not None:
-                                cleanup_workspace(ctx)
+                        st.success(f"Updated {count} record(s) with route codes.")
+                    except Exception as exc:
+                        st.error(str(exc))
+                    finally:
+                        if ctx is not None:
+                            cleanup_workspace(ctx)
 
     with refresh_card:
         with st.container(border=True):
@@ -255,12 +300,15 @@ def render_sync_admin_page(user: dict) -> None:
                 "changed since last seen."
             )
             if st.button("Run morning refresh", disabled=not project_names, use_container_width=True):
-                with st.spinner("Checking OD freshness and pulling changed projects..."):
-                    try:
-                        summary = sync_svc.morning_refresh()
-                        _render_refresh_summary(summary)
-                    except Exception as exc:
-                        st.error(str(exc))
+                try:
+                    with progress_status(
+                        "Checking OD freshness across projects...",
+                        complete_label="Morning refresh complete",
+                    ) as update:
+                        summary = sync_svc.morning_refresh(progress=update)
+                    _render_refresh_summary(summary)
+                except Exception as exc:
+                    st.error(str(exc))
 
     st.divider()
     section_title("Bootstrap")
@@ -270,23 +318,32 @@ def render_sync_admin_page(user: dict) -> None:
         with c1:
             if st.button("Test Snowflake connection", use_container_width=True):
                 try:
-                    st.success(test_connection())
+                    with loading("Testing the Snowflake connection..."):
+                        connection_result = test_connection()
+                    st.success(connection_result)
                 except Exception as exc:
                     st.error(str(exc))
             if st.button("Initialize / migrate database schema", use_container_width=True):
                 if schema_is_ready():
                     st.info(f"Schema `{REVIEW_CYCLE_SCHEMA}` already exists. Re-running is safe (uses IF NOT EXISTS).")
                 try:
-                    result = bootstrap_database()
-                    ensure_migrations()
-                    st.success(result)
+                    with progress_status(
+                        "Initializing Review Cycle database...",
+                        complete_label="Database schema is ready",
+                    ) as update:
+                        update(1, 2, "Bootstrapping database objects...")
+                        result = bootstrap_database()
+                        update(2, 2, "Applying database migrations...")
+                        ensure_migrations()
+                    set_operation_flash(str(result))
                     st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
         with c2:
             if st.button("Repair timestamp columns", help="Repair UPDATED_AT / CREATED_AT", use_container_width=True):
                 try:
-                    repaired = repair_timestamp_columns()
+                    with loading("Repairing timestamp column types..."):
+                        repaired = repair_timestamp_columns()
                     if repaired:
                         st.success(f"Repaired: {', '.join(repaired)}")
                     else:
@@ -296,8 +353,9 @@ def render_sync_admin_page(user: dict) -> None:
                     st.error(str(exc))
             if st.button("Refresh projects from APP_CONFIG", key="refresh_projects_btn", use_container_width=True):
                 try:
-                    count = refresh_projects()
-                    st.success(f"Loaded {count} project(s).")
+                    with loading("Refreshing projects from APP_CONFIG..."):
+                        count = refresh_projects()
+                    set_operation_flash(f"Loaded {count} project(s).")
                     st.rerun()
                 except Exception as exc:
                     st.error(str(exc))

@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from services import history as history_svc
+from views.ui import loading
 
 USAGE_OPTIONS = ["", "Use", "Remove"]
 
@@ -201,8 +202,10 @@ def render_editable_elvis_table(
             selectbox_options={"Final_Usage": USAGE_OPTIONS},
         )
 
-        compare_before = _strip_for_config(prepared).drop(columns=["Assigned to me"], errors="ignore")
-        compare_after = edited.drop(columns=["Assigned to me"], errors="ignore")
+        compare_before = _strip_for_config(prepared).drop(
+            columns=["Assigned to me", "Assigned To"], errors="ignore"
+        )
+        compare_after = edited.drop(columns=["Assigned to me", "Assigned To"], errors="ignore")
         if _editable_frames_differ(compare_before, compare_after):
             # Avoid re-saving the same editor state on every fragment rerun.
             sig_key = f"{editor_key}__last_saved_sig"
@@ -216,7 +219,10 @@ def render_editable_elvis_table(
                 parts.append(f"{rid}:{vals}")
             signature = "\n".join(parts)
             if st.session_state.get(sig_key) != signature:
-                changed = persist_editable_elvis_changes(compare_before, compare_after, records, user)
+                with loading("Saving Elvis Review changes..."):
+                    changed = persist_editable_elvis_changes(
+                        compare_before, compare_after, records, user
+                    )
                 if changed:
                     st.session_state[sig_key] = signature
                     st.toast(f"Saved {changed} field change(s).")

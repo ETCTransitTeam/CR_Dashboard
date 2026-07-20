@@ -16,12 +16,22 @@ from core.s3_utils import dataframe_to_excel_bytes
 from core.sync_watcher import render_sync_banner
 from pipeline.elvis_review_format import has_transfer_suggestions
 from pipeline.ingest import format_ingest_counts, sync_and_export
+from rc_auth.access import is_cleaning_head
 from services import assignments as assignment_svc
 from services import notifications as notify_svc
 from views.filters import apply_record_filters, record_id_column, subset_records_for_display
-from views.record_card import render_record_card
 from views.record_fields import render_editable_elvis_table
-from views.ui import empty_state, filter_panel, page_header, section_title, stats_bar, workspace_toolbar
+from views.ui import (
+    empty_state,
+    filter_panel,
+    loading,
+    page_header,
+    progress_status,
+    section_title,
+    set_operation_flash,
+    stats_bar,
+    workspace_toolbar,
+)
 
 # Auto-approved by pipeline: Use + Tosia or Field approved — hidden from default cleaning queue.
 _CLEANING_EXCLUDED_REVIEWERS = frozenset({"tosia", "field approved"})
@@ -159,7 +169,8 @@ def _build_elvis_review_excel_bytes(display: pd.DataFrame) -> bytes | None:
 
 
 def _render_queue_downloads(display: pd.DataFrame, project_filter: list[str]) -> None:
-    excel_bytes = _build_elvis_review_excel_bytes(display)
+    with loading("Preparing the cleaning queue Excel download..."):
+        excel_bytes = _build_elvis_review_excel_bytes(display)
     if not excel_bytes:
         return
     label = project_filter[0] if len(project_filter) == 1 else "multi_project"
@@ -179,21 +190,6 @@ def _records_for_projects(project_filter: list[str], only_new: bool = False) -> 
     if not project_filter:
         return load_records_for_projects(None, only_new=only_new)
     return load_records_for_projects(project_filter, only_new=only_new)
-
-
-def _open_selected(display: pd.DataFrame, records: pd.DataFrame, user: dict, key: str) -> None:
-    id_col = record_id_column(display)
-    if not id_col:
-        return
-    options = display[id_col].astype(str).tolist()
-    selected_id = st.selectbox("Open record", options=options, key=key)
-    if not selected_id:
-        return
-    match = records[records["RECORD_ID"].astype(str) == str(selected_id)]
-    if match.empty:
-        return
-    project = match["PROJECT_NAME"].iloc[0]
-    render_record_card(project, selected_id, user, allow_admin=False)
 
 
 def _assignments_for_user(user: dict, team: str = "cleaning") -> pd.DataFrame:
@@ -222,35 +218,74 @@ def _assigned_record_ids(user: dict, project_filter: list[str]) -> set[str]:
     return set(assignments["RECORD_ID"].astype(str).tolist())
 
 
-def _add_assigned_to_me_column(display: pd.DataFrame, assigned_ids: set[str]) -> pd.DataFrame:
+def _norm_record_id(value) -> str:
+    text = str(value).strip()
+    if text.endswith(".0"):
+        try:
+            return str(int(float(text)))
+        except ValueError:
+            pass
+    return text
+
+
+def _cleaning_assignee_overlay() -> dict[str, str]:
+    """In-session assignee overrides so metrics update immediately after assign."""
+    return st.session_state.setdefault("cleaning_head_assignee_overlay", {})
+
+
+def _cleaning_assignee_map(project_filter: list[str]) -> dict[str, str]:
+    """Map RECORD_ID -> current cleaning ASSIGNED_TO for the given projects."""
+    frames = []
+    if project_filter:
+        for project in project_filter:
+            df = load_assignments(team="cleaning", project_name=project)
+            if not df.empty:
+                frames.append(df)
+    else:
+        df = load_assignments(team="cleaning")
+        if not df.empty:
+            frames.append(df)
+    result: dict[str, str] = {}
+    if frames:
+        all_a = pd.concat(frames, ignore_index=True)
+        if not all_a.empty and "RECORD_ID" in all_a.columns:
+            # load_assignments is already ordered by PRIORITY / ASSIGNED_AT; keep first per record.
+            all_a = all_a.drop_duplicates(subset=["RECORD_ID"], keep="first")
+            for _, row in all_a.iterrows():
+                assignee = str(row.get("ASSIGNED_TO") or "").strip()
+                if not assignee:
+                    continue
+                result[_norm_record_id(row["RECORD_ID"])] = assignee
+    # Prefer live DB values; keep session overlay for ids not yet visible in cache.
+    for rid, assignee in _cleaning_assignee_overlay().items():
+        result.setdefault(_norm_record_id(rid), assignee)
+    return result
+
+
+def _remember_assignments(record_ids: list[str], cleaner: str) -> None:
+    overlay = _cleaning_assignee_overlay()
+    for rid in record_ids:
+        overlay[_norm_record_id(rid)] = cleaner
+
+
+def _add_assigned_to_column(display: pd.DataFrame, assignee_map: dict[str, str]) -> pd.DataFrame:
     if display.empty:
         return display
     out = display.copy()
     id_col = record_id_column(out)
     if not id_col:
-        out["Assigned to me"] = "No"
+        out.insert(0, "Assigned To", "Unassigned")
         return out
-    out["Assigned to me"] = out[id_col].astype(str).map(lambda rid: "Yes" if rid in assigned_ids else "No")
-    return out
-
-
-def _apply_assignment_display_options(
-    display: pd.DataFrame,
-    *,
-    only_assigned: bool,
-    assignments_first: bool,
-    assigned_ids: set[str],
-) -> pd.DataFrame:
-    if display.empty:
-        return display
-    out = display.copy()
-    id_col = record_id_column(out)
-    if only_assigned and id_col and assigned_ids:
-        out = out[out[id_col].astype(str).isin(assigned_ids)].copy()
-    if assignments_first and "Assigned to me" in out.columns:
-        out = out.assign(_sort_key=out["Assigned to me"].map(lambda v: 0 if v == "Yes" else 1))
-        out = out.sort_values("_sort_key", kind="stable").drop(columns=["_sort_key"])
-    return out
+    out["Assigned To"] = out[id_col].map(
+        lambda rid: assignee_map.get(_norm_record_id(rid)) or "Unassigned"
+    )
+    cols = [c for c in out.columns if c != "Assigned To"]
+    insert_at = 0
+    for i, col in enumerate(cols):
+        if col in ("Elvis_Date", "elvis_id", "id"):
+            insert_at = i + 1
+    cols.insert(insert_at, "Assigned To")
+    return out[cols]
 
 
 def _empty_queue_message(
@@ -321,39 +356,54 @@ def _queue_stats(
 
 
 def render_cleaning_page(user: dict) -> None:
+    from authentication.auth import is_super_admin
     from core.session_project import get_active_project, require_active_project, set_active_project
 
     page_header("Elvis_Review")
 
     role = user.get("ROLE") or user.get("role")
     actor = user.get("name") or user.get("EMAIL")
+    email = str(user.get("EMAIL") or user.get("email") or "").strip()
+    is_manager = role in ("admin", "manager")
+    is_head = is_cleaning_head(user)
+    is_cleaning_role = role == "cleaning"
+    # Regular cleaners: assigned-only. Cleaning head keeps cleaner role but sees all + assign UI.
+    is_regular_cleaner = is_cleaning_role and not is_head
+    can_assign = is_manager or is_head
+    # Pipeline fetch is a privileged action — super admins only.
+    can_fetch = is_super_admin(email)
+
     project = require_active_project()
     if not project:
         return
     project_filter = [project]
 
-    section_title("Workspace controls")
-    with workspace_toolbar() as (col_info, col_sync):
-        col_info.markdown(
-            f"**Working on** `{project}`  \n"
-            "Grab the newest surveys for this project. New trips get transfer suggestions; "
-            "existing suggestions stay as they are. This usually takes a few minutes."
-        )
-        run_sync = col_sync.button(
-            "Fetch latest records",
-            type="primary",
-            use_container_width=True,
-            help="Refresh the Elvis Review queue. Can take several minutes on larger projects.",
-        )
+    run_sync = False
+    if can_fetch:
+        section_title("Workspace controls")
+        with workspace_toolbar() as (col_info, col_sync):
+            col_info.markdown(
+                f"**Working on** `{project}`  \n"
+                "Grab the newest surveys for this project. New trips get transfer suggestions; "
+                "existing suggestions stay as they are. This usually takes a few minutes."
+            )
+            run_sync = col_sync.button(
+                "Fetch latest records",
+                type="primary",
+                use_container_width=True,
+                help="Refresh the Elvis Review queue. Can take several minutes on larger projects.",
+            )
 
-    render_sync_banner(project)
+        render_sync_banner(project)
+
     cache_key = f"route_codes_ensured_{project}"
     if not st.session_state.get(cache_key):
         try:
-            ensure_route_codes_for_project(project)
+            with loading("Checking and backfilling missing route codes..."):
+                ensure_route_codes_for_project(project)
             st.session_state[cache_key] = True
-        except Exception:
-            pass
+        except Exception as exc:
+            st.warning(f"Route-code check could not complete: {exc}")
 
     trigger_project = st.session_state.pop("trigger_pipeline", None)
     if trigger_project:
@@ -362,31 +412,20 @@ def render_cleaning_page(user: dict) -> None:
         project = str(trigger_project)
         project_filter = [project]
 
-    if run_sync:
-        from pipeline.progress import PipelineProgress
-
-        progress_bar = st.progress(0.0, text="Getting started…")
-        progress_label = st.empty()
-
-        def _on_progress(step: int, total: int, label: str) -> None:
-            ratio = float(step) / float(total or 1)
-            progress_bar.progress(min(max(ratio, 0.0), 1.0), text=label)
-            progress_label.caption("Hang tight — larger projects can take a few minutes.")
-
-        with st.spinner(
-            f"Brewing a fresh Elvis Review for **{project}** — this can take a while, "
-            "perfect time for coffee…"
-        ):
-            try:
+    if run_sync and can_fetch:
+        try:
+            with progress_status(
+                f"Fetching the latest Elvis Review for {project}...",
+                complete_label="The Elvis Review queue is ready",
+            ) as update:
                 result = sync_and_export(
                     project,
                     phase="auto",
                     export=False,
-                    progress=PipelineProgress(_on_progress, total=8),
+                    progress=update,
                 )
-                progress_bar.progress(1.0, text="Your review queue is ready.")
-                progress_label.caption("All set — new records are in the queue below.")
-                st.success(f"{project}: {format_ingest_counts(result['counts'])}")
+                update.set_total(update.total + 2)
+                update.advance("Sending completion notification...")
                 notify_svc.notify(
                     actor,
                     notify_svc.SYNC_COMPLETED,
@@ -395,25 +434,25 @@ def render_cleaning_page(user: dict) -> None:
                 )
                 from core.streamlit_cache import bump_data_cache
 
+                update.advance("Refreshing the review queue...")
                 bump_data_cache()
-            except Exception as exc:
-                progress_label.caption("Something went wrong while refreshing.")
-                st.error(f"{project} fetch failed: {exc}")
+            st.success(f"{project}: {format_ingest_counts(result['counts'])}")
+        except Exception as exc:
+            st.error(f"{project} fetch failed: {exc}")
 
-    is_manager = role in ("admin", "manager")
-    tab_labels = ["My Queue"] + (["Assign records"] if is_manager else [])
+    tab_labels = ["My Queue"] + (["Assign records"] if can_assign else [])
     tabs = st.tabs(tab_labels)
 
     with tabs[0]:
         section_title("Queue workspace")
-        is_cleaning_role = role == "cleaning"
-        assigned_ids: set[str] = set()
-        if is_cleaning_role:
-            assigned_ids = _assigned_record_ids(user, project_filter)
+        with loading("Loading the cleaning queue..."):
+            assigned_ids: set[str] = set()
+            if is_regular_cleaner:
+                assigned_ids = _assigned_record_ids(user, project_filter)
 
-        records = _records_for_projects(project_filter, only_new=False)
-        all_records = records.copy()
-        records = _records_with_resolved_decisions(records)
+            records = _records_for_projects(project_filter, only_new=False)
+            all_records = records.copy()
+            records = _records_with_resolved_decisions(records)
 
         with filter_panel("Queue filters", "Choose which records appear in the grid below."):
             st.markdown("**Record visibility**")
@@ -451,23 +490,6 @@ def render_cleaning_page(user: dict) -> None:
                 key="clean_only_blank_decisions",
             )
 
-            if is_cleaning_role:
-                st.markdown("**My assignments**")
-                c3, c4 = st.columns(2)
-                assignments_first = c3.checkbox(
-                    "My assignments first",
-                    value=False,
-                    key="clean_assignments_first",
-                )
-                only_assigned = c4.checkbox(
-                    "Only my assignments",
-                    value=False,
-                    key="clean_only_assigned",
-                )
-            else:
-                only_assigned = False
-                assignments_first = False
-
         records = _cleaning_queue_records(records, include_auto_approved=include_auto_approved)
         queue_records = records.copy()
         records = _apply_removed_filters(
@@ -479,7 +501,8 @@ def render_cleaning_page(user: dict) -> None:
             records = records[_blank_decision_mask(records)].copy()
         if suggestions_only:
             records = _filter_records_with_suggestions(records)
-        if only_assigned and assigned_ids:
+        # Regular cleaners never see unassigned / other people's records.
+        if is_regular_cleaner:
             records = records[records["RECORD_ID"].astype(str).isin(assigned_ids)].copy()
 
         if records.empty:
@@ -488,7 +511,7 @@ def render_cleaning_page(user: dict) -> None:
                     all_records,
                     include_auto_approved,
                     suggestions_only,
-                    only_assigned,
+                    only_assigned=is_regular_cleaner,
                     include_removed=include_removed,
                     only_removed=only_removed,
                     only_blank_decisions=only_blank_decisions,
@@ -499,14 +522,10 @@ def render_cleaning_page(user: dict) -> None:
             if display.empty:
                 st.info("No records match the current filters.")
             else:
-                if is_cleaning_role:
-                    display = _add_assigned_to_me_column(display, assigned_ids)
-                    display = _apply_assignment_display_options(
-                        display,
-                        only_assigned=False,
-                        assignments_first=assignments_first,
-                        assigned_ids=assigned_ids,
-                    )
+                if is_head:
+                    with loading("Loading cleaning assignments..."):
+                        assignee_map = _cleaning_assignee_map(project_filter)
+                    display = _add_assigned_to_column(display, assignee_map)
                 display = apply_record_filters(display, key_prefix="clean")
                 visible_records = subset_records_for_display(display, records)
                 stats_bar(
@@ -515,7 +534,7 @@ def render_cleaning_page(user: dict) -> None:
                         queue_records,
                         visible_records,
                         include_auto_approved,
-                        assigned_count=len(assigned_ids) if is_cleaning_role else None,
+                        assigned_count=len(assigned_ids) if is_regular_cleaner else None,
                         include_removed=include_removed,
                         only_removed=only_removed,
                         only_blank_decisions=only_blank_decisions,
@@ -538,23 +557,148 @@ def render_cleaning_page(user: dict) -> None:
                     project_name=None,
                     history_actor_roles=["cleaning"] if is_cleaning_role else None,
                 )
-                section_title("Open record details")
-                _open_selected(display, visible_records, user, key="clean_open")
 
-    if is_manager:
+    if can_assign:
         with tabs[1]:
-            _render_assign_panel(project_filter)
+            if is_head:
+                _render_cleaning_head_assign_panel(project_filter)
+            else:
+                _render_assign_panel(project_filter)
+
+
+def _records_by_selected_ids(
+    records: pd.DataFrame, selected_ids: list[str]
+) -> dict[str, list[str]]:
+    by_project: dict[str, list[str]] = {}
+    wanted = {_norm_record_id(rid) for rid in selected_ids}
+    for _, row in records.iterrows():
+        rid = _norm_record_id(row["RECORD_ID"])
+        if rid not in wanted:
+            continue
+        by_project.setdefault(row["PROJECT_NAME"], []).append(rid)
+    return by_project
+
+
+def _render_cleaning_head_assign_panel(project_filter: list[str]) -> None:
+    """Cleaning head: bulk-assign unassigned blank-decision records by count."""
+    section_title("Assign records")
+    st.caption(
+        "Only records with blank Final Usage and blank Final Reviewer can be assigned. "
+        "Choose how many unassigned ones to give a cleaner."
+    )
+
+    with loading("Loading records available for assignment..."):
+        records = _records_for_projects(project_filter, only_new=False)
+        records = _records_with_resolved_decisions(records)
+    if records.empty:
+        st.info("No records in this project yet.")
+        return
+    # Needs cleaning: blank Final Usage AND blank Final Reviewer.
+    records = records[_blank_decision_mask(records)].copy()
+    if records.empty:
+        st.info("No records with blank Final Usage and Final Reviewer need assigning.")
+        return
+
+    display = records_to_elvis_review(records)
+    if display.empty:
+        st.info("No records available to assign.")
+        return
+
+    with loading("Loading current cleaning assignments..."):
+        assignee_map = _cleaning_assignee_map(project_filter)
+    queue_ids = [_norm_record_id(rid) for rid in records["RECORD_ID"].tolist()]
+    unassigned_ids = [rid for rid in queue_ids if rid not in assignee_map]
+    already_assigned = len(queue_ids) - len(unassigned_ids)
+    stats_bar([
+        ("Records to assign", str(len(unassigned_ids))),
+        ("Already assigned", str(already_assigned)),
+        ("Blank Usage & Reviewer", str(len(queue_ids))),
+    ])
+
+    display = _add_assigned_to_column(display, assignee_map)
+    display = apply_record_filters(display, key_prefix="head_assign")
+    st.dataframe(display, use_container_width=True, hide_index=True)
+
+    cleaners = assignment_svc.team_members("cleaning")
+    max_bulk_count = max(len(unassigned_ids), 1)
+    next_bulk_count = st.session_state.pop(
+        "_head_bulk_count_next",
+        st.session_state.get("head_bulk_count", min(25, max_bulk_count)),
+    )
+    st.session_state["head_bulk_count"] = min(
+        max(int(next_bulk_count or 1), 1),
+        max_bulk_count,
+    )
+    b1, b2 = st.columns(2)
+    bulk_count = b1.number_input(
+        "How many to assign",
+        min_value=1,
+        max_value=max_bulk_count,
+        key="head_bulk_count",
+    )
+    bulk_cleaner = b2.selectbox(
+        "Assign to",
+        options=cleaners or ["(no cleaning users)"],
+        key="head_bulk_cleaner",
+    )
+    bulk_clicked = st.button(
+        f"Assign next {int(bulk_count)} unassigned",
+        type="primary",
+        disabled=not (unassigned_ids and cleaners),
+        key="head_bulk_btn",
+    )
+
+    flash = st.session_state.pop("cleaning_head_assign_flash", None)
+    if flash:
+        st.success(flash)
+
+    if bulk_clicked and unassigned_ids and cleaners:
+        target_ids = unassigned_ids[: int(bulk_count)]
+        by_project = _records_by_selected_ids(records, target_ids)
+        total = 0
+        assigned_ids: list[str] = []
+        with progress_status(
+            f"Assigning records to {bulk_cleaner}...",
+            complete_label="Cleaning records assigned",
+        ) as update:
+            step_total = max(len(by_project) + 1, 1)
+            for index, (project, ids) in enumerate(by_project.items(), start=1):
+                update(index, step_total, f"Assigning {len(ids)} record(s) for {project}...")
+                assignment_svc.assign_records(project, ids, bulk_cleaner, team="cleaning")
+                assigned_ids.extend(ids)
+                total += len(ids)
+            _remember_assignments(assigned_ids, bulk_cleaner)
+            update(step_total, step_total, "Sending assignment notification...")
+            notify_svc.notify(
+                bulk_cleaner,
+                notify_svc.NEW_ASSIGNMENT,
+                f"You were assigned {total} record(s) to clean.",
+            )
+        from core.streamlit_cache import bump_data_cache
+
+        bump_data_cache()
+        remaining = max(len(unassigned_ids) - total, 1)
+        st.session_state["_head_bulk_count_next"] = min(
+            int(bulk_count),
+            remaining,
+        )
+        set_operation_flash(f"Assigned {total} record(s) to {bulk_cleaner}.")
+        # Stay on Review Cycle after rerun so metrics refresh in-place.
+        st.query_params["page"] = "review_cycle"
+        st.rerun()
 
 
 def _render_assign_panel(project_filter: list[str]) -> None:
     section_title("Assign new records to cleaners")
-    records = _records_for_projects(project_filter, only_new=True)
+    with loading("Loading new records for assignment..."):
+        records = _records_for_projects(project_filter, only_new=True)
     if records.empty:
         st.info("No new/unassigned records to assign.")
         return
-    active = set()
-    for project in project_filter:
-        active |= assignment_svc.active_record_ids(project, team="cleaning")
+    with loading("Checking active cleaning assignments..."):
+        active = set()
+        for project in project_filter:
+            active |= assignment_svc.active_record_ids(project, team="cleaning")
     records = records[~records["RECORD_ID"].astype(str).isin(active)]
     display = records_to_elvis_review(records)
     if display.empty:
@@ -573,16 +717,18 @@ def _render_assign_panel(project_filter: list[str]) -> None:
     cleaner = c2.selectbox("Assign to", options=cleaners or ["(no cleaning users)"])
     priority = c3.number_input("Priority", min_value=1, max_value=1000, value=100)
     if st.button("Assign selected", type="primary", disabled=not (selected_ids and cleaners)):
-        by_project: dict[str, list[str]] = {}
-        for rid in selected_ids:
-            match = records[records["RECORD_ID"].astype(str) == str(rid)]
-            if match.empty:
-                continue
-            by_project.setdefault(match["PROJECT_NAME"].iloc[0], []).append(rid)
+        by_project = _records_by_selected_ids(records, selected_ids)
         total = 0
-        for project, ids in by_project.items():
-            assignment_svc.assign_records(project, ids, cleaner, team="cleaning", priority=int(priority))
-            total += len(ids)
-        notify_svc.notify(cleaner, notify_svc.NEW_ASSIGNMENT, f"You were assigned {total} record(s) to clean.")
-        st.success(f"Assigned {total} record(s) to {cleaner}.")
+        with progress_status(
+            f"Assigning selected records to {cleaner}...",
+            complete_label="Selected records assigned",
+        ) as update:
+            step_total = max(len(by_project) + 1, 1)
+            for index, (project, ids) in enumerate(by_project.items(), start=1):
+                update(index, step_total, f"Assigning {len(ids)} record(s) for {project}...")
+                assignment_svc.assign_records(project, ids, cleaner, team="cleaning", priority=int(priority))
+                total += len(ids)
+            update(step_total, step_total, "Sending assignment notification...")
+            notify_svc.notify(cleaner, notify_svc.NEW_ASSIGNMENT, f"You were assigned {total} record(s) to clean.")
+        set_operation_flash(f"Assigned {total} record(s) to {cleaner}.")
         st.rerun()

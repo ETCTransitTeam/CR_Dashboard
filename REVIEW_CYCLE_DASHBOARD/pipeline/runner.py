@@ -550,10 +550,16 @@ def run_auto_approval_pipeline(ctx: PipelineContext, progress=None) -> dict[str,
     }
 
 
-def run_post_cleaning_pipeline(ctx: PipelineContext) -> dict[str, Path]:
+def run_post_cleaning_pipeline(ctx: PipelineContext, progress=None) -> dict[str, Path]:
+    from pipeline.progress import PipelineProgress
+
+    prog = progress or PipelineProgress()
+    prog.set_total(9)
+    prog.update(1, "Staging post-cleaning inputs...")
     stage_inputs(ctx)
     _stage_script_support_files(ctx)
     cwd = ctx.workspace
+    prog.update(2, "Preparing the KingElvis workbook...")
     _ensure_kingelvis_workbook(ctx)
 
     common = {
@@ -562,24 +568,28 @@ def run_post_cleaning_pipeline(ctx: PipelineContext) -> dict[str, Path]:
         "file_path": ctx.details_file,
         "today_date": ctx.today_date,
     }
-    for script in [
+    for index, script in enumerate([
         "od_distance_checks.py",
         "traditional_transfer_checks.py",
         "transfer_distance_flags.py",
         "directional_stops_flags.py",
-    ]:
+    ], start=3):
+        prog.update(index, f"Running {script.removesuffix('.py').replace('_', ' ')}...")
         patched = _prepare_script(ctx, script, common)
         result = _run_script(patched, cwd)
         if result.returncode != 0:
             raise RuntimeError(f"{script} failed: {result.stderr or result.stdout}")
 
+    prog.update(7, "Combining review flags...")
     combining = _prepare_script(ctx, "combining_distance_flags.py", common)
     result = _run_script(combining, cwd)
     if result.returncode != 0:
         raise RuntimeError(f"combining_distance_flags failed: {result.stderr or result.stdout}")
 
+    prog.update(8, "Generating reviewer statistics...")
     _run_reviewer_stats_script(ctx)
 
+    prog.update(9, "Generating the Removed IDs workbook...")
     removed_script = _prepare_script(
         ctx,
         "Removed_ids_field_team.py",
@@ -694,11 +704,18 @@ def _run_reviewer_stats_script(ctx: PipelineContext) -> None:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"Reviewer stats failed: {_extract_script_failure(detail)}")
 
-def run_reviewer_stats_pipeline(ctx: PipelineContext) -> dict[str, Path]:
+def run_reviewer_stats_pipeline(ctx: PipelineContext, progress=None) -> dict[str, Path]:
     """Stage inputs and run reviewer_stats_kcata.py without the flag scripts."""
+    from pipeline.progress import PipelineProgress
+
+    prog = progress or PipelineProgress()
+    prog.set_total(3)
+    prog.update(1, "Staging reviewer-stat inputs...")
     stage_inputs(ctx)
     _stage_script_support_files(ctx)
+    prog.update(2, "Preparing the KingElvis workbook...")
     _ensure_kingelvis_workbook(ctx)
+    prog.update(3, "Running reviewer-stat analysis...")
     _run_reviewer_stats_script(ctx)
     return {
         "reviewer_stats_xlsx": ctx.workspace
@@ -785,11 +802,18 @@ def _stage_kingelvis_from_review_db(ctx: PipelineContext) -> Path:
     return kingelvis_path
 
 
-def run_demographics_pipeline(ctx: PipelineContext) -> dict[str, Path]:
+def run_demographics_pipeline(ctx: PipelineContext, progress=None) -> dict[str, Path]:
     """Run HRTVA od_demographics_checks.py using Elvis Review (DB) + Elvis ODBC export."""
+    from pipeline.progress import PipelineProgress
+
+    prog = progress or PipelineProgress()
+    prog.set_total(4)
     ctx.workspace.mkdir(parents=True, exist_ok=True)
+    prog.update(1, "Staging the Elvis demographic export...")
     _stage_elvis_export_for_demographics(ctx)
+    prog.update(2, "Building the KingElvis review workbook...")
     _stage_kingelvis_from_review_db(ctx)
+    prog.update(3, "Preparing demographic rule scripts...")
     _stage_script_support_files(ctx)
     cwd = ctx.workspace
     kingelvis_path = cwd / ctx.kingelvis_xlsx
@@ -808,6 +832,7 @@ def run_demographics_pipeline(ctx: PipelineContext) -> dict[str, Path]:
             "LACMTA_KINGElvis (3).xlsx": ctx.kingelvis_xlsx,
         },
     )
+    prog.update(4, "Running demographic checks...")
     result = _run_script(patched, cwd)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
@@ -835,9 +860,9 @@ def run_full_pipeline(project_name: str, phase: str = "auto", progress=None) -> 
     if phase in ("auto", "full"):
         outputs["auto"] = run_auto_approval_pipeline(ctx, progress=progress)
     if phase in ("flags", "full"):
-        outputs["flags"] = run_post_cleaning_pipeline(ctx)
+        outputs["flags"] = run_post_cleaning_pipeline(ctx, progress=progress)
     if phase in ("stats",):
-        outputs["stats"] = run_reviewer_stats_pipeline(ctx)
+        outputs["stats"] = run_reviewer_stats_pipeline(ctx, progress=progress)
     if phase in ("demographics", "full"):
-        outputs["demographics"] = run_demographics_pipeline(ctx)
+        outputs["demographics"] = run_demographics_pipeline(ctx, progress=progress)
     return outputs

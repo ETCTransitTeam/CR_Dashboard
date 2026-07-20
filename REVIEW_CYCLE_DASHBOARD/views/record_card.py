@@ -12,7 +12,7 @@ from services import assignments as assignment_svc
 from services import history as history_svc
 from services import notifications as notify_svc
 from views.record_fields import render_editable_form
-from views.ui import section_title, stats_bar
+from views.ui import loading, section_title, set_operation_flash, stats_bar
 
 from pipeline.elvis_review_format import has_transfer_suggestions, suggestion_route_value
 
@@ -196,9 +196,10 @@ def render_record_card(
             saved = st.form_submit_button("Save changes", type="primary")
 
     if saved:
-        changed = history_svc.apply_record_update(project_name, record_id, updates, actor, role, action="Save")
+        with loading("Saving record changes..."):
+            changed = history_svc.apply_record_update(project_name, record_id, updates, actor, role, action="Save")
         if changed:
-            st.success(f"Saved {changed} change(s).")
+            set_operation_flash(f"Saved {changed} change(s).")
             st.rerun()
         else:
             st.info("No changes to save.")
@@ -246,59 +247,83 @@ def _render_actions(
         if role == "cleaning":
             cols = st.columns(3)
             if cols[0].button("Mark Use", key=_widget_key(widget_key_prefix, f"use_{record_id}")):
-                history_svc.set_final_usage(project_name, record_id, "Use", actor, role, action="Use")
+                with loading("Marking record for use..."):
+                    history_svc.set_final_usage(project_name, record_id, "Use", actor, role, action="Use")
+                set_operation_flash("Record marked for use.")
                 st.rerun()
             if cols[1].button("Complete cleaning", key=_widget_key(widget_key_prefix, f"complete_{record_id}")):
-                assignment_svc.complete_assignment(project_name, record_id, team="cleaning")
-                history_svc.apply_record_update(
-                    project_name,
-                    record_id,
-                    {"1st Cleaner": actor},
-                    actor,
-                    role,
-                    action="Complete",
-                    editable_only=False,
-                )
-                history_svc.log_changes(project_name, record_id, [("cleaning_status", "", "completed")], actor, role, "Complete")
-                st.success("Cleaning marked complete.")
-                st.rerun()
-            if cols[2].button("Request review", key=_widget_key(widget_key_prefix, f"reqrev_{record_id}")):
-                for reviewer in (assignment_svc.team_members("review") or ["unassigned"]):
-                    notify_svc.notify(
-                        reviewer,
-                        notify_svc.ADMIN_APPROVAL_REQUIRED,
-                        f"Cleaning requested review on {record_id} ({project_name})",
+                with loading("Completing cleaning assignment..."):
+                    assignment_svc.complete_assignment(project_name, record_id, team="cleaning")
+                    history_svc.apply_record_update(
                         project_name,
                         record_id,
+                        {"1st Cleaner": actor},
+                        actor,
+                        role,
+                        action="Complete",
+                        editable_only=False,
                     )
-                assignment_svc.assign_records(project_name, [record_id], "unassigned", team="review", priority=50)
-                history_svc.log_changes(project_name, record_id, [("review_status", "", "requested")], actor, role, "Request-Review")
-                st.success("Review requested.")
+                    history_svc.log_changes(
+                        project_name,
+                        record_id,
+                        [("cleaning_status", "", "completed")],
+                        actor,
+                        role,
+                        "Complete",
+                    )
+                set_operation_flash("Cleaning marked complete.")
+                st.rerun()
+            if cols[2].button("Request review", key=_widget_key(widget_key_prefix, f"reqrev_{record_id}")):
+                with loading("Requesting record review..."):
+                    for reviewer in (assignment_svc.team_members("review") or ["unassigned"]):
+                        notify_svc.notify(
+                            reviewer,
+                            notify_svc.ADMIN_APPROVAL_REQUIRED,
+                            f"Cleaning requested review on {record_id} ({project_name})",
+                            project_name,
+                            record_id,
+                        )
+                    assignment_svc.assign_records(project_name, [record_id], "unassigned", team="review", priority=50)
+                    history_svc.log_changes(
+                        project_name,
+                        record_id,
+                        [("review_status", "", "requested")],
+                        actor,
+                        role,
+                        "Request-Review",
+                    )
+                set_operation_flash("Review requested.")
                 st.rerun()
             return
 
         # review / manager / admin
         cols = st.columns(4)
         if cols[0].button("Approve (Use)", key=_widget_key(widget_key_prefix, f"approve_use_{record_id}")):
-            history_svc.set_final_usage(project_name, record_id, "Use", actor, role, action="Approve")
+            with loading("Approving record for use..."):
+                history_svc.set_final_usage(project_name, record_id, "Use", actor, role, action="Approve")
+            set_operation_flash("Record approved for use.")
             st.rerun()
         if cols[1].button("Remove", key=_widget_key(widget_key_prefix, f"remove_{record_id}")):
-            history_svc.set_final_usage(project_name, record_id, "Remove", actor, role, action="Remove")
+            with loading("Marking record for removal..."):
+                history_svc.set_final_usage(project_name, record_id, "Remove", actor, role, action="Remove")
+            set_operation_flash("Record marked for removal.")
             st.rerun()
         if cols[2].button("Escalate to admin", key=_widget_key(widget_key_prefix, f"escalate_{record_id}")):
-            for admin in (notify_svc.admins() or ["admin"]):
-                notify_svc.notify(
-                    admin,
-                    notify_svc.ADMIN_APPROVAL_REQUIRED,
-                    f"Record {record_id} escalated by {actor} ({project_name})",
-                    project_name,
-                    record_id,
-                )
-            history_svc.set_escalated(project_name, record_id, actor, role, escalated=True)
-            st.success("Escalated to admin.")
+            with loading("Escalating record to admin..."):
+                for admin in (notify_svc.admins() or ["admin"]):
+                    notify_svc.notify(
+                        admin,
+                        notify_svc.ADMIN_APPROVAL_REQUIRED,
+                        f"Record {record_id} escalated by {actor} ({project_name})",
+                        project_name,
+                        record_id,
+                    )
+                history_svc.set_escalated(project_name, record_id, actor, role, escalated=True)
+            set_operation_flash("Escalated to admin.")
             st.rerun()
         if allow_admin and flagged:
             if cols[3].button("Admin approve", key=_widget_key(widget_key_prefix, f"admin_ok_{record_id}")):
-                history_svc.set_admin_approved(project_name, record_id, actor, role, approved=True)
-                st.success("Admin approved.")
+                with loading("Approving flagged record..."):
+                    history_svc.set_admin_approved(project_name, record_id, actor, role, approved=True)
+                set_operation_flash("Admin approved.")
                 st.rerun()

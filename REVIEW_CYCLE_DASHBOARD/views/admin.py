@@ -7,7 +7,15 @@ from core.data_access import load_combined_checks, load_records
 from services import history as history_svc
 from views.record_card import render_record_card
 from views.record_fields import EDITABLE_FIELD_NAMES
-from views.ui import info_strip, page_header, section_title, stats_bar
+from views.ui import (
+    info_strip,
+    loading,
+    page_header,
+    progress_status,
+    section_title,
+    set_operation_flash,
+    stats_bar,
+)
 
 _ADMIN_SECTIONS = (
     "Approval queue",
@@ -35,7 +43,7 @@ def _run_admin_maintenance(project: str) -> int:
     cache_key = f"admin_maint_v1_{project}"
     if st.session_state.get(cache_key):
         return 0
-    with st.spinner("Preparing approval queue..."):
+    with loading("Preparing the approval queue..."):
         history_svc.sync_escalated_flags_from_history(project)
         repaired = history_svc.repair_admin_approved_flags(project)
     st.session_state[cache_key] = True
@@ -47,9 +55,10 @@ def _prepare_checks_for_queue(project: str) -> pd.DataFrame:
     repaired = _run_admin_maintenance(project)
     if repaired:
         info_strip(f"Repaired {repaired} record(s) with incorrect admin-approved flags.")
-    checks = load_combined_checks(project)
-    if checks.empty:
+    with loading("Loading approval checks and escalations..."):
+        checks = load_combined_checks(project)
         history_ids = history_svc.load_escalated_record_ids(project)
+    if checks.empty:
         if not history_ids:
             return checks
         return pd.DataFrame(
@@ -62,7 +71,6 @@ def _prepare_checks_for_queue(project: str) -> pd.DataFrame:
             }
         )
 
-    history_ids = history_svc.load_escalated_record_ids(project)
     if not history_ids:
         return checks
 
@@ -111,7 +119,8 @@ def render_admin_page(user: dict) -> None:
         st.caption(f"Active project: **{project}**")
         section = st.radio("View", _ADMIN_SECTIONS, horizontal=True, key="admin_section")
 
-    records = load_records(project)
+    with loading("Loading admin review records..."):
+        records = load_records(project)
     if records.empty:
         st.info("No records loaded.")
         return
@@ -133,7 +142,8 @@ def render_admin_page(user: dict) -> None:
 
     if section == "High change-rate":
         threshold = st.slider("High change threshold (%)", min_value=5, max_value=50, value=10)
-        change_tbl = _change_rate_table(project, records)
+        with loading("Calculating record change rates..."):
+            change_tbl = _change_rate_table(project, records)
         high = change_tbl[change_tbl["CHANGE_PCT"] >= threshold]
         info_strip(f"{len(high)} record(s) changed at or above {threshold}% of fields")
         section_title("High change-rate records")
@@ -209,22 +219,37 @@ def _render_approval_queue(project, records, checks, actor, role, user, *, escal
         note = st.text_input("Note (optional)", key=f"adm_note_{escalated_only}")
         c1, c2, c3 = st.columns(3)
         if c1.button("Approve selected", type="primary", disabled=not selected, key=f"adm_ok_{escalated_only}", use_container_width=True):
-            for rid in selected:
-                history_svc.set_admin_approved(project, rid, actor, role, approved=True, note=note or None)
+            with progress_status(
+                f"Approving {len(selected)} record(s)...",
+                complete_label="Selected records approved",
+            ) as update:
+                for index, rid in enumerate(selected, start=1):
+                    update(index, len(selected), f"Approving record {index} of {len(selected)}...")
+                    history_svc.set_admin_approved(project, rid, actor, role, approved=True, note=note or None)
             st.session_state.pop(f"admin_maint_v1_{project}", None)
-            st.success(f"Approved {len(selected)} record(s).")
+            set_operation_flash(f"Approved {len(selected)} record(s).")
             st.rerun()
         if c2.button("Reject selected", disabled=not selected, key=f"adm_rej_{escalated_only}", use_container_width=True):
-            for rid in selected:
-                history_svc.set_admin_approved(project, rid, actor, role, approved=False, note=note or "Admin-Reject")
+            with progress_status(
+                f"Rejecting {len(selected)} record(s)...",
+                complete_label="Selected records rejected",
+            ) as update:
+                for index, rid in enumerate(selected, start=1):
+                    update(index, len(selected), f"Rejecting record {index} of {len(selected)}...")
+                    history_svc.set_admin_approved(project, rid, actor, role, approved=False, note=note or "Admin-Reject")
             st.session_state.pop(f"admin_maint_v1_{project}", None)
-            st.success(f"Rejected {len(selected)} record(s).")
+            set_operation_flash(f"Rejected {len(selected)} record(s).")
             st.rerun()
         if c3.button("Approve ALL pending", disabled=pending.empty, key=f"adm_all_{escalated_only}", use_container_width=True):
-            for rid in ids:
-                history_svc.set_admin_approved(project, rid, actor, role, approved=True, note=note or None)
+            with progress_status(
+                f"Approving all {len(ids)} pending record(s)...",
+                complete_label="All pending records approved",
+            ) as update:
+                for index, rid in enumerate(ids, start=1):
+                    update(index, len(ids), f"Approving record {index} of {len(ids)}...")
+                    history_svc.set_admin_approved(project, rid, actor, role, approved=True, note=note or None)
             st.session_state.pop(f"admin_maint_v1_{project}", None)
-            st.success(f"Approved {len(ids)} record(s).")
+            set_operation_flash(f"Approved {len(ids)} record(s).")
             st.rerun()
 
     section_title("Inspect record")

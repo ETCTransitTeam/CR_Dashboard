@@ -95,7 +95,11 @@ def run_incremental_pull(project_name: str, export: bool = False) -> dict[str, A
     return result
 
 
-def morning_refresh(project_names: list[str] | None = None, force: bool = False) -> list[dict[str, Any]]:
+def morning_refresh(
+    project_names: list[str] | None = None,
+    force: bool = False,
+    progress=None,
+) -> list[dict[str, Any]]:
     """Scheduled hook: pull every project whose OD data changed since last seen.
 
     Returns a per-project summary. Designed to be safe to run unattended.
@@ -105,7 +109,10 @@ def morning_refresh(project_names: list[str] | None = None, force: bool = False)
         project_names = projects["PROJECT_NAME"].tolist() if not projects.empty else []
 
     summary: list[dict[str, Any]] = []
-    for project in project_names:
+    total = max(len(project_names), 1)
+    for index, project in enumerate(project_names, start=1):
+        if progress:
+            progress(index, total, f"Checking and refreshing {project} ({index}/{len(project_names)})...")
         status = od_sync_status(project)
         if not force and not status["available"]:
             summary.append({"project": project, "action": "skipped", "reason": status["message"]})
