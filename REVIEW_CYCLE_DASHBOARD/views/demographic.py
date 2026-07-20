@@ -4,11 +4,9 @@ import streamlit as st
 
 from core.data_access import load_records
 from services import quality
-from services import demographic_rules
 from views.ui import (
     action_row,
     empty_state,
-    info_strip,
     loading,
     page_header,
     section_title,
@@ -17,29 +15,18 @@ from views.ui import (
 )
 
 
-def _ensure_demographics(project: str, *, force: bool = False) -> bool:
-    """Generate demographic checks from Elvis Review + Elvis export when data is stale."""
+def _refresh_demographics(project: str) -> bool:
+    """Re-run rules and persist failed checks to Snowflake. Button-only."""
     with loading("Checking demographic source data..."):
         records = load_records(project)
-        fingerprint = quality.demographics_data_fingerprint(project)
-        output = quality.load_demographic_checks(project, status="fail")
     if records.empty:
+        st.error("No Elvis Review records found for this project.")
         return False
 
-    cache_key = f"demo_gen_fp_{project}"
-    stale = st.session_state.get(cache_key) != fingerprint
-    if not force and not stale and not output.empty:
-        return True
-
-    label = "Regenerating demographic checks..." if force else "Generating configured demographic checks..."
-    with loading(label):
+    with loading("Refreshing demographic checks..."):
         try:
             result = quality.generate_demographic_checks_from_review(project)
-            st.session_state[cache_key] = fingerprint
-            if force:
-                set_operation_flash(f"Regenerated {len(result)} failed check row(s).")
-            elif stale or output.empty:
-                info_strip(f"Loaded {len(result)} configured demographic check row(s).")
+            set_operation_flash(f"Refreshed {len(result)} failed check row(s).")
             return True
         except Exception as exc:
             st.error(f"Demographic checks failed: {exc}")
@@ -69,33 +56,36 @@ def render_demographic_page(user: dict) -> None:
         empty_state("No records yet", "Run Sync & Admin or Fetch latest records on Elvis Review first.")
         return
 
-    with action_row():
-        c1, c2 = st.columns([1, 1])
-        if c2.button("Refresh demographic checks", help="Re-run configured demographic rules"):
-            if _ensure_demographics(project, force=True):
-                st.rerun()
-        else:
-            _ensure_demographics(project)
+    refresh_clicked = st.button(
+        "Refresh demographic checks",
+        help="Re-run configured demographic rules for the active project when Elvis Review data changes.",
+        type="primary",
+        key="demo_refresh_checks",
+        icon=":material/refresh:",
+    )
+    if refresh_clicked:
+        if _refresh_demographics(project):
+            st.rerun()
 
-    with loading("Evaluating demographic review results..."):
-        output = demographic_rules.evaluate_project_script_output(project)
-    if output.empty:
+    with loading("Loading saved demographic check results..."):
+        output = quality.load_demographic_checks(project, status="fail")
+
+    if output is None or output.empty:
         st.info(
-            "No failed demographic checks, or checks could not be generated. "
-            "Click **Refresh demographic checks** after confirming the Elvis export is available."
+            "No demographic check results in Snowflake yet. "
+            "Click **Refresh demographic checks** to run the rules and save them."
         )
         return
 
     section_title("Demographic check summary")
-    id_col = "id" if "id" in output.columns else ("elvis_id" if "elvis_id" in output.columns else None)
-    flag_cols = [column for column in demographic_rules.script_flag_columns(project) if column in output.columns]
-    unique_records = output[id_col].astype(str).nunique() if id_col else len(output)
-    failed_checks = int(output[flag_cols].sum().sum()) if flag_cols else len(output)
+    unique_records = int(output["RECORD_ID"].astype(str).nunique()) if "RECORD_ID" in output.columns else len(output)
+    failed_checks = len(output)
+    flag_count = int(output["CHECK_TYPE"].astype(str).nunique()) if "CHECK_TYPE" in output.columns else 0
     stats_bar(
         [
             ("Flagged records", str(unique_records)),
             ("Failed checks", str(failed_checks)),
-            ("Flag columns", str(len(flag_cols))),
+            ("Flag types", str(flag_count)),
         ]
     )
 

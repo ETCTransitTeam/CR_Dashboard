@@ -19,7 +19,6 @@ from views.ui import (
 
 _ADMIN_SECTIONS = (
     "Approval queue",
-    "Escalated only",
     "High change-rate",
 )
 
@@ -117,6 +116,8 @@ def render_admin_page(user: dict) -> None:
     section_title("Review controls")
     with st.container(border=True):
         st.caption(f"Active project: **{project}**")
+        if st.session_state.get("admin_section") == "Escalated only":
+            st.session_state["admin_section"] = "Approval queue"
         section = st.radio("View", _ADMIN_SECTIONS, horizontal=True, key="admin_section")
 
     with loading("Loading admin review records..."):
@@ -125,17 +126,9 @@ def render_admin_page(user: dict) -> None:
         st.info("No records loaded.")
         return
 
-    if section in ("Approval queue", "Escalated only"):
+    if section == "Approval queue":
         checks = _prepare_checks_for_queue(project)
-        _render_approval_queue(
-            project,
-            records,
-            checks,
-            actor,
-            role,
-            user,
-            escalated_only=(section == "Escalated only"),
-        )
+        _render_approval_queue(project, records, checks, actor, role, user)
         return
 
     _run_admin_maintenance(project)
@@ -154,7 +147,7 @@ def render_admin_page(user: dict) -> None:
                 render_record_card(project, rid, user, allow_admin=True)
 
 
-def _render_approval_queue(project, records, checks, actor, role, user, *, escalated_only: bool) -> None:
+def _render_approval_queue(project, records, checks, actor, role, user) -> None:
     if checks.empty:
         st.info("No flag results for this project yet. Run the flags pipeline on Sync & Admin.")
         return
@@ -166,18 +159,13 @@ def _render_approval_queue(project, records, checks, actor, role, user, *, escal
         else pd.Series(False, index=checks.index)
     )
     not_approved = ~history_svc.coerce_bool_series(checks["ADMIN_APPROVED"].fillna(False))
-
-    if escalated_only:
-        pending = checks[escalated & not_approved]
-        info_strip("Records escalated to admin that are not yet admin-approved.")
-    else:
-        pending = checks[(flagged | escalated) & not_approved]
+    pending = checks[(flagged | escalated) & not_approved]
 
     section_title("Approval summary")
     stats_bar([("Records awaiting admin approval", str(len(pending)))])
     if pending.empty:
         flagged_count = int(flagged.sum())
-        if flagged_count and not escalated_only:
+        if flagged_count:
             st.info(
                 f"{flagged_count} flagged record(s) exist but all are already admin-approved. "
                 "Use Reject or clear ADMIN_APPROVED to re-queue."
@@ -215,10 +203,10 @@ def _render_approval_queue(project, records, checks, actor, role, user, *, escal
     ids = merged["RECORD_ID"].astype(str).tolist()
     with st.container(border=True):
         st.markdown("**Approval actions**")
-        selected = st.multiselect("Select records", options=ids, key=f"adm_sel_{escalated_only}")
-        note = st.text_input("Note (optional)", key=f"adm_note_{escalated_only}")
+        selected = st.multiselect("Select records", options=ids, key="adm_sel_queue")
+        note = st.text_input("Note (optional)", key="adm_note_queue")
         c1, c2, c3 = st.columns(3)
-        if c1.button("Approve selected", type="primary", disabled=not selected, key=f"adm_ok_{escalated_only}", use_container_width=True):
+        if c1.button("Approve selected", type="primary", disabled=not selected, key="adm_ok_queue", use_container_width=True):
             with progress_status(
                 f"Approving {len(selected)} record(s)...",
                 complete_label="Selected records approved",
@@ -229,7 +217,7 @@ def _render_approval_queue(project, records, checks, actor, role, user, *, escal
             st.session_state.pop(f"admin_maint_v1_{project}", None)
             set_operation_flash(f"Approved {len(selected)} record(s).")
             st.rerun()
-        if c2.button("Reject selected", disabled=not selected, key=f"adm_rej_{escalated_only}", use_container_width=True):
+        if c2.button("Reject selected", disabled=not selected, key="adm_rej_queue", use_container_width=True):
             with progress_status(
                 f"Rejecting {len(selected)} record(s)...",
                 complete_label="Selected records rejected",
@@ -240,7 +228,7 @@ def _render_approval_queue(project, records, checks, actor, role, user, *, escal
             st.session_state.pop(f"admin_maint_v1_{project}", None)
             set_operation_flash(f"Rejected {len(selected)} record(s).")
             st.rerun()
-        if c3.button("Approve ALL pending", disabled=pending.empty, key=f"adm_all_{escalated_only}", use_container_width=True):
+        if c3.button("Approve ALL pending", disabled=pending.empty, key="adm_all_queue", use_container_width=True):
             with progress_status(
                 f"Approving all {len(ids)} pending record(s)...",
                 complete_label="All pending records approved",
@@ -253,6 +241,6 @@ def _render_approval_queue(project, records, checks, actor, role, user, *, escal
             st.rerun()
 
     section_title("Inspect record")
-    rid = st.selectbox("Inspect a record", options=ids, key=f"approval_inspect_{escalated_only}")
+    rid = st.selectbox("Inspect a record", options=ids, key="approval_inspect_queue")
     if rid:
         render_record_card(project, rid, user, allow_admin=True)

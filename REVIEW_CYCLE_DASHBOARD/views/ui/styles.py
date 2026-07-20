@@ -549,11 +549,14 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
     display: none;
 }
-.ref-user-panel.ref-open {
+.ref-user-panel.ref-open,
+#ref-user-panel.ref-open {
     display: flex !important;
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
+    visibility: visible !important;
+    opacity: 1 !important;
     pointer-events: auto !important;
 }
 .ref-user-panel-role {
@@ -588,9 +591,21 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     box-shadow: 0 4px 16px rgba(15, 23, 42, 0.1);
     display: none;
 }
-.ref-notif-panel.ref-open {
+.ref-notif-panel.ref-open,
+#ref-notif-panel.ref-open {
     display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
     pointer-events: auto !important;
+}
+.ref-page-shell,
+.ref-app-header,
+.ref-navbar-tools,
+.ref-bell-wrap,
+div[data-testid="stElementContainer"]:has(.ref-page-shell),
+div[data-testid="stMarkdownContainer"]:has(#ref-notif-anchor),
+div[data-testid="stVerticalBlock"]:has(#ref-notif-anchor) {
+    overflow: visible !important;
 }
 .ref-notif-backdrop {
     position: fixed;
@@ -1204,6 +1219,19 @@ div[data-testid="stExpander"] {
     background: var(--surface) !important;
     box-shadow: var(--shadow) !important;
 }
+
+/* Demographic Review — compact refresh button */
+div[class*="st-key-demo_refresh_checks"] {
+    width: fit-content !important;
+    margin: 4px 0 16px !important;
+}
+div[class*="st-key-demo_refresh_checks"] button {
+    min-height: 40px !important;
+    height: 40px !important;
+    border-radius: 10px !important;
+    font-weight: 650 !important;
+    white-space: nowrap !important;
+}
 div[data-testid="stExpander"] details > summary {
     padding: 14px 16px !important;
     font-size: 14px !important;
@@ -1350,6 +1378,11 @@ section[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: no
 
 PARENT_RUNTIME_JS = r"""
 (function () {
+    if (window.__refUiRuntimeV3) {
+        if (typeof window.__refUiRewire === "function") window.__refUiRewire();
+        return;
+    }
+    window.__refUiRuntimeV3 = true;
     const ICONS = {
         "Project Dashboard":"layout-dashboard",
         "Elvis_Review":"clipboard-list",
@@ -1357,8 +1390,8 @@ PARENT_RUNTIME_JS = r"""
         "Supervisor View Only":"eye",
         "Record History":"history",
         "Admin Approval":"shield-check",
-        "Demographic Review":"users",
         "Demographic Flag Config":"settings",
+        "Demographic Review":"users",
         "Field Team":"map-pin",
         "Manager Analytics":"bar-chart-3",
         "Reviewer Stats":"trending-up",
@@ -1547,12 +1580,21 @@ PARENT_RUNTIME_JS = r"""
             panel.classList.add("ref-open");
             wrap?.classList.add("ref-open");
             bell.setAttribute("aria-expanded", "true");
+            panel.style.display = "block";
+            panel.style.visibility = "visible";
+            panel.style.opacity = "1";
+            panel.style.pointerEvents = "auto";
             positionNotifPanel(doc);
             wireMarkAllButtons(doc);
+            wireCloseButtons(doc);
         } else {
             panel.classList.remove("ref-open");
             wrap?.classList.remove("ref-open");
             bell.setAttribute("aria-expanded", "false");
+            panel.style.display = "";
+            panel.style.visibility = "";
+            panel.style.opacity = "";
+            panel.style.pointerEvents = "";
         }
     }
     function closeAllMenus(doc) {
@@ -1701,9 +1743,23 @@ PARENT_RUNTIME_JS = r"""
             appDocuments().forEach((doc) => positionUserPanel(doc));
         });
     }
+    window.__refUiRewire = function () {
+        bindAllNotifDocuments();
+        appDocuments().forEach((doc) => {
+            const panel = doc.getElementById("ref-notif-panel");
+            if (panel?.classList.contains("ref-open")) positionNotifPanel(doc);
+            const userPanel = doc.getElementById("ref-user-panel");
+            if (userPanel?.classList.contains("ref-open")) positionUserPanel(doc);
+        });
+        nav();
+    };
     bindAllNotifDocuments();
     let tm;
-    window.addEventListener("resize", () => { clearTimeout(tm); tm = setTimeout(init, 50); });
+    window.addEventListener("resize", () => {
+        clearTimeout(tm);
+        tm = setTimeout(() => window.__refUiRewire(), 50);
+    });
+    // Do not call full init() on scroll — that re-binds and can fight the open panel.
     window.addEventListener("scroll", () => {
         clearTimeout(tm);
         tm = setTimeout(() => {
@@ -1713,11 +1769,25 @@ PARENT_RUNTIME_JS = r"""
                 const userPanel = doc.getElementById("ref-user-panel");
                 if (userPanel?.classList.contains("ref-open")) positionUserPanel(doc);
             });
-            init();
         }, 50);
     }, true);
-    new MutationObserver(() => { clearTimeout(tm); tm = setTimeout(init, 100); })
-        .observe(document.body, { childList: true, subtree: true });
+    // Ignore attribute/class churn from opening the panel itself.
+    new MutationObserver((mutations) => {
+        const relevant = mutations.some((mutation) => {
+            if (mutation.type !== "childList") return false;
+            return Array.from(mutation.addedNodes || []).some((node) => {
+                if (!node || node.nodeType !== 1) return false;
+                return Boolean(
+                    node.id === "ref-notif-anchor" ||
+                    node.id === "ref-user-anchor" ||
+                    node.querySelector?.("#ref-notif-anchor, #ref-user-anchor")
+                );
+            });
+        });
+        if (!relevant) return;
+        clearTimeout(tm);
+        tm = setTimeout(() => window.__refUiRewire(), 120);
+    }).observe(document.body, { childList: true, subtree: true });
     init();
 })();
 """
@@ -1745,8 +1815,16 @@ def _inject_parent_runtime() -> None:
         "setTimeout(bootAll,120);"
         "setTimeout(bootAll,600);"
         "try{"
-        "new MutationObserver(function(){bootAll();})"
-        ".observe(document.documentElement,{childList:true,subtree:true});"
+        "var t;"
+        "new MutationObserver(function(muts){"
+        "var hit=muts.some(function(m){"
+        "return Array.from(m.addedNodes||[]).some(function(n){"
+        "return n&&n.nodeType===1&&(n.id==='ref-notif-anchor'||n.querySelector&&n.querySelector('#ref-notif-anchor'));"
+        "});"
+        "});"
+        "if(!hit)return;"
+        "clearTimeout(t);t=setTimeout(bootAll,150);"
+        "}).observe(document.documentElement,{childList:true,subtree:true});"
         "}catch(e){}"
         "})();</script>"
     )

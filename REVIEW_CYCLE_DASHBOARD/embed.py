@@ -17,6 +17,78 @@ def _ensure_rcd_path() -> None:
         _RCD_ON_PATH = True
 
 
+def _clear_rcd_boot_flag() -> None:
+    st.session_state.pop("rcd_boot_complete", None)
+
+
+def _render_boot_splash(message: str = "Opening your Review Cycle workspace…") -> None:
+    """Opaque full-screen splash so portal UI is never visible under RCD CSS."""
+    safe = (
+        message.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    st.markdown(
+        f"""
+        <style>
+        header[data-testid="stHeader"],
+        [data-testid="stToolbar"],
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"] {{
+            display: none !important;
+        }}
+        .main .block-container,
+        .stMainBlockContainer,
+        div[data-testid="stMainBlockContainer"] {{
+            max-width: 100% !important;
+            padding: 0 !important;
+        }}
+        .rcd-boot-splash {{
+            position: fixed;
+            inset: 0;
+            z-index: 2147483000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            background: #F8FAFC;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+            color: #0F172A;
+        }}
+        .rcd-boot-splash__title {{
+            margin: 0;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }}
+        .rcd-boot-splash__msg {{
+            margin: 0;
+            font-size: 14px;
+            color: #64748B;
+        }}
+        .rcd-boot-splash__spinner {{
+            width: 28px;
+            height: 28px;
+            border: 3px solid #DBEAFE;
+            border-top-color: #2563EB;
+            border-radius: 50%;
+            animation: rcd-boot-spin 0.8s linear infinite;
+        }}
+        @keyframes rcd-boot-spin {{
+            to {{ transform: rotate(360deg); }}
+        }}
+        </style>
+        <div class="rcd-boot-splash" role="status" aria-live="polite">
+            <div class="rcd-boot-splash__spinner" aria-hidden="true"></div>
+            <p class="rcd-boot-splash__title">Review Cycle Dashboard</p>
+            <p class="rcd-boot-splash__msg">{safe}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_review_cycle(od_user: dict, rcd_role: str) -> None:
     """Render Review Cycle Dashboard inside the unified OD Collection app."""
     _ensure_rcd_path()
@@ -38,12 +110,11 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
     from views.sync_admin import render_sync_admin_page
     from views.ui import (
         inject_global_css,
-        loading,
-        render_operation_flash,
         set_header_context,
         sidebar_account_label,
         sidebar_brand,
         sidebar_nav_label,
+        render_operation_flash,
     )
 
     PAGE_HANDLERS = {
@@ -53,8 +124,8 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
         "supervisor": ("Supervisor View Only", render_supervisor_page),
         "history": ("Record History", render_history_page),
         "admin": ("Admin Approval", render_admin_page),
-        "demographic": ("Demographic Review", render_demographic_page),
         "demographic_config": ("Demographic Flag Config", render_demographic_config_page),
+        "demographic": ("Demographic Review", render_demographic_page),
         "field": ("Field Team", render_field_page),
         "manager_dashboard": ("Manager Analytics", render_manager_dashboard),
         "reviewer_stats": ("Reviewer Stats", render_reviewer_stats_page),
@@ -74,46 +145,71 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
         "username": username,
     }
 
+    # Boot phase: cover the previous portal page and finish schema checks BEFORE
+    # injecting RCD global CSS (which otherwise washes out leftover portal UI).
+    schema_ready = bool(st.session_state.get("rcd_schema_ready"))
+    if not st.session_state.get("rcd_boot_complete"):
+        _render_boot_splash(
+            "Opening your Review Cycle workspace…"
+            if not schema_ready
+            else "Loading Review Cycle…"
+        )
+        if not schema_ready:
+            schema_ready = schema_is_ready()
+            if schema_ready:
+                st.session_state["rcd_schema_ready"] = True
+            else:
+                bootstrap_key = f"rcd_bootstrap_done_{REVIEW_CYCLE_SCHEMA}"
+                if not st.session_state.get(bootstrap_key):
+                    database = env("SNOWFLAKE_DATABASE") or "(database not set)"
+                    try:
+                        result = bootstrap_database()
+                        st.session_state[bootstrap_key] = True
+                        st.session_state["rcd_schema_ready"] = True
+                        st.session_state["rcd_boot_flash"] = (
+                            f"Your Review Cycle workspace is ready with "
+                            f"**{result['projects_seeded']}** project(s)."
+                        )
+                    except Exception as exc:
+                        st.session_state["rcd_boot_error"] = (
+                            f"Could not initialize `{database}.{REVIEW_CYCLE_SCHEMA}`. "
+                            f"Check Snowflake grants and APP_CONFIG_SCHEMA in .env. Detail: {exc}"
+                        )
+                else:
+                    st.session_state["rcd_boot_error"] = (
+                        f"Review Cycle schema `{REVIEW_CYCLE_SCHEMA}` is not ready. "
+                        "A super admin can run **Initialize / migrate database schema** "
+                        "from Sync & Admin."
+                    )
+        st.session_state["rcd_boot_complete"] = True
+        st.rerun()
+        return
+
     inject_global_css(auth_mode=False)
 
-    schema_ready = bool(st.session_state.get("rcd_schema_ready"))
-    if not schema_ready:
-        with loading("Opening your Review Cycle workspace..."):
-            schema_ready = schema_is_ready()
-        if schema_ready:
-            st.session_state["rcd_schema_ready"] = True
-    if not schema_ready:
-        bootstrap_key = f"rcd_bootstrap_done_{REVIEW_CYCLE_SCHEMA}"
-        if not st.session_state.get(bootstrap_key):
-            database = env("SNOWFLAKE_DATABASE") or "(database not set)"
-            with st.spinner("Preparing Review Cycle for first use...", show_time=True):
-                try:
-                    result = bootstrap_database()
-                    st.session_state[bootstrap_key] = True
-                    st.session_state["rcd_schema_ready"] = True
-                    st.success(
-                        f"Your Review Cycle workspace is ready with "
-                        f"**{result['projects_seeded']}** project(s)."
-                    )
-                    st.rerun()
-                except Exception as exc:
-                    st.error(
-                        f"Could not initialize `{database}.{REVIEW_CYCLE_SCHEMA}`. "
-                        f"Check Snowflake grants and APP_CONFIG_SCHEMA in .env. Detail: {exc}"
-                    )
-                    if st.button("← Back to portal selection"):
-                        st.query_params["page"] = "portal_select"
-                        st.rerun()
-                    return
-        else:
-            st.error(
-                f"Review Cycle schema `{REVIEW_CYCLE_SCHEMA}` is not ready. "
-                "A super admin can run **Initialize / migrate database schema** from Sync & Admin."
-            )
-            if st.button("← Back to portal selection"):
-                st.query_params["page"] = "portal_select"
-                st.rerun()
-            return
+    boot_error = st.session_state.pop("rcd_boot_error", None)
+    if boot_error:
+        st.error(boot_error)
+        if st.button("← Back to portal selection", key="rcd_boot_err_back"):
+            _clear_rcd_boot_flag()
+            st.query_params["page"] = "portal_select"
+            st.rerun()
+        return
+
+    boot_flash = st.session_state.pop("rcd_boot_flash", None)
+    if boot_flash:
+        st.success(boot_flash)
+
+    if not st.session_state.get("rcd_schema_ready"):
+        st.error(
+            f"Review Cycle schema `{REVIEW_CYCLE_SCHEMA}` is not ready. "
+            "A super admin can run **Initialize / migrate database schema** from Sync & Admin."
+        )
+        if st.button("← Back to portal selection", key="rcd_schema_back"):
+            _clear_rcd_boot_flag()
+            st.query_params["page"] = "portal_select"
+            st.rerun()
+        return
 
     pages = allowed_pages(role)
     if role == "cleaning" and not is_cleaning_head(user):
@@ -122,7 +218,8 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
     keys = [key for key in pages if key in PAGE_HANDLERS]
     if not keys:
         st.error("No Review Cycle pages are configured for your role.")
-        if st.button("← Back to portal selection"):
+        if st.button("← Back to portal selection", key="rcd_nopages_back"):
+            _clear_rcd_boot_flag()
             st.query_params["page"] = "portal_select"
             st.rerun()
         return
@@ -138,11 +235,13 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
         sidebar_account_label()
         if len(_allowed_portals_for_od_user(od_user)) > 1:
             if st.button("Switch Portal", use_container_width=True, type="secondary"):
+                _clear_rcd_boot_flag()
                 st.query_params["page"] = "portal_select"
                 st.rerun()
         if st.button("Sign out", use_container_width=True, type="secondary"):
             from authentication.auth import logout
 
+            _clear_rcd_boot_flag()
             logout()
 
     # Keep APP_CONFIG projects current without blocking page loads or sign-out.

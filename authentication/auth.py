@@ -502,16 +502,21 @@ _OVERLAY_CLEANUP_JS = """
 
 
 def _cleanup_detached_dashboard_overlays():
-    """Hide leftover RCD menus on auth pages without breaking Streamlit's DOM."""
+    """Hide leftover RCD menus on auth pages without breaking Streamlit's DOM.
+
+    Scoped to auth layout only — never use naked #ref-notif-panel rules that
+    persist across the session and block the RCD notification panel later.
+    """
     st.markdown(
         """
         <style>
-        #ref-notif-panel,
-        #ref-user-panel,
-        #ref-notif-backdrop,
-        .ref-notif-panel,
-        .ref-user-panel,
-        .ref-notif-backdrop {
+        /* Only while the login/auth shell is on screen */
+        .stApp:has(.auth-container) #ref-notif-panel,
+        .stApp:has(.auth-container) #ref-user-panel,
+        .stApp:has(.auth-container) #ref-notif-backdrop,
+        .stApp:has(.auth-container) .ref-notif-panel,
+        .stApp:has(.auth-container) .ref-user-panel,
+        .stApp:has(.auth-container) .ref-notif-backdrop {
             display: none !important;
             visibility: hidden !important;
             pointer-events: none !important;
@@ -1245,6 +1250,451 @@ def logout():
     st.rerun()
 
 
+def _portal_display_name(user: dict) -> str:
+    return str(user.get("username") or user.get("name") or user.get("email") or "User").strip() or "User"
+
+
+def _portal_role_label(email: str, role: str) -> str:
+    if is_super_admin(email):
+        return "Super Admin"
+    role_u = str(role or "").upper()
+    labels = {
+        "ADMIN": "Admin",
+        "USER": "User",
+        "CLEANING": "Cleaning Team",
+        "CLIENT": "Client",
+        "MANAGER": "Manager",
+    }
+    return labels.get(role_u, role_u.replace("_", " ").title() or "User")
+
+
+def _portal_initials(name: str) -> str:
+    parts = [p for p in str(name or "").strip().split() if p]
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    text = "".join(parts) or "?"
+    return text[:2].upper()
+
+
+def _portal_check_icon(color: str) -> str:
+    return (
+        f'<span class="etc-hub-check" style="color:{html.escape(color)}">'
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>'
+        '<path d="M7.5 12.5l3 3 6-6.5" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+        "</svg></span>"
+    )
+
+
+def _portal_feature_row(color: str, text: str) -> str:
+    """Single feature row: check SVG + wording on one line (Streamlit-safe)."""
+    return (
+        '<div class="etc-hub-feature-row">'
+        f"{_portal_check_icon(color)}"
+        f'<span class="etc-hub-feature-text">{html.escape(str(text))}</span>'
+        "</div>"
+    )
+
+
+def _portal_hub_styles() -> None:
+    """Styles for the ETC OD Collection Platform portal chooser."""
+    st.markdown(
+        """
+        <style>
+        section.main > div { background: #f4f7fb !important; }
+        .stApp { background: #f4f7fb !important; }
+        .main .block-container,
+        .stMainBlockContainer,
+        div[data-testid="stMainBlockContainer"],
+        section.main .block-container,
+        .stAppViewContainer .main .block-container {
+            width: 100% !important;
+            max-width: 1440px !important;
+            margin: 0 auto !important;
+            padding: 1.25rem 2rem 2rem !important;
+            padding-left: 2rem !important;
+            padding-right: 2rem !important;
+        }
+        /* Comfortable vertical rhythm — not cramped */
+        div[data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] {
+            gap: 1rem !important;
+        }
+        div[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] {
+            margin-bottom: 0 !important;
+        }
+
+        .etc-hub-topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 14px 20px;
+            margin-bottom: 4px;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+        }
+        .etc-hub-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+        .etc-hub-mark {
+            width: 40px; height: 40px; border-radius: 11px;
+            background: linear-gradient(145deg, #1d4ed8 0%, #2563eb 100%);
+            color: #fff; display: inline-flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 800; letter-spacing: 0.02em; flex-shrink: 0;
+        }
+        .etc-hub-brand-title {
+            margin: 0; font-size: 17px; font-weight: 700; color: #0f2744; line-height: 1.2;
+        }
+        .etc-hub-userchip {
+            display: inline-flex; align-items: center; gap: 10px; min-width: 0;
+        }
+        .etc-hub-avatar {
+            width: 38px; height: 38px; border-radius: 50%;
+            background: #2563eb; color: #fff; display: inline-flex;
+            align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700; flex-shrink: 0;
+        }
+        .etc-hub-user-meta { min-width: 0; line-height: 1.2; }
+        .etc-hub-username {
+            margin: 0; font-size: 14px; font-weight: 700; color: #0f172a;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
+        }
+        .etc-hub-userrole {
+            margin: 2px 0 0; font-size: 12px; color: #64748b; font-weight: 500;
+        }
+        .etc-hub-chevron { color: #94a3b8; font-size: 12px; margin-left: 2px; }
+
+        [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) {
+            background:
+                radial-gradient(circle at 12% 20%, rgba(96,165,250,0.22), transparent 42%),
+                radial-gradient(circle at 88% 30%, rgba(167,139,250,0.18), transparent 40%),
+                linear-gradient(135deg, #eef5ff 0%, #f5f8ff 55%, #eef8ff 100%);
+            border: 1px solid #dbe7f8;
+            border-radius: 18px;
+            padding: 18px 14px 18px 22px !important;
+            margin: 4px 0 8px;
+            align-items: center !important;
+            gap: 0 !important;
+        }
+        [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) > div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {
+            gap: 0 !important;
+            justify-content: center !important;
+        }
+        [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) [data-testid="stMarkdownContainer"],
+        [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) .stMarkdown {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        /* Sign out column: pin button to the far right of the banner */
+        [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) > div[data-testid="stColumn"]:last-child {
+            border-left: 1px solid #c5d5eb !important;
+            padding: 0 0 0 16px !important;
+            margin: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+        }
+        [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) > div[data-testid="stColumn"]:last-child > div,
+        [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) > div[data-testid="stColumn"]:last-child [data-testid="stVerticalBlock"] {
+            width: 100% !important;
+            align-items: flex-end !important;
+            justify-content: center !important;
+            gap: 0 !important;
+        }
+        .etc-hub-banner {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between;
+            gap: 18px;
+            background: transparent; border: 0; border-radius: 0;
+            padding: 0 !important; margin: 0 !important;
+        }
+        .etc-hub-banner-left {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            gap: 16px !important;
+            min-width: 0;
+            width: 100%;
+        }
+        .etc-hub-banner-icon {
+            width: 58px; height: 58px; border-radius: 16px;
+            background: rgba(255,255,255,0.75); border: 1px solid #dbeafe;
+            display: inline-flex !important; align-items: center; justify-content: center;
+            flex: 0 0 58px !important;
+        }
+        .etc-hub-banner-icon svg {
+            display: block !important; width: 34px; height: 34px; max-width: 34px !important;
+        }
+        .etc-hub-banner-copy {
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            min-width: 0;
+            flex: 1 1 auto !important;
+        }
+        .etc-hub-banner-title {
+            margin: 0 !important; padding: 0 !important;
+            font-size: 28px; font-weight: 800; color: #0f172a;
+            letter-spacing: -0.02em; line-height: 1.15;
+            display: block !important;
+        }
+        .etc-hub-banner-sub {
+            margin: 6px 0 0 !important; padding: 0 !important;
+            font-size: 14px; color: #64748b; line-height: 1.35;
+            display: block !important;
+        }
+        .etc-hub-banner p,
+        .etc-hub-banner-left p,
+        .etc-hub-banner-copy p {
+            display: contents !important;
+            margin: 0 !important;
+        }
+
+        .etc-hub-section-head {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            gap: 14px !important;
+            margin: 10px 0 14px !important;
+            width: 100%;
+        }
+        .etc-hub-section-icon {
+            width: 34px; height: 34px; border-radius: 10px;
+            background: #eff6ff; color: #2563eb;
+            display: inline-flex !important; align-items: center; justify-content: center;
+            flex: 0 0 34px !important;
+        }
+        .etc-hub-section-icon svg {
+            display: block !important; width: 16px; height: 16px; max-width: 16px !important;
+        }
+        .etc-hub-section-copy {
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            min-width: 0;
+            flex: 1 1 auto !important;
+        }
+        .etc-hub-section-title {
+            margin: 0 !important; padding: 0 !important;
+            font-size: 18px; font-weight: 750; color: #0f172a; line-height: 1.2;
+            display: block !important;
+        }
+        .etc-hub-section-sub {
+            margin: 2px 0 0 !important; padding: 0 !important;
+            font-size: 13px; color: #64748b; line-height: 1.3;
+            display: block !important;
+        }
+        .etc-hub-section-head p,
+        .etc-hub-section-copy p {
+            display: contents !important;
+        }
+
+        .etc-hub-card {
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+            padding: 0;
+            min-height: 0 !important;
+            height: auto !important;
+            box-shadow: none;
+            display: flex; flex-direction: column; gap: 14px;
+            margin-bottom: 0;
+        }
+        /* Streamlit can't nest buttons in HTML — wrap column content so Open buttons sit inside the card */
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) > div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 18px !important;
+            padding: 24px 22px 20px !important;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05) !important;
+            gap: 0.75rem !important;
+            height: 100%;
+        }
+        .etc-hub-card-top {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            gap: 14px !important;
+            width: 100%;
+            margin-bottom: 2px;
+        }
+        .etc-hub-card-icon {
+            width: 48px; height: 48px; border-radius: 14px;
+            display: inline-flex !important; align-items: center; justify-content: center;
+            flex-shrink: 0 !important;
+        }
+        .etc-hub-card-icon svg {
+            display: block !important; width: 22px; height: 22px;
+            max-width: 22px !important; flex-shrink: 0;
+        }
+        .etc-hub-card-icon.od { background: #eff6ff; color: #2563eb; }
+        .etc-hub-card-icon.rc { background: #ecfdf5; color: #0f766e; }
+        .etc-hub-card-icon.sam { background: #f5f3ff; color: #7c3aed; }
+        .etc-hub-card-title {
+            margin: 0 !important; font-size: 18px; font-weight: 750;
+            color: #0f172a; line-height: 1.25;
+        }
+        .etc-hub-card > p, .etc-hub-card-desc {
+            margin: 0 !important; font-size: 14px; line-height: 1.5; color: #64748b;
+        }
+        .etc-hub-features {
+            list-style: none; margin: 6px 0 4px !important; padding: 0 !important;
+            display: flex !important; flex-direction: column !important;
+            gap: 14px !important; flex: 0 0 auto !important;
+        }
+        .etc-hub-feature-row {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            align-items: center !important;
+            gap: 12px !important;
+            width: 100%;
+            font-size: 14px; color: #334155; line-height: 1.4;
+        }
+        .etc-hub-check {
+            width: 20px; height: 20px; border-radius: 50%;
+            display: inline-flex !important; align-items: center; justify-content: center;
+            flex: 0 0 20px !important; margin: 0 !important; padding: 0 !important;
+            vertical-align: middle;
+        }
+        .etc-hub-check svg {
+            display: block !important; width: 14px !important; height: 14px !important;
+            max-width: 14px !important; flex-shrink: 0;
+        }
+        .etc-hub-feature-text {
+            display: inline !important;
+            margin: 0 !important; padding: 0 !important;
+            white-space: normal;
+            flex: 1 1 auto !important;
+            min-width: 0;
+        }
+        /* Streamlit may wrap SVG/text in <p>; unwrap only inside feature/title rows */
+        .etc-hub-feature-row p,
+        .etc-hub-card-top p,
+        .etc-hub-check p {
+            display: contents !important;
+            margin: 0 !important;
+        }
+
+        .etc-hub-footer {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; flex-wrap: wrap;
+            margin-top: 8px; padding: 18px 4px 0;
+            border-top: 1px solid #e2e8f0; color: #64748b; font-size: 13px;
+        }
+        .etc-hub-footer-left, .etc-hub-footer-right {
+            display: inline-flex; align-items: center; gap: 12px;
+        }
+        .etc-hub-footer-sep { color: #cbd5e1; }
+        .etc-hub-version {
+            display: inline-block; padding: 3px 9px; border-radius: 999px;
+            background: #eef5ff; border: 1px solid #dbeafe; color: #3b82f6;
+            font-size: 12px; font-weight: 650;
+        }
+
+        div[class*="st-key-portal_hub_sign_out"] {
+            display: block !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        div[class*="st-key-portal_hub_sign_out"] > div {
+            width: 100% !important;
+            margin: 0 !important;
+        }
+        div[class*="st-key-portal_hub_sign_out"] button {
+            background: #ffffff !important; color: #0f172a !important;
+            border: 1px solid #cbd5e1 !important; border-radius: 10px !important;
+            font-weight: 700 !important; font-size: 13px !important;
+            box-shadow: none !important;
+            height: 38px !important;
+            min-height: 38px !important;
+            padding: 0 12px !important;
+            width: 100% !important;
+            gap: 6px !important;
+            margin: 0 !important;
+            float: none !important;
+        }
+        div[class*="st-key-portal_hub_sign_out"] button p,
+        div[class*="st-key-portal_hub_sign_out"] button span {
+            font-weight: 700 !important;
+        }
+        div[class*="st-key-portal_hub_sign_out"] button:hover {
+            background: #f8fafc !important; border-color: #94a3b8 !important;
+        }
+        /* Divider + space above Open buttons inside cards */
+        div[class*="st-key-portal_select_od"],
+        div[class*="st-key-portal_select_review_cycle"],
+        div[class*="st-key-portal_select_sam"] {
+            border-top: 1px solid #e2e8f0 !important;
+            padding-top: 16px !important;
+            margin-top: 8px !important;
+        }
+        div[class*="st-key-portal_select_od"] button {
+            background: #2563eb !important; border-color: #2563eb !important; color: #fff !important;
+            border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
+            box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22) !important;
+        }
+        div[class*="st-key-portal_select_review_cycle"] button {
+            background: #0f766e !important; border-color: #0f766e !important; color: #fff !important;
+            border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
+            box-shadow: 0 8px 16px rgba(15, 118, 110, 0.22) !important;
+        }
+        div[class*="st-key-portal_select_sam"] button {
+            background: #7c3aed !important; border-color: #7c3aed !important; color: #fff !important;
+            border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
+            box-shadow: 0 8px 16px rgba(124, 58, 237, 0.22) !important;
+        }
+        div[class*="st-key-portal_select_od"] button,
+        div[class*="st-key-portal_select_review_cycle"] button,
+        div[class*="st-key-portal_select_sam"] button {
+            margin-top: 0 !important;
+        }
+        div[class*="st-key-portal_select_od"] button:hover,
+        div[class*="st-key-portal_select_review_cycle"] button:hover,
+        div[class*="st-key-portal_select_sam"] button:hover {
+            filter: brightness(0.96); transform: translateY(-1px);
+        }
+        /* More air between the three portal cards */
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) {
+            align-items: stretch !important;
+            gap: 1.5rem !important;
+            column-gap: 1.5rem !important;
+            margin-top: 4px !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stVerticalBlock"] {
+            gap: 0.75rem !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) > div[data-testid="stColumn"] {
+            padding-left: 0.35rem !important;
+            padding-right: 0.35rem !important;
+        }
+        @media (max-width: 900px) {
+            [data-testid="stHorizontalBlock"]:has(.etc-hub-banner) { padding: 14px; }
+            .main .block-container, .stMainBlockContainer, div[data-testid="stMainBlockContainer"] {
+                padding: 1rem !important;
+            }
+            .etc-hub-banner-title { font-size: 24px; }
+            div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) {
+                gap: 1rem !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _portal_select_styles() -> None:
     st.markdown(
         """
@@ -1525,91 +1975,218 @@ def od_project_select_page():
 
 def portal_select_page():
     """Post-login portal picker (OD Dashboard, Review Cycle, Survey Assignment Manager)."""
+    # Leaving RCD clears boot flag so the next RCD open uses a clean splash.
+    st.session_state.pop("rcd_boot_complete", None)
+
     user = st.session_state.get("user", {})
     email = str(user.get("email", ""))
     role = str(user.get("role", "")).upper()
-    username = str(user.get("username") or email)
+    username = _portal_display_name(user)
+    role_label = _portal_role_label(email, role)
     portals = allowed_portals(email, role)
 
     if not portals:
         st.error("No portals are configured for your account. Contact an administrator.")
         return
 
-    selected_project = st.session_state.get("selected_project") or "—"
-    _portal_select_styles()
+    _portal_hub_styles()
+    safe_name = html.escape(username)
+    safe_role = html.escape(role_label)
+    initials = html.escape(_portal_initials(username))
+
+    # Top bar: brand + logged-in user (dynamic name + role)
     st.markdown(
         f"""
-        <div class="project-hero">
-            <p class="project-hero-title">Pick Your Portal</p>
-            <p class="project-hero-sub">Signed in as {username}. Choose where to continue.</p>
-        </div>
-        <div class="project-select-wrap">
-            <p class="project-select-title">Choose Your Portal</p>
-            <p class="project-select-sub">You can switch portals later without logging out.</p>
+        <div class="etc-hub-topbar">
+            <div class="etc-hub-brand">
+                <span class="etc-hub-mark">ETC</span>
+                <p class="etc-hub-brand-title">ETC OD Collection Platform</p>
+            </div>
+            <div class="etc-hub-userchip">
+                <span class="etc-hub-avatar">{initials}</span>
+                <div class="etc-hub-user-meta">
+                    <p class="etc-hub-username">{safe_name}</p>
+                    <p class="etc-hub-userrole">{safe_role}</p>
+                </div>
+                <span class="etc-hub-chevron" aria-hidden="true">▾</span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    portal_cards: list[tuple[str, str, str, str, str | None]] = []
+    # Welcome banner: icon + greeting on one row, compact Sign out on the right
+    ban_left, ban_right = st.columns([6.2, 1], vertical_alignment="center")
+    with ban_left:
+        st.markdown(
+            (
+                '<div class="etc-hub-banner">'
+                '<div class="etc-hub-banner-left">'
+                '<div class="etc-hub-banner-icon" aria-hidden="true">'
+                '<svg width="34" height="34" viewBox="0 0 34 34" fill="none">'
+                '<rect x="2" y="6" width="16" height="16" rx="4" fill="#60a5fa" opacity="0.85"/>'
+                '<rect x="10" y="2" width="16" height="16" rx="4" fill="#818cf8" opacity="0.75"/>'
+                '<rect x="14" y="12" width="16" height="16" rx="4" fill="#38bdf8" opacity="0.7"/>'
+                "</svg></div>"
+                '<div class="etc-hub-banner-copy">'
+                f'<span class="etc-hub-banner-title">Welcome back, {safe_name}!</span>'
+                '<span class="etc-hub-banner-sub">Select a portal below to access your workspace.</span>'
+                "</div></div></div>"
+            ),
+            unsafe_allow_html=True,
+        )
+    with ban_right:
+        if st.button(
+            "Sign out",
+            key="portal_hub_sign_out",
+            use_container_width=True,
+            icon=":material/logout:",
+        ):
+            logout()
+
+    st.markdown(
+        (
+            '<div class="etc-hub-section-head">'
+            '<span class="etc-hub-section-icon" aria-hidden="true">'
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none">'
+            '<rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/>'
+            '<rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>'
+            '<rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>'
+            '<rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.5"/>'
+            "</svg></span>"
+            '<div class="etc-hub-section-copy">'
+            '<span class="etc-hub-section-title">Available Portals</span>'
+            '<span class="etc-hub-section-sub">Choose the application you want to open.</span>'
+            "</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+    portal_cards: list[dict] = []
     if PORTAL_OD in portals:
         portal_cards.append(
-            (
-                "od",
-                "OD Collection Dashboard",
-                "Survey collection, refusal analysis, project reports",
-                f"Project: {selected_project}",
-                "od_project_select",
-            )
+            {
+                "key": "od",
+                "tone": "od",
+                "check": "#2563eb",
+                "title": "OD Collection Dashboard",
+                "description": "Access collection, refusal analysis, and project reports.",
+                "features": [
+                    "Survey collection overview",
+                    "Refusal analysis",
+                    "Project reports & analytics",
+                ],
+                "button": "Open Dashboard →",
+                "target_page": "od_project_select",
+                "icon": (
+                    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none">'
+                    '<path d="M4 19V10M10 19V5M16 19V13M22 19H2" '
+                    'stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+                ),
+            }
         )
     if PORTAL_REVIEW_CYCLE in portals:
         portal_cards.append(
-            (
-                "review_cycle",
-                "Review Cycle Dashboard",
-                "Elvis review, cleaning, flags, and field workflows",
-                "Review workspace",
-                "review_cycle",
-            )
+            {
+                "key": "review_cycle",
+                "tone": "rc",
+                "check": "#0f766e",
+                "title": "Review Cycle Dashboard",
+                "description": "Review, cleaning, flags, and field workflows.",
+                "features": [
+                    "Data cleaning & review",
+                    "Quality control & flags",
+                    "Field workflow management",
+                ],
+                "button": "Open Review Dashboard →",
+                "target_page": "review_cycle",
+                "icon": (
+                    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none">'
+                    '<rect x="6" y="3" width="12" height="18" rx="2" stroke="currentColor" stroke-width="2"/>'
+                    '<path d="M9 9h6M9 13h6M9 17h3" stroke="currentColor" stroke-width="2" '
+                    'stroke-linecap="round"/>'
+                    '<circle cx="17" cy="17" r="4" fill="#ecfdf5" stroke="currentColor" stroke-width="1.5"/>'
+                    '<path d="M15.5 17l1.2 1.2L18.8 16" stroke="currentColor" stroke-width="1.6" '
+                    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+                ),
+            }
         )
     if PORTAL_SAM in portals and can_access_survey_assignment_manager(email, role):
         portal_cards.append(
-            (
-                "sam",
-                "Survey Assignment Manager",
-                "RunCut upload, assignment rules, Word report export",
-                "Transit field staff",
-                "field_assignments",
-            )
+            {
+                "key": "sam",
+                "tone": "sam",
+                "check": "#7c3aed",
+                "title": "Survey Assignment Manager",
+                "description": "RunCut upload, assignment rules, Word report export.",
+                "features": [
+                    "RunCut upload & validation",
+                    "Assignment rules management",
+                    "Word report export",
+                ],
+                "button": "Open Assignment Manager →",
+                "target_page": "field_assignments",
+                "icon": (
+                    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none">'
+                    '<circle cx="9" cy="8" r="3" stroke="currentColor" stroke-width="2"/>'
+                    '<circle cx="16" cy="9" r="2.5" stroke="currentColor" stroke-width="2"/>'
+                    '<path d="M4 18c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5" stroke="currentColor" '
+                    'stroke-width="2" stroke-linecap="round"/>'
+                    '<path d="M14 18c0-1.6 1.2-3 3-3s3 1.4 3 3" stroke="currentColor" '
+                    'stroke-width="2" stroke-linecap="round"/></svg>'
+                ),
+            }
         )
 
-    cols = st.columns(min(len(portal_cards), 3) or 1)
-    for idx, (key, title, meta, chip, target_page) in enumerate(portal_cards):
-        col = cols[idx % len(cols)]
-        with col:
+    if not portal_cards:
+        st.warning("No portals are available for your account right now.")
+        return
+
+    cols = st.columns(min(len(portal_cards), 3) or 1, gap="large")
+    for idx, card in enumerate(portal_cards):
+        with cols[idx % len(cols)]:
+            feature_items = "".join(
+                _portal_feature_row(card["check"], point) for point in card["features"]
+            )
+            # No Current Project / Your Role blocks — features then CTA only
+            # Compact HTML (no blank lines) so Streamlit markdown won't inject <p> and break flex rows
             st.markdown(
-                f"""
-                <div class="project-card">
-                    <p class="project-card-name">{title}</p>
-                    <p class="project-card-meta">{meta}</p>
-                    <span class="project-chip">{chip}</span>
-                </div>
-                """,
+                (
+                    f'<div class="etc-hub-card">'
+                    f'<div class="etc-hub-card-top">'
+                    f'<div class="etc-hub-card-icon {html.escape(card["tone"])}">{card["icon"]}</div>'
+                    f'<div class="etc-hub-card-title">{html.escape(card["title"])}</div>'
+                    f"</div>"
+                    f'<p class="etc-hub-card-desc">{html.escape(card["description"])}</p>'
+                    f'<div class="etc-hub-features">{feature_items}</div>'
+                    f"</div>"
+                ),
                 unsafe_allow_html=True,
             )
-            if target_page:
-                if st.button(
-                    f"Enter {title}",
-                    key=f"portal_select_{key}",
-                    use_container_width=True,
-                    type="primary",
-                ):
-                    st.query_params["page"] = target_page
-                    st.rerun()
+            if st.button(
+                card["button"],
+                key=f"portal_select_{card['key']}",
+                use_container_width=True,
+                type="primary",
+            ):
+                st.query_params["page"] = card["target_page"]
+                st.rerun()
 
-    st.divider()
-    if st.button("Sign out", use_container_width=True, type="secondary"):
-        logout()
+    # Single Sign out stays in the welcome banner — footer is help + copyright only
+    st.markdown(
+        """
+        <div class="etc-hub-footer">
+            <div class="etc-hub-footer-left">
+                <span>Need help? Contact your administrator.</span>
+            </div>
+            <div class="etc-hub-footer-right">
+                <span>© 2026 ETC Institute</span>
+                <span class="etc-hub-version">v1.0.0</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def admin_portal_select_page():
