@@ -1303,7 +1303,60 @@ def _portal_hub_styles() -> None:
         """
         <style>
         section.main > div { background: #f4f7fb !important; }
-        .stApp { background: #f4f7fb !important; }
+        .stApp { background: #f4f7fb !important; color: #0f172a !important; }
+        /* Defeat leftover RCD inject_global_css / boot pseudo-overlays */
+        .stApp::before,
+        .stApp::after {
+            content: none !important;
+            display: none !important;
+            background: transparent !important;
+        }
+        /* Portal hub has no nav — hide leftover RCD sidebar chrome */
+        [data-testid="stSidebar"],
+        section[data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="collapsedControl"],
+        [data-testid="stExpandSidebarButton"],
+        .ref-brand,
+        .ref-brand-logo,
+        .ref-brand-title,
+        .ref-brand-sub,
+        .ref-nav-heading,
+        .ref-sidebar-divider {
+            display: none !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            min-width: 0 !important;
+            max-width: 0 !important;
+            height: 0 !important;
+            overflow: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+        /* Restore portal text contrast if RCD muted colors leaked in */
+        .etc-hub-topbar,
+        .etc-hub-banner,
+        .etc-hub-section-head,
+        .etc-hub-card,
+        .etc-hub-footer,
+        .etc-hub-brand-title,
+        .etc-hub-username,
+        .etc-hub-banner-title,
+        .etc-hub-section-title,
+        .etc-hub-card-title {
+            color: #0f172a !important;
+            opacity: 1 !important;
+        }
+        .etc-hub-userrole,
+        .etc-hub-banner-sub,
+        .etc-hub-section-sub,
+        .etc-hub-card-desc,
+        .etc-hub-feature-text,
+        .etc-hub-footer {
+            color: #64748b !important;
+            opacity: 1 !important;
+        }
         .main .block-container,
         .stMainBlockContainer,
         div[data-testid="stMainBlockContainer"],
@@ -1318,7 +1371,7 @@ def _portal_hub_styles() -> None:
         }
         /* Comfortable vertical rhythm — not cramped */
         div[data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] {
-            gap: 1rem !important;
+            gap: 1.15rem !important;
         }
         div[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] {
             margin-bottom: 0 !important;
@@ -1435,37 +1488,34 @@ def _portal_hub_styles() -> None:
             display: block !important; width: 34px; height: 34px; max-width: 34px !important;
         }
         .etc-hub-banner-copy {
-            display: flex !important;
-            flex-direction: column !important;
-            justify-content: center !important;
+            display: block !important;
             min-width: 0;
             flex: 1 1 auto !important;
+            line-height: normal !important;
         }
         .etc-hub-banner-title {
-            margin: 0 !important; padding: 0 !important;
-            font-size: 28px; font-weight: 800; color: #0f172a;
-            letter-spacing: -0.02em; line-height: 1.15;
             display: block !important;
+            margin: 0 0 8px 0 !important;
+            padding: 0 !important;
+            font-size: 28px; font-weight: 800; color: #0f172a;
+            letter-spacing: -0.02em; line-height: 1.2 !important;
+            white-space: normal !important;
         }
         .etc-hub-banner-sub {
-            margin: 6px 0 0 !important; padding: 0 !important;
-            font-size: 14px; color: #64748b; line-height: 1.35;
             display: block !important;
-        }
-        .etc-hub-banner p,
-        .etc-hub-banner-left p,
-        .etc-hub-banner-copy p {
-            display: contents !important;
             margin: 0 !important;
+            padding: 0 !important;
+            font-size: 14px; color: #64748b; line-height: 1.4 !important;
+            white-space: normal !important;
         }
 
         .etc-hub-section-head {
             display: flex !important;
             flex-direction: row !important;
             flex-wrap: nowrap !important;
-            align-items: center !important;
+            align-items: flex-start !important;
             gap: 14px !important;
-            margin: 10px 0 14px !important;
+            margin: 6px 0 4px !important;
             width: 100%;
         }
         .etc-hub-section-icon {
@@ -1473,30 +1523,30 @@ def _portal_hub_styles() -> None:
             background: #eff6ff; color: #2563eb;
             display: inline-flex !important; align-items: center; justify-content: center;
             flex: 0 0 34px !important;
+            margin-top: 2px;
         }
         .etc-hub-section-icon svg {
             display: block !important; width: 16px; height: 16px; max-width: 16px !important;
         }
         .etc-hub-section-copy {
-            display: flex !important;
-            flex-direction: column !important;
-            justify-content: center !important;
+            display: block !important;
             min-width: 0;
             flex: 1 1 auto !important;
+            line-height: normal !important;
         }
         .etc-hub-section-title {
-            margin: 0 !important; padding: 0 !important;
-            font-size: 18px; font-weight: 750; color: #0f172a; line-height: 1.2;
             display: block !important;
+            margin: 0 0 4px 0 !important;
+            padding: 0 !important;
+            font-size: 18px; font-weight: 750; color: #0f172a; line-height: 1.25 !important;
+            white-space: normal !important;
         }
         .etc-hub-section-sub {
-            margin: 2px 0 0 !important; padding: 0 !important;
-            font-size: 13px; color: #64748b; line-height: 1.3;
             display: block !important;
-        }
-        .etc-hub-section-head p,
-        .etc-hub-section-copy p {
-            display: contents !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            font-size: 13px; color: #64748b; line-height: 1.35 !important;
+            white-space: normal !important;
         }
 
         .etc-hub-card {
@@ -1640,17 +1690,20 @@ def _portal_hub_styles() -> None:
             padding-top: 16px !important;
             margin-top: 8px !important;
         }
-        div[class*="st-key-portal_select_od"] button {
+        div[class*="st-key-portal_select_od"] button,
+        div[class*="st-key-portal_select_od"] button[kind="primary"] {
             background: #2563eb !important; border-color: #2563eb !important; color: #fff !important;
             border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
             box-shadow: 0 8px 16px rgba(37, 99, 235, 0.22) !important;
         }
-        div[class*="st-key-portal_select_review_cycle"] button {
+        div[class*="st-key-portal_select_review_cycle"] button,
+        div[class*="st-key-portal_select_review_cycle"] button[kind="primary"] {
             background: #0f766e !important; border-color: #0f766e !important; color: #fff !important;
             border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
             box-shadow: 0 8px 16px rgba(15, 118, 110, 0.22) !important;
         }
-        div[class*="st-key-portal_select_sam"] button {
+        div[class*="st-key-portal_select_sam"] button,
+        div[class*="st-key-portal_select_sam"] button[kind="primary"] {
             background: #7c3aed !important; border-color: #7c3aed !important; color: #fff !important;
             border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
             box-shadow: 0 8px 16px rgba(124, 58, 237, 0.22) !important;
@@ -1661,9 +1714,25 @@ def _portal_hub_styles() -> None:
             margin-top: 0 !important;
         }
         div[class*="st-key-portal_select_od"] button:hover,
+        div[class*="st-key-portal_select_od"] button[kind="primary"]:hover,
         div[class*="st-key-portal_select_review_cycle"] button:hover,
-        div[class*="st-key-portal_select_sam"] button:hover {
+        div[class*="st-key-portal_select_review_cycle"] button[kind="primary"]:hover,
+        div[class*="st-key-portal_select_sam"] button:hover,
+        div[class*="st-key-portal_select_sam"] button[kind="primary"]:hover {
             filter: brightness(0.96); transform: translateY(-1px);
+            color: #fff !important;
+        }
+        div[class*="st-key-portal_select_od"] button:hover,
+        div[class*="st-key-portal_select_od"] button[kind="primary"]:hover {
+            background: #2563eb !important; border-color: #2563eb !important;
+        }
+        div[class*="st-key-portal_select_review_cycle"] button:hover,
+        div[class*="st-key-portal_select_review_cycle"] button[kind="primary"]:hover {
+            background: #0f766e !important; border-color: #0f766e !important;
+        }
+        div[class*="st-key-portal_select_sam"] button:hover,
+        div[class*="st-key-portal_select_sam"] button[kind="primary"]:hover {
+            background: #7c3aed !important; border-color: #7c3aed !important;
         }
         /* More air between the three portal cards */
         div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) {
@@ -1975,8 +2044,26 @@ def od_project_select_page():
 
 def portal_select_page():
     """Post-login portal picker (OD Dashboard, Review Cycle, Survey Assignment Manager)."""
-    # Leaving RCD clears boot flag so the next RCD open uses a clean splash.
+    # Leaving RCD clears boot flags so the next RCD open uses a clean splash.
     st.session_state.pop("rcd_boot_complete", None)
+    st.session_state.pop("rcd_boot_splash_shown", None)
+
+    # Drop leftover RCD sidebar widgets + body-level boot cover from a prior visit.
+    with st.sidebar:
+        st.empty()
+    try:
+        from embed import remove_boot_cover
+
+        remove_boot_cover()
+    except ImportError:
+        try:
+            from REVIEW_CYCLE_DASHBOARD.embed import remove_boot_cover
+
+            remove_boot_cover()
+        except Exception:
+            pass
+    except Exception:
+        pass
 
     user = st.session_state.get("user", {})
     email = str(user.get("email", ""))
@@ -1994,46 +2081,47 @@ def portal_select_page():
     safe_role = html.escape(role_label)
     initials = html.escape(_portal_initials(username))
 
-    # Top bar: brand + logged-in user (dynamic name + role)
-    st.markdown(
+    # st.html avoids markdown <p> wrapping that collapses title/subtitle onto one line.
+    st.html(
         f"""
         <div class="etc-hub-topbar">
             <div class="etc-hub-brand">
                 <span class="etc-hub-mark">ETC</span>
-                <p class="etc-hub-brand-title">ETC OD Collection Platform</p>
+                <div class="etc-hub-brand-title">ETC OD Collection Platform</div>
             </div>
             <div class="etc-hub-userchip">
                 <span class="etc-hub-avatar">{initials}</span>
                 <div class="etc-hub-user-meta">
-                    <p class="etc-hub-username">{safe_name}</p>
-                    <p class="etc-hub-userrole">{safe_role}</p>
+                    <div class="etc-hub-username">{safe_name}</div>
+                    <div class="etc-hub-userrole">{safe_role}</div>
                 </div>
                 <span class="etc-hub-chevron" aria-hidden="true">▾</span>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     # Welcome banner: icon + greeting on one row, compact Sign out on the right
     ban_left, ban_right = st.columns([6.2, 1], vertical_alignment="center")
     with ban_left:
-        st.markdown(
-            (
-                '<div class="etc-hub-banner">'
-                '<div class="etc-hub-banner-left">'
-                '<div class="etc-hub-banner-icon" aria-hidden="true">'
-                '<svg width="34" height="34" viewBox="0 0 34 34" fill="none">'
-                '<rect x="2" y="6" width="16" height="16" rx="4" fill="#60a5fa" opacity="0.85"/>'
-                '<rect x="10" y="2" width="16" height="16" rx="4" fill="#818cf8" opacity="0.75"/>'
-                '<rect x="14" y="12" width="16" height="16" rx="4" fill="#38bdf8" opacity="0.7"/>'
-                "</svg></div>"
-                '<div class="etc-hub-banner-copy">'
-                f'<span class="etc-hub-banner-title">Welcome back, {safe_name}!</span>'
-                '<span class="etc-hub-banner-sub">Select a portal below to access your workspace.</span>'
-                "</div></div></div>"
-            ),
-            unsafe_allow_html=True,
+        st.html(
+            f"""
+            <div class="etc-hub-banner">
+              <div class="etc-hub-banner-left">
+                <div class="etc-hub-banner-icon" aria-hidden="true">
+                  <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
+                    <rect x="2" y="6" width="16" height="16" rx="4" fill="#60a5fa" opacity="0.85"/>
+                    <rect x="10" y="2" width="16" height="16" rx="4" fill="#818cf8" opacity="0.75"/>
+                    <rect x="14" y="12" width="16" height="16" rx="4" fill="#38bdf8" opacity="0.7"/>
+                  </svg>
+                </div>
+                <div class="etc-hub-banner-copy">
+                  <div class="etc-hub-banner-title">Welcome back, {safe_name}!</div>
+                  <div class="etc-hub-banner-sub">Select a portal below to access your workspace.</div>
+                </div>
+              </div>
+            </div>
+            """
         )
     with ban_right:
         if st.button(
@@ -2044,22 +2132,23 @@ def portal_select_page():
         ):
             logout()
 
-    st.markdown(
-        (
-            '<div class="etc-hub-section-head">'
-            '<span class="etc-hub-section-icon" aria-hidden="true">'
-            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none">'
-            '<rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/>'
-            '<rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>'
-            '<rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>'
-            '<rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.5"/>'
-            "</svg></span>"
-            '<div class="etc-hub-section-copy">'
-            '<span class="etc-hub-section-title">Available Portals</span>'
-            '<span class="etc-hub-section-sub">Choose the application you want to open.</span>'
-            "</div></div>"
-        ),
-        unsafe_allow_html=True,
+    st.html(
+        """
+        <div class="etc-hub-section-head">
+          <span class="etc-hub-section-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/>
+              <rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>
+              <rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>
+              <rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.5"/>
+            </svg>
+          </span>
+          <div class="etc-hub-section-copy">
+            <div class="etc-hub-section-title">Available Portals</div>
+            <div class="etc-hub-section-sub">Choose the application you want to open.</div>
+          </div>
+        </div>
+        """
     )
 
     portal_cards: list[dict] = []
@@ -2169,11 +2258,29 @@ def portal_select_page():
                 use_container_width=True,
                 type="primary",
             ):
-                st.query_params["page"] = card["target_page"]
+                target = card["target_page"]
+                if target == "review_cycle":
+                    st.session_state["rcd_boot_complete"] = False
+                    st.session_state["rcd_boot_splash_shown"] = False
+                    try:
+                        from embed import install_boot_cover
+
+                        # Cover the portal immediately so RCD CSS never washes it out mid-nav.
+                        install_boot_cover("Opening your Review Cycle workspace…")
+                    except ImportError:
+                        try:
+                            from REVIEW_CYCLE_DASHBOARD.embed import install_boot_cover
+
+                            install_boot_cover("Opening your Review Cycle workspace…")
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                st.query_params["page"] = target
                 st.rerun()
 
     # Single Sign out stays in the welcome banner — footer is help + copyright only
-    st.markdown(
+    st.html(
         """
         <div class="etc-hub-footer">
             <div class="etc-hub-footer-left">
@@ -2184,8 +2291,7 @@ def portal_select_page():
                 <span class="etc-hub-version">v1.0.0</span>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 

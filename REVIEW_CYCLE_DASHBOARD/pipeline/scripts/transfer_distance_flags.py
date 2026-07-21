@@ -26,6 +26,62 @@ def check_all_characters_present(df, columns_to_check):
     return matching_columns
 
 
+def _dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep the first column when names are duplicated (LS6→LS2 rename / export quirk)."""
+    if df.columns.is_unique:
+        return df
+    return df.loc[:, ~df.columns.duplicated()].copy()
+
+
+def _first_series(df: pd.DataFrame, name: str) -> pd.Series:
+    """Return one Series for `name` even if the column label is duplicated."""
+    if name not in df.columns:
+        matches = [c for c in df.columns if str(c).lower() == str(name).lower()]
+        if not matches:
+            raise KeyError(name)
+        name = matches[0]
+    col = df[name]
+    if isinstance(col, pd.DataFrame):
+        return col.iloc[:, 0].copy()
+    return col.copy()
+
+
+def _ensure_single_id(df: pd.DataFrame, col: str = "id") -> pd.DataFrame:
+    """Guarantee exactly one merge key column named `col` (required by pandas merge)."""
+    df = _dedupe_columns(df)
+    variants = [c for c in df.columns if str(c).lower() == col.lower()]
+    if not variants:
+        return df
+    primary = _first_series(df, variants[0])
+    df = df.drop(columns=list(variants), errors="ignore")
+    df.insert(0, col, primary.to_numpy())
+    return _dedupe_columns(df)
+
+
+def _elvis_merge_frame(elvis_df: pd.DataFrame, date_col: str) -> pd.DataFrame:
+    """KingElvis join frame with a single unique `id` column for pandas merge."""
+    elvis_df = _ensure_single_id(_dedupe_columns(elvis_df))
+    pieces = {
+        date_col: _first_series(elvis_df, date_col),
+        "id": _first_series(elvis_df, "id"),
+        "FINAL_REVIEWER": _first_series(elvis_df, "FINAL_REVIEWER"),
+        "Final_Usage": _first_series(elvis_df, "Final_Usage"),
+    }
+    return _ensure_single_id(pd.DataFrame(pieces))
+
+
+def _safe_select(df: pd.DataFrame, columns: list) -> pd.DataFrame:
+    """Select columns by name without pulling duplicate-labeled extras."""
+    data = {}
+    for name in columns:
+        if name in data:
+            continue
+        try:
+            data[name] = _first_series(df, name)
+        except KeyError:
+            continue
+    return pd.DataFrame(data, index=df.index)
+
 today_date = date.today()
 today_date=''.join(str(today_date).split('-'))
 
@@ -226,6 +282,9 @@ header_mapping = dict(zip(header_df["Headers-ls6"], header_df["FormattedHeader-l
 
 # Step 2: Rename df1 columns to get df2
 df = df1.rename(columns=header_mapping)
+# LS6→LS2 mapping can collapse multiple headers onto the same name (e.g. duplicate `id`).
+df = _ensure_single_id(_dedupe_columns(df))
+elvis_df = _ensure_single_id(_dedupe_columns(elvis_df))
 
 # Optional: Check changes
 print("Renamed Columns:")
@@ -246,8 +305,11 @@ small_columns=['reviewreviewer', 'reviewusage', 'finalusage', 'elvisdate', 'id',
 
 elvis_date_check=['elvisdate']
 elvis_date=check_all_characters_present(elvis_df,elvis_date_check)
+if not elvis_date:
+    raise KeyError("No Elvis date column found in KingElvis file (expected a column like Elvis_Date).")
 
-df = df.merge(elvis_df[[elvis_date[0], 'id', 'Final_Usage','FINAL_REVIEWER']], on='id', how='left')
+df = _ensure_single_id(df).merge(_elvis_merge_frame(elvis_df, elvis_date[0]), on='id', how='left')
+df = _ensure_single_id(_dedupe_columns(df))
 
 
 df=df[df['Final_Usage'].str.lower()=='use']
@@ -255,6 +317,7 @@ df=df[df['Final_Usage'].str.lower()=='use']
 
 
 matched_columns=check_all_characters_present(df,small_columns)
+matched_columns = list(dict.fromkeys(matched_columns))
 
 transfer_columns_checks=['prevtran1onbuslat', 'prevtran1onbuslong',
                   'prevtran1offbuslat', 'prevtran1offbuslong', 'prevtran2onbuslat', 
@@ -270,14 +333,14 @@ transfer_columns_checks=['prevtran1onbuslat', 'prevtran1onbuslong',
                   'nexttran4offbuslat', 'nexttran4offbuslong']
 
 transfer_columns=check_all_characters_present(df,transfer_columns_checks)
+transfer_columns = list(dict.fromkeys([c for c in transfer_columns if str(c).lower() != 'id']))
 
-distance_flags=df.loc[:,transfer_columns]
+distance_flags=_safe_select(df, transfer_columns)
 transfer_data_list=distance_flags.values.tolist()
 
 
-id_transformer_columns = copy.deepcopy(transfer_columns)
-id_transformer_columns.insert(0,'id')
-df1=df.loc[:,id_transformer_columns]
+id_transformer_columns = ['id'] + [c for c in transfer_columns if str(c).lower() != 'id']
+df1 = _ensure_single_id(_safe_select(df, id_transformer_columns))
 
 def get_distance_between_coordinates(lat1, lon1, lat2, lon2):
     try:
@@ -342,18 +405,20 @@ def compute_no_of_transfer_gps_distance(row):
 
     return pd.Series(distances)  # Convert the dictionary to a Series
 # Apply the function to each row and add the resulting columns to df1
-df1 = pd.concat([df1, df1.apply(compute_no_of_transfer_gps_distance, axis=1)], axis=1)
+_dist_cols = df1.apply(compute_no_of_transfer_gps_distance, axis=1)
+df1 = pd.concat([df1, _dist_cols], axis=1)
+df1 = _ensure_single_id(_dedupe_columns(df1))
 
+# Reviewer fields already joined onto `df` above — attach by aligned index.
+for _col in (elvis_date[0], "FINAL_REVIEWER", "Final_Usage"):
+    if _col in df.columns and _col not in df1.columns:
+        df1[_col] = _first_series(df, _col).to_numpy()
+df1 = _ensure_single_id(_dedupe_columns(df1))
 
-# df1=df1.merge(elvis_df[['elvis_date', 'id', 'FINAL_REVIEWER','Final_Usage']], on='id', how='left')
-df1=df1.merge(elvis_df[[elvis_date[0], 'id', 'FINAL_REVIEWER','Final_Usage']], on='id', how='left')
-
-df2=df[matched_columns]
-
-
-
+df2 = _ensure_single_id(_safe_select(df, matched_columns))
 
 df1 = df2.merge(df1, on='id', how='left')
+df1 = _ensure_single_id(_dedupe_columns(df1))
 # df1 = df1.merge(df[matched_columns], on='id', how='right')
 
 # To calculate Transfer1_Distance Columns
@@ -421,15 +486,29 @@ def transfer_distance_columns_with_ids(df):
         'NEXT_TRAN_3_ON_BUS_LAT', 'NEXT_TRAN_3_ON_BUS_LONG', 'NEXT_TRAN_3_OFF_BUS_LAT', 'NEXT_TRAN_3_OFF_BUS_LONG',
         'NEXT_TRAN_4_ON_BUS_LAT', 'NEXT_TRAN_4_ON_BUS_LONG', 'NEXT_TRAN_4_OFF_BUS_LAT', 'NEXT_TRAN_4_OFF_BUS_LONG'
     ]
-    
-    lists_per_row = df[columns_specified].apply(lambda row: [x for x in row if pd.notnull(x)], axis=1)
+    present = [c for c in columns_specified if c in df.columns]
+    if not present or df.empty:
+        return pd.DataFrame(index=df.index)
 
+    lists_per_row = df[present].apply(lambda row: [x for x in row if pd.notnull(x)], axis=1)
 
     distance_lists = lists_per_row.apply(calculate_distances_with_adjusted_long)
     max_distances = distance_lists.apply(len).max()
-    df1 = pd.DataFrame(distance_lists.tolist(), columns=[f"Distance{i+1}" for i in range(max_distances)])
-    
-    return df1
+    # Empty / all-empty distance lists → pandas max() is NaN (float); range() requires an int.
+    if pd.isna(max_distances) or int(max_distances) <= 0:
+        return pd.DataFrame(index=df.index)
+    max_distances = int(max_distances)
+    rows = []
+    for dist in distance_lists:
+        dist = list(dist) if dist is not None else []
+        if len(dist) < max_distances:
+            dist = dist + [None] * (max_distances - len(dist))
+        rows.append(dist[:max_distances])
+    return pd.DataFrame(
+        rows,
+        columns=[f"Distance{i+1}" for i in range(max_distances)],
+        index=df.index,
+    )
 
 
 def assign_distances_based_on_trip_columns(df, distance_df):
@@ -439,11 +518,21 @@ def assign_distances_based_on_trip_columns(df, distance_df):
     ]
 
     distance_columns = [f"Transfer{i+1}_Distance" for i in range(8)]
+    for col in distance_columns:
+        if col not in df.columns:
+            df[col] = None
+
+    if distance_df is None or distance_df.empty or 'id' not in getattr(distance_df, 'columns', []):
+        return df
 
     for idx, row in df.iterrows():
         # Retrieve the distances for the row using the 'id' column
         matched_rows = distance_df.loc[distance_df['id'] == row['id']]
-        
+        if matched_rows.empty:
+            for dist_col in distance_columns:
+                df.at[idx, dist_col] = None
+            continue
+
         matched_value = matched_rows.iloc[0]
         if isinstance(matched_value, pd.Series):
             distances = matched_value.drop('id', errors='ignore').dropna().tolist()
@@ -453,7 +542,7 @@ def assign_distances_based_on_trip_columns(df, distance_df):
 
         # For each trip column, if a value is present, assign the next available distance value
         for trip_col, dist_col in zip(trip_columns, distance_columns):
-            if pd.notna(row[trip_col]) and distances:
+            if trip_col in df.columns and pd.notna(row.get(trip_col)) and distances:
                 df.at[idx, dist_col] = distances.pop(0)
             else:
                 df.at[idx, dist_col] = None
@@ -513,7 +602,9 @@ def compute_missing_gps_flag(df):
 
 # Usage:
 df2 = transfer_distance_columns_with_ids(df1)
-df2['id'] = df1['id']
+if 'id' not in df2.columns:
+    df2 = df2.copy()
+    df2['id'] = _first_series(df1, 'id').to_numpy()
 
 df1 = assign_distances_based_on_trip_columns(df1, df2)
 
