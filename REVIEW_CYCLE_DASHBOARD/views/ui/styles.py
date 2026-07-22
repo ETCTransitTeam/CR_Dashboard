@@ -540,7 +540,7 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    z-index: 100002;
+    z-index: 2147483000;
     min-width: 220px;
     padding: 14px 16px;
     border: 1px solid var(--border);
@@ -558,6 +558,7 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     visibility: visible !important;
     opacity: 1 !important;
     pointer-events: auto !important;
+    z-index: 2147483000 !important;
 }
 .ref-user-panel-role {
     display: inline-flex;
@@ -581,7 +582,7 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    z-index: 100002;
+    z-index: 2147483000;
     width: min(360px, calc(100vw - 24px));
     min-width: 280px;
     padding: 14px;
@@ -597,14 +598,18 @@ section[data-testid="stSidebar"] .stButton > button:hover {
     visibility: visible !important;
     opacity: 1 !important;
     pointer-events: auto !important;
+    z-index: 2147483000 !important;
 }
 .ref-page-shell,
 .ref-app-header,
 .ref-navbar-tools,
 .ref-bell-wrap,
+.ref-user-menu,
 div[data-testid="stElementContainer"]:has(.ref-page-shell),
 div[data-testid="stMarkdownContainer"]:has(#ref-notif-anchor),
-div[data-testid="stVerticalBlock"]:has(#ref-notif-anchor) {
+div[data-testid="stMarkdownContainer"]:has(#ref-user-anchor),
+div[data-testid="stVerticalBlock"]:has(#ref-notif-anchor),
+div[data-testid="stVerticalBlock"]:has(#ref-user-anchor) {
     overflow: visible !important;
 }
 .ref-notif-backdrop {
@@ -1513,31 +1518,55 @@ PARENT_RUNTIME_JS = r"""
         if (seed && seed.ownerDocument) return seed.ownerDocument;
         if (seed && seed.nodeType === 9) return seed;
         for (const doc of appDocuments()) {
-            if (doc.getElementById("ref-notif-anchor")) return doc;
+            if (doc.getElementById("ref-notif-anchor") || doc.getElementById("ref-user-anchor")) return doc;
         }
         return document;
     }
+    function viewOf(doc) {
+        try {
+            return (doc && doc.defaultView) || window;
+        } catch (e) {
+            return window;
+        }
+    }
     function positionNotifPanel(doc) {
         doc = resolveNotifDoc(doc);
+        const win = viewOf(doc);
+        const anchor = doc.getElementById("ref-notif-anchor");
         const panel = doc.getElementById("ref-notif-panel");
-        if (!panel) return;
-        // Keep the panel anchored to the bell wrap so logout removes it with the header.
-        panel.style.position = "absolute";
-        panel.style.top = "calc(100% + 8px)";
-        panel.style.right = "0";
-        panel.style.left = "auto";
-        panel.style.zIndex = "100002";
+        if (!panel || !anchor) return;
+        // Fixed positioning avoids Streamlit parents that clip overflow on live.
+        // Use the panel document's window — not the components.html iframe viewport.
+        const rect = anchor.getBoundingClientRect();
+        const width = Math.min(360, Math.max(280, win.innerWidth - 24));
+        let left = Math.round(rect.right - width);
+        left = Math.max(12, Math.min(left, win.innerWidth - width - 12));
+        panel.style.position = "fixed";
+        panel.style.top = Math.round(rect.bottom + 8) + "px";
+        panel.style.left = left + "px";
+        panel.style.right = "auto";
+        panel.style.width = width + "px";
+        panel.style.zIndex = "2147483000";
         panel.style.pointerEvents = "auto";
     }
     function positionUserPanel(doc) {
         doc = resolveNotifDoc(doc);
-        const panel = doc.getElementById("ref-user-panel");
-        if (!panel) return;
-        panel.style.position = "absolute";
-        panel.style.top = "calc(100% + 8px)";
-        panel.style.right = "0";
-        panel.style.left = "auto";
-        panel.style.zIndex = "100002";
+        const win = viewOf(doc);
+        const wrap = doc.getElementById("ref-user-menu");
+        const anchor = (wrap && wrap.querySelector("#ref-user-anchor")) || doc.getElementById("ref-user-anchor");
+        const panel = (wrap && wrap.querySelector("#ref-user-panel")) || doc.getElementById("ref-user-panel");
+        if (!panel || !anchor) return;
+        const rect = anchor.getBoundingClientRect();
+        // Prefer chip width so the menu lines up under Boo Ali, not the iframe viewport.
+        const width = Math.max(220, Math.round(rect.width) || 220);
+        let left = Math.round(rect.right - width);
+        left = Math.max(12, Math.min(left, win.innerWidth - width - 12));
+        panel.style.position = "fixed";
+        panel.style.top = Math.round(rect.bottom + 8) + "px";
+        panel.style.left = left + "px";
+        panel.style.right = "auto";
+        panel.style.minWidth = width + "px";
+        panel.style.zIndex = "2147483000";
         panel.style.pointerEvents = "auto";
     }
     function ensureNotifBackdrop(doc) {
@@ -1603,9 +1632,15 @@ PARENT_RUNTIME_JS = r"""
         doc.querySelectorAll("#ref-notif-backdrop").forEach((backdrop) => backdrop.remove());
     }
     function bindNotifDocument(doc) {
-        if (!doc || !doc.documentElement || doc.documentElement.dataset.refUiBound === "2") return;
-        doc.documentElement.dataset.refUiBound = "2";
-        doc.addEventListener("click", (e) => {
+        if (!doc || !doc.documentElement) return;
+        // Replace any prior handler so bootAll/reruns never stack duplicate toggles.
+        if (doc.__refUiClickHandler) {
+            try { doc.removeEventListener("click", doc.__refUiClickHandler); } catch (e) {}
+        }
+        if (doc.__refUiKeyHandler) {
+            try { doc.removeEventListener("keydown", doc.__refUiKeyHandler); } catch (e) {}
+        }
+        const onClick = (e) => {
             const close = e.target.closest("[data-ref-notif-close]");
             if (close) {
                 e.preventDefault();
@@ -1625,7 +1660,8 @@ PARENT_RUNTIME_JS = r"""
             if (bell) {
                 e.preventDefault();
                 e.stopPropagation();
-                const panel = doc.getElementById("ref-notif-panel");
+                const wrap = bell.closest("#ref-notif-wrap") || doc;
+                const panel = wrap.querySelector("#ref-notif-panel") || doc.getElementById("ref-notif-panel");
                 setNotifOpen(!panel?.classList.contains("ref-open"), doc);
                 return;
             }
@@ -1633,25 +1669,35 @@ PARENT_RUNTIME_JS = r"""
             if (userBtn) {
                 e.preventDefault();
                 e.stopPropagation();
-                const panel = doc.getElementById("ref-user-panel");
+                const wrap = userBtn.closest("#ref-user-menu") || doc;
+                const panel = wrap.querySelector("#ref-user-panel") || doc.getElementById("ref-user-panel");
                 setUserOpen(!panel?.classList.contains("ref-open"), doc);
                 return;
             }
-            if (e.target.closest("#ref-user-panel")) {
+            if (e.target.closest("#ref-user-panel") || e.target.closest("#ref-notif-panel")) {
                 return;
             }
             if (e.target.closest("#ref-notif-backdrop")) {
                 closeAllMenus(doc);
                 return;
             }
-            const openPanel = doc.getElementById("ref-notif-panel");
-            if (openPanel?.classList.contains("ref-open") && !e.target.closest("#ref-notif-panel")) {
+            const openNotif = doc.getElementById("ref-notif-panel");
+            if (openNotif?.classList.contains("ref-open")) {
                 setNotifOpen(false, doc);
             }
-        });
-        doc.addEventListener("keydown", (e) => {
+            const openUser = doc.getElementById("ref-user-panel");
+            if (openUser?.classList.contains("ref-open")) {
+                setUserOpen(false, doc);
+            }
+        };
+        const onKey = (e) => {
             if (e.key === "Escape") closeAllMenus(doc);
-        });
+        };
+        doc.__refUiClickHandler = onClick;
+        doc.__refUiKeyHandler = onKey;
+        doc.addEventListener("click", onClick);
+        doc.addEventListener("keydown", onKey);
+        doc.documentElement.dataset.refUiBound = "3";
     }
     function wireMarkAllButtons(doc) {
         if (!doc) return;
@@ -1690,11 +1736,7 @@ PARENT_RUNTIME_JS = r"""
         doc.querySelectorAll("#ref-notif-anchor").forEach((bell) => {
             if (bell.dataset.refBellWired) return;
             bell.dataset.refBellWired = "1";
-            bell.addEventListener("click", (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                window.refToggleNotif(e);
-            });
+            // Clicks are handled by the document delegate; wire keyboard only.
             bell.addEventListener("keydown", (e) => {
                 if (e.key !== "Enter" && e.key !== " ") return;
                 e.preventDefault();
@@ -1702,9 +1744,26 @@ PARENT_RUNTIME_JS = r"""
             });
         });
     }
+    function wireUserAnchors(doc) {
+        if (!doc) return;
+        doc.querySelectorAll("#ref-user-anchor").forEach((btn) => {
+            if (btn.dataset.refUserWired) return;
+            btn.dataset.refUserWired = "1";
+            btn.addEventListener("keydown", (e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                e.stopPropagation();
+                const d = resolveNotifDoc(btn);
+                const wrap = btn.closest("#ref-user-menu") || d;
+                const panel = wrap.querySelector("#ref-user-panel") || d.getElementById("ref-user-panel");
+                setUserOpen(!panel?.classList.contains("ref-open"), d);
+            });
+        });
+    }
     function bindAllNotifDocuments() {
         appDocuments().forEach(bindNotifDocument);
         appDocuments().forEach(wireBellAnchors);
+        appDocuments().forEach(wireUserAnchors);
         appDocuments().forEach(wireMarkAllButtons);
         appDocuments().forEach(wireCloseButtons);
     }
@@ -1819,7 +1878,10 @@ def _inject_parent_runtime() -> None:
         "new MutationObserver(function(muts){"
         "var hit=muts.some(function(m){"
         "return Array.from(m.addedNodes||[]).some(function(n){"
-        "return n&&n.nodeType===1&&(n.id==='ref-notif-anchor'||n.querySelector&&n.querySelector('#ref-notif-anchor'));"
+        "return n&&n.nodeType===1&&("
+        "n.id==='ref-notif-anchor'||n.id==='ref-user-anchor'||"
+        "(n.querySelector&&n.querySelector('#ref-notif-anchor,#ref-user-anchor'))"
+        ");"
         "});"
         "});"
         "if(!hit)return;"

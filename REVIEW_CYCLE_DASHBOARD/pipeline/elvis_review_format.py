@@ -4,20 +4,18 @@ from __future__ import annotations
 
 import pandas as pd
 
-# Column order from HART-TAMPA_2026_KINGElvis.xlsx Elvis_Review (53 columns).
+# Column order from HART-TAMPA_2026_KINGElvis.xlsx Elvis_Review.
+# Hidden from the Elvis Review table UI (still may exist in pipeline exports):
+# 1st Cleaner, distance_flag, route_match_flag, Completed, ROUTE_STATUS, Stops_Status, Test_Status
 ELVIS_REVIEW_COLUMNS: list[str] = [
     "Elvis_Date",
     "elvis_id",
-    "1st Cleaner",
     "Final_Usage",
     "FINAL_REVIEWER",
     "REASON FOR REMOVAL",
     "REASON FOR REMOVAL [Other]",
     "POSSIBLE ERRORS",
-    "distance_flag",
-    "route_match_flag",
     "id",
-    "Completed",
     "DATE_SUBMITTED",
     "DATE",
     "INTERV_INIT",
@@ -33,9 +31,6 @@ ELVIS_REVIEW_COLUMNS: list[str] = [
     "DESTIN_TRANSPORT",
     "ELVIS_COMMENT",
     "ElvisStatus",
-    "ROUTE_STATUS",
-    "Stops_Status",
-    "Test_Status",
     "SUGGESTED_PREV_TRANSFER_1_ROUTE_NAME",
     "SUGGESTED_PREV_TRANSFER_2_ROUTE_NAME",
     "SUGGESTED_PREV_TRANSFER_3_ROUTE_NAME",

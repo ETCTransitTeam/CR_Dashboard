@@ -2081,47 +2081,46 @@ def portal_select_page():
     safe_role = html.escape(role_label)
     initials = html.escape(_portal_initials(username))
 
-    # st.html avoids markdown <p> wrapping that collapses title/subtitle onto one line.
-    st.html(
-        f"""
-        <div class="etc-hub-topbar">
-            <div class="etc-hub-brand">
-                <span class="etc-hub-mark">ETC</span>
-                <div class="etc-hub-brand-title">ETC OD Collection Platform</div>
-            </div>
-            <div class="etc-hub-userchip">
-                <span class="etc-hub-avatar">{initials}</span>
-                <div class="etc-hub-user-meta">
-                    <div class="etc-hub-username">{safe_name}</div>
-                    <div class="etc-hub-userrole">{safe_role}</div>
-                </div>
-                <span class="etc-hub-chevron" aria-hidden="true">▾</span>
-            </div>
-        </div>
-        """
+    # Use st.markdown (not st.html) for blocks with inline SVG — Streamlit's
+    # st.html DOMPurify strips <svg>, which left empty icon boxes on the hub.
+    st.markdown(
+        (
+            '<div class="etc-hub-topbar">'
+            '<div class="etc-hub-brand">'
+            '<span class="etc-hub-mark">ETC</span>'
+            '<div class="etc-hub-brand-title">ETC OD Collection Platform</div>'
+            "</div>"
+            '<div class="etc-hub-userchip">'
+            f'<span class="etc-hub-avatar">{initials}</span>'
+            '<div class="etc-hub-user-meta">'
+            f'<div class="etc-hub-username">{safe_name}</div>'
+            f'<div class="etc-hub-userrole">{safe_role}</div>'
+            "</div>"
+            '<span class="etc-hub-chevron" aria-hidden="true">▾</span>'
+            "</div></div>"
+        ),
+        unsafe_allow_html=True,
     )
 
     # Welcome banner: icon + greeting on one row, compact Sign out on the right
     ban_left, ban_right = st.columns([6.2, 1], vertical_alignment="center")
     with ban_left:
-        st.html(
-            f"""
-            <div class="etc-hub-banner">
-              <div class="etc-hub-banner-left">
-                <div class="etc-hub-banner-icon" aria-hidden="true">
-                  <svg width="34" height="34" viewBox="0 0 34 34" fill="none">
-                    <rect x="2" y="6" width="16" height="16" rx="4" fill="#60a5fa" opacity="0.85"/>
-                    <rect x="10" y="2" width="16" height="16" rx="4" fill="#818cf8" opacity="0.75"/>
-                    <rect x="14" y="12" width="16" height="16" rx="4" fill="#38bdf8" opacity="0.7"/>
-                  </svg>
-                </div>
-                <div class="etc-hub-banner-copy">
-                  <div class="etc-hub-banner-title">Welcome back, {safe_name}!</div>
-                  <div class="etc-hub-banner-sub">Select a portal below to access your workspace.</div>
-                </div>
-              </div>
-            </div>
-            """
+        st.markdown(
+            (
+                '<div class="etc-hub-banner">'
+                '<div class="etc-hub-banner-left">'
+                '<div class="etc-hub-banner-icon" aria-hidden="true">'
+                '<svg width="34" height="34" viewBox="0 0 34 34" fill="none">'
+                '<rect x="2" y="6" width="16" height="16" rx="4" fill="#60a5fa" opacity="0.85"/>'
+                '<rect x="10" y="2" width="16" height="16" rx="4" fill="#818cf8" opacity="0.75"/>'
+                '<rect x="14" y="12" width="16" height="16" rx="4" fill="#38bdf8" opacity="0.7"/>'
+                "</svg></div>"
+                '<div class="etc-hub-banner-copy">'
+                f'<div class="etc-hub-banner-title">Welcome back, {safe_name}!</div>'
+                '<div class="etc-hub-banner-sub">Select a portal below to access your workspace.</div>'
+                "</div></div></div>"
+            ),
+            unsafe_allow_html=True,
         )
     with ban_right:
         if st.button(
@@ -2132,23 +2131,22 @@ def portal_select_page():
         ):
             logout()
 
-    st.html(
-        """
-        <div class="etc-hub-section-head">
-          <span class="etc-hub-section-icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/>
-              <rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>
-              <rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>
-              <rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.5"/>
-            </svg>
-          </span>
-          <div class="etc-hub-section-copy">
-            <div class="etc-hub-section-title">Available Portals</div>
-            <div class="etc-hub-section-sub">Choose the application you want to open.</div>
-          </div>
-        </div>
-        """
+    st.markdown(
+        (
+            '<div class="etc-hub-section-head">'
+            '<span class="etc-hub-section-icon" aria-hidden="true">'
+            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none">'
+            '<rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/>'
+            '<rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>'
+            '<rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.75"/>'
+            '<rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity="0.5"/>'
+            "</svg></span>"
+            '<div class="etc-hub-section-copy">'
+            '<div class="etc-hub-section-title">Available Portals</div>'
+            '<div class="etc-hub-section-sub">Choose the application you want to open.</div>'
+            "</div></div>"
+        ),
+        unsafe_allow_html=True,
     )
 
     portal_cards: list[dict] = []
