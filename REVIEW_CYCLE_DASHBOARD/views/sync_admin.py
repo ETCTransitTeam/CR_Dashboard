@@ -4,14 +4,13 @@ import pandas as pd
 import streamlit as st
 
 from core.config import APP_CONFIG_SCHEMA, REVIEW_CYCLE_SCHEMA, fq_table
-from core.data_access import ensure_route_codes_for_project
 from core.projects import get_sync_state, list_projects
 from core.schema import bootstrap_database, ensure_migrations, refresh_projects, repair_timestamp_columns, schema_is_ready
 from core.s3_utils import storage_mode_label
 from core.snowflake_conn import snowflake_auth_mode, test_connection
 from core.sync_watcher import render_sync_banner
 from pipeline.ingest import export_kingelvis, format_ingest_counts, sync_and_export
-from pipeline.runner import build_context, cleanup_workspace, run_post_cleaning_pipeline, stage_inputs
+from pipeline.runner import build_context, cleanup_workspace, run_post_cleaning_pipeline
 from services import notifications as notify_svc
 from services import quality
 from services import sync as sync_svc
@@ -258,57 +257,22 @@ def render_sync_admin_page(user: dict) -> None:
 
     st.divider()
     section_title("Maintenance actions")
-    backfill_card, refresh_card = st.columns(2)
-    with backfill_card:
-        with st.container(border=True):
-            st.markdown("**Route code backfill**")
-            st.caption(
-                "Copies route codes from the staged Elvis export into existing records when pipeline CSVs "
-                "leave `ROUTE_SURVEYEDCode` empty."
-            )
-            if st.button(
-                "Backfill route codes",
-                disabled=not project,
-                use_container_width=True,
-                help="Backfill ROUTE_SURVEYEDCode from Elvis export",
-            ):
-                if _require_project(project):
-                    ctx = None
-                    try:
-                        with progress_status(
-                            f"Backfilling route codes for {project}...",
-                            complete_label="Route code backfill complete",
-                        ) as update:
-                            update(1, 3, "Preparing pipeline workspace...")
-                            ctx = build_context(project)
-                            update(2, 3, "Staging the Elvis export...")
-                            stage_inputs(ctx)
-                            update(3, 3, "Backfilling route codes...")
-                            count = ensure_route_codes_for_project(project)
-                        st.success(f"Updated {count} record(s) with route codes.")
-                    except Exception as exc:
-                        st.error(str(exc))
-                    finally:
-                        if ctx is not None:
-                            cleanup_workspace(ctx)
-
-    with refresh_card:
-        with st.container(border=True):
-            st.markdown("**Scheduled refresh**")
-            st.caption(
-                "Checks OD freshness and pulls every project whose OD Collection `last_survey_date` "
-                "changed since last seen."
-            )
-            if st.button("Run morning refresh", disabled=not project_names, use_container_width=True):
-                try:
-                    with progress_status(
-                        "Checking OD freshness across projects...",
-                        complete_label="Morning refresh complete",
-                    ) as update:
-                        summary = sync_svc.morning_refresh(progress=update)
-                    _render_refresh_summary(summary)
-                except Exception as exc:
-                    st.error(str(exc))
+    with st.container(border=True):
+        st.markdown("**Scheduled refresh**")
+        st.caption(
+            "Checks OD freshness and pulls every project whose OD Collection `last_survey_date` "
+            "changed since last seen."
+        )
+        if st.button("Run morning refresh", disabled=not project_names, use_container_width=True):
+            try:
+                with progress_status(
+                    "Checking OD freshness across projects...",
+                    complete_label="Morning refresh complete",
+                ) as update:
+                    summary = sync_svc.morning_refresh(progress=update)
+                _render_refresh_summary(summary)
+            except Exception as exc:
+                st.error(str(exc))
 
     st.divider()
     section_title("Bootstrap")

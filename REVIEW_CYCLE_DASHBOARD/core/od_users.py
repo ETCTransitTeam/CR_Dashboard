@@ -70,11 +70,50 @@ def super_admin_display_names() -> list[str]:
     return [e.split("@")[0] for e in emails]
 
 
+def privileged_assignee_names() -> set[str]:
+    """Display names for super admins + OD ADMIN users."""
+    names = super_admin_display_names() + od_users_by_role("ADMIN")
+    return {n.strip() for n in names if str(n).strip()}
+
+
+def _dedupe_names(names: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in names:
+        key = str(name).strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(str(name).strip())
+    return ordered
+
+
+def cleaning_assignee_options(*, include_privileged: bool = False) -> list[str]:
+    """People who can receive cleaning assignments.
+
+    - Default / cleaning head: CLEANING role only (never admin or super admin).
+    - Super admin: cleaning staff plus admins / super admins.
+    """
+    cleaners = od_users_by_role("CLEANING")
+    privileged = privileged_assignee_names()
+    privileged_lower = {n.lower() for n in privileged}
+
+    # Always strip admins/SAs out of the cleaning-only roster.
+    cleaning_only = [n for n in cleaners if n.strip().lower() not in privileged_lower]
+
+    if not include_privileged:
+        return _dedupe_names(cleaning_only)
+
+    return _dedupe_names(cleaning_only + sorted(privileged))
+
+
 def team_members(team: str) -> list[str]:
     """Workflow team roster sourced from OD user_table."""
     team_key = str(team or "").lower()
     if team_key == "cleaning":
-        return od_users_by_role("CLEANING")
+        # Cleaning-only by default; call cleaning_assignee_options(include_privileged=True)
+        # when a super admin needs the expanded roster.
+        return cleaning_assignee_options(include_privileged=False)
     if team_key == "field":
         return od_users_by_role("USER")
     if team_key == "review":
@@ -84,12 +123,4 @@ def team_members(team: str) -> list[str]:
 
 def admin_recipients() -> list[str]:
     """Super admins plus OD ADMIN users (for notifications)."""
-    names = super_admin_display_names() + od_users_by_role("ADMIN")
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for name in names:
-        key = name.lower()
-        if key not in seen:
-            seen.add(key)
-            ordered.append(name)
-    return ordered
+    return _dedupe_names(super_admin_display_names() + od_users_by_role("ADMIN"))

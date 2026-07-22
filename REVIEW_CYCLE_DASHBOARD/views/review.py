@@ -90,25 +90,6 @@ def render_review_page(user: dict) -> None:
                 set_operation_flash(f"Assigned {len(ids)} record(s) to {assignee}.")
                 st.rerun()
 
-        with st.expander("Manager: reallocate for clean (Jason)"):
-            rc1, rc2 = st.columns(2)
-            manager_count = rc1.number_input("Move N flagged to cleaning", min_value=1, max_value=200, value=25)
-            manager_user = rc2.text_input("Assign to", value="Jason")
-            if st.button("Reallocate to cleaning"):
-                with progress_status(
-                    f"Reallocating records to {manager_user}...",
-                    complete_label="Records reallocated",
-                ) as update:
-                    update(1, 3, "Selecting flagged records...")
-                    clean_ids = assignment_svc.build_priority_queue(project, limit=int(manager_count), team="review")
-                    id_list = clean_ids["RECORD_ID"].astype(str).tolist() if not clean_ids.empty else []
-                    update(2, 3, "Assigning records to cleaning...")
-                    assignment_svc.assign_records(project, id_list, manager_user, team="cleaning", priority=50)
-                    update(3, 3, "Sending assignment notification...")
-                    notify_svc.notify(manager_user, notify_svc.NEW_ASSIGNMENT, f"{len(id_list)} records for manager clean ({project})", project)
-                set_operation_flash(f"Assigned {len(id_list)} to {manager_user} for cleaning.")
-                st.rerun()
-
     tab_labels = ["My assignments"]
     if is_admin_view:
         tab_labels.insert(0, "All flagged records")

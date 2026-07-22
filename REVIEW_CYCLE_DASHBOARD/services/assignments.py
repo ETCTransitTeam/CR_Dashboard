@@ -20,7 +20,9 @@ from core.data_access import (
     load_combined_checks,
     load_records,
     release_assignments,
+    unassign_records,
 )
+from core.od_users import cleaning_assignee_options as od_cleaning_assignee_options
 from core.od_users import team_members as od_team_members
 from core.snowflake_conn import fetch_df
 
@@ -28,11 +30,13 @@ __all__ = [
     "assign_records",
     "defer_assignment",
     "release_assignments",
+    "unassign_records",
     "reviewer_load",
     "build_priority_queue",
     "pull_next",
     "active_record_ids",
     "team_members",
+    "cleaning_assignee_options",
     "complete_assignment",
     "set_assignment_status",
 ]
@@ -41,6 +45,11 @@ __all__ = [
 def team_members(team: str) -> list[str]:
     """Active staff (display name) who staff a given workflow team (from OD user_table)."""
     return od_team_members(team)
+
+
+def cleaning_assignee_options(*, include_privileged: bool = False) -> list[str]:
+    """Cleaning assign-to roster; privileged = admins/super admins (super-admin UI only)."""
+    return od_cleaning_assignee_options(include_privileged=include_privileged)
 
 
 def set_assignment_status(project_name: str, record_id: str, status: str, team: str | None = None) -> int:

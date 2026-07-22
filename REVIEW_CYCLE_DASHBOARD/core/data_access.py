@@ -877,6 +877,37 @@ def release_assignments(project_name: str, assigned_to: str, count: int) -> int:
     return released
 
 
+def unassign_records(
+    project_name: str,
+    record_ids: list[str],
+    *,
+    team: str = "cleaning",
+    actor: str | None = None,
+) -> int:
+    """Release active assignments for the given record IDs (STATUS → released)."""
+    ids = [str(rid).strip() for rid in record_ids if str(rid).strip()]
+    if not ids:
+        return 0
+    note = "Unassigned via Cleaning Assignments"
+    if actor:
+        note = f"{note} by {actor}"
+    released = 0
+    for record_id in ids:
+        execute(
+            f"""
+            UPDATE {REVIEW_CYCLE_SCHEMA}.ASSIGNMENTS
+            SET STATUS = 'released', NOTES = %s
+            WHERE PROJECT_NAME = %s
+              AND RECORD_ID = %s
+              AND TEAM = %s
+              AND STATUS = 'assigned'
+            """,
+            (note, project_name, record_id, team),
+        )
+        released += 1
+    return released
+
+
 def defer_assignment(assignment_id: int, hours: int = 24) -> None:
     execute(
         f"""

@@ -1383,11 +1383,11 @@ section[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: no
 
 PARENT_RUNTIME_JS = r"""
 (function () {
-    if (window.__refUiRuntimeV3) {
+    if (window.__refUiRuntimeV4) {
         if (typeof window.__refUiRewire === "function") window.__refUiRewire();
         return;
     }
-    window.__refUiRuntimeV3 = true;
+    window.__refUiRuntimeV4 = true;
     const ICONS = {
         "Project Dashboard":"layout-dashboard",
         "Elvis_Review":"clipboard-list",
@@ -1400,6 +1400,7 @@ PARENT_RUNTIME_JS = r"""
         "Field Team":"map-pin",
         "Manager Analytics":"bar-chart-3",
         "Reviewer Stats":"trending-up",
+        "Cleaning Assignments":"user-x",
         "Sync & Admin":"refresh-cw"
     };
     function loadLucide(cb) {

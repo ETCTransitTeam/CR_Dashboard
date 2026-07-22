@@ -16,7 +16,7 @@ from core.s3_utils import dataframe_to_excel_bytes
 from core.sync_watcher import render_sync_banner
 from pipeline.elvis_review_format import has_transfer_suggestions
 from pipeline.ingest import format_ingest_counts, sync_and_export
-from rc_auth.access import is_cleaning_head
+from rc_auth.access import is_cleaning_head, is_super_admin_user
 from services import assignments as assignment_svc
 from services import notifications as notify_svc
 from views.filters import apply_record_filters, record_id_column, subset_records_for_display
@@ -561,9 +561,9 @@ def render_cleaning_page(user: dict) -> None:
     if can_assign:
         with tabs[1]:
             if is_head:
-                _render_cleaning_head_assign_panel(project_filter)
+                _render_cleaning_head_assign_panel(project_filter, user=user)
             else:
-                _render_assign_panel(project_filter)
+                _render_assign_panel(project_filter, user=user)
 
 
 def _records_by_selected_ids(
@@ -579,7 +579,22 @@ def _records_by_selected_ids(
     return by_project
 
 
-def _render_cleaning_head_assign_panel(project_filter: list[str]) -> None:
+def _assign_to_options(user: dict | None) -> list[str]:
+    """Cleaning head: cleaners only. Super admin: cleaners + admins/super admins."""
+    return assignment_svc.cleaning_assignee_options(
+        include_privileged=is_super_admin_user(user)
+    )
+
+
+def _guard_assignee(user: dict | None, assignee: str) -> bool:
+    """Block assigning to people outside the caller's allowed roster."""
+    allowed = {n.strip().lower() for n in _assign_to_options(user)}
+    return str(assignee or "").strip().lower() in allowed
+
+
+def _render_cleaning_head_assign_panel(
+    project_filter: list[str], *, user: dict | None = None
+) -> None:
     """Cleaning head: bulk-assign unassigned blank-decision records by count."""
     section_title("Assign records")
     st.caption(
@@ -619,7 +634,7 @@ def _render_cleaning_head_assign_panel(project_filter: list[str]) -> None:
     display = apply_record_filters(display, key_prefix="head_assign")
     st.dataframe(display, use_container_width=True, hide_index=True)
 
-    cleaners = assignment_svc.team_members("cleaning")
+    cleaners = _assign_to_options(user)
     max_bulk_count = max(len(unassigned_ids), 1)
     next_bulk_count = st.session_state.pop(
         "_head_bulk_count_next",
@@ -653,6 +668,9 @@ def _render_cleaning_head_assign_panel(project_filter: list[str]) -> None:
         st.success(flash)
 
     if bulk_clicked and unassigned_ids and cleaners:
+        if not _guard_assignee(user, bulk_cleaner):
+            st.error("You can only assign records to cleaning team members.")
+            return
         target_ids = unassigned_ids[: int(bulk_count)]
         by_project = _records_by_selected_ids(records, target_ids)
         total = 0
@@ -688,8 +706,14 @@ def _render_cleaning_head_assign_panel(project_filter: list[str]) -> None:
         st.rerun()
 
 
-def _render_assign_panel(project_filter: list[str]) -> None:
+def _render_assign_panel(
+    project_filter: list[str], *, user: dict | None = None
+) -> None:
     section_title("Assign new records to cleaners")
+    st.caption(
+        "Filter the table, then choose how many of the visible records to assign "
+        "(top of the list, in current order)."
+    )
     with loading("Loading new records for assignment..."):
         records = _records_for_projects(project_filter, only_new=True)
     if records.empty:
@@ -708,27 +732,74 @@ def _render_assign_panel(project_filter: list[str]) -> None:
     id_col = record_id_column(display)
     st.dataframe(display, use_container_width=True, hide_index=True)
 
-    cleaners = assignment_svc.team_members("cleaning")
-    c1, c2, c3 = st.columns(3)
-    selected_ids = c1.multiselect(
-        "Record IDs",
-        options=display[id_col].astype(str).tolist() if id_col else [],
+    available_ids = (
+        [_norm_record_id(rid) for rid in display[id_col].astype(str).tolist()]
+        if id_col and not display.empty
+        else []
     )
-    cleaner = c2.selectbox("Assign to", options=cleaners or ["(no cleaning users)"])
-    priority = c3.number_input("Priority", min_value=1, max_value=1000, value=100)
-    if st.button("Assign selected", type="primary", disabled=not (selected_ids and cleaners)):
+    cleaners = _assign_to_options(user)
+    max_count = max(len(available_ids), 1)
+    default_count = min(25, max_count)
+    c1, c2, c3 = st.columns(3)
+    assign_count = c1.number_input(
+        "How many to assign",
+        min_value=1,
+        max_value=max_count,
+        value=default_count,
+        help="Assigns this many records from the filtered table (top rows first).",
+        key="assign_panel_count",
+    )
+    cleaner = c2.selectbox(
+        "Assign to",
+        options=cleaners or ["(no cleaning users)"],
+        key="assign_panel_cleaner",
+    )
+    priority = c3.number_input(
+        "Priority",
+        min_value=1,
+        max_value=1000,
+        value=100,
+        key="assign_panel_priority",
+    )
+    selected_ids = available_ids[: int(assign_count)]
+    can_assign = bool(selected_ids and cleaners)
+    if st.button(
+        f"Assign next {int(assign_count)}",
+        type="primary",
+        disabled=not can_assign,
+        key="assign_panel_btn",
+    ):
+        if not _guard_assignee(user, cleaner):
+            st.error(
+                "You can only assign to cleaning team members."
+                if not is_super_admin_user(user)
+                else "That assignee is not in your allowed list."
+            )
+            return
         by_project = _records_by_selected_ids(records, selected_ids)
         total = 0
+        assigned_ids: list[str] = []
         with progress_status(
-            f"Assigning selected records to {cleaner}...",
+            f"Assigning {len(selected_ids)} record(s) to {cleaner}...",
             complete_label="Selected records assigned",
         ) as update:
             step_total = max(len(by_project) + 1, 1)
             for index, (project, ids) in enumerate(by_project.items(), start=1):
                 update(index, step_total, f"Assigning {len(ids)} record(s) for {project}...")
-                assignment_svc.assign_records(project, ids, cleaner, team="cleaning", priority=int(priority))
+                assignment_svc.assign_records(
+                    project, ids, cleaner, team="cleaning", priority=int(priority)
+                )
+                assigned_ids.extend(ids)
                 total += len(ids)
+            _remember_assignments(assigned_ids, cleaner)
             update(step_total, step_total, "Sending assignment notification...")
-            notify_svc.notify(cleaner, notify_svc.NEW_ASSIGNMENT, f"You were assigned {total} record(s) to clean.")
+            notify_svc.notify(
+                cleaner,
+                notify_svc.NEW_ASSIGNMENT,
+                f"You were assigned {total} record(s) to clean.",
+            )
+        from core.streamlit_cache import bump_data_cache
+
+        bump_data_cache()
         set_operation_flash(f"Assigned {total} record(s) to {cleaner}.")
         st.rerun()
