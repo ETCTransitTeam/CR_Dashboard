@@ -5,7 +5,6 @@ import streamlit as st
 
 from core.data_access import load_combined_checks, load_records
 from services import history as history_svc
-from views.record_card import render_record_card
 from views.record_fields import EDITABLE_FIELD_NAMES
 from views.ui import (
     info_strip,
@@ -128,8 +127,9 @@ def render_admin_page(user: dict) -> None:
 
     if section == "Approval queue":
         checks = _prepare_checks_for_queue(project)
-        _render_approval_queue(project, records, checks, actor, role, user)
+        _render_approval_queue(project, records, checks, actor, role)
         return
+
 
     _run_admin_maintenance(project)
 
@@ -141,13 +141,9 @@ def render_admin_page(user: dict) -> None:
         info_strip(f"{len(high)} record(s) changed at or above {threshold}% of fields")
         section_title("High change-rate records")
         st.dataframe(high, use_container_width=True, hide_index=True)
-        if not high.empty:
-            rid = st.selectbox("Inspect record", options=high["RECORD_ID"].astype(str).tolist(), key="chg_inspect")
-            if rid:
-                render_record_card(project, rid, user, allow_admin=True)
 
 
-def _render_approval_queue(project, records, checks, actor, role, user) -> None:
+def _render_approval_queue(project, records, checks, actor, role) -> None:
     if checks.empty:
         st.info("No flag results for this project yet. Run the flags pipeline on Sync & Admin.")
         return
@@ -190,14 +186,13 @@ def _render_approval_queue(project, records, checks, actor, role, user) -> None:
         "FINAL_USAGE",
         "FINAL_REVIEWER",
         "SUM_ALL_CHECKS",
-        "ESCALATED",
         "TWO_X_REVIEWED_BY",
         "TWO_X_REVIEWED_FLAG",
     ]
     show_cols = [c for c in show_cols if c in merged.columns]
     view = merged[show_cols]
     section_title("Approval queue")
-    st.caption("Select one or more records, then approve or reject from this queue. Use Inspect a record for full history.")
+    st.caption("Select one or more records, then approve or reject from this queue.")
     st.dataframe(view, use_container_width=True, hide_index=True)
 
     ids = merged["RECORD_ID"].astype(str).tolist()
@@ -239,8 +234,3 @@ def _render_approval_queue(project, records, checks, actor, role, user) -> None:
             st.session_state.pop(f"admin_maint_v1_{project}", None)
             set_operation_flash(f"Approved {len(ids)} record(s).")
             st.rerun()
-
-    section_title("Inspect record")
-    rid = st.selectbox("Inspect a record", options=ids, key="approval_inspect_queue")
-    if rid:
-        render_record_card(project, rid, user, allow_admin=True)

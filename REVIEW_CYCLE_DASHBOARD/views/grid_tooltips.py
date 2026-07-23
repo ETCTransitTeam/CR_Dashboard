@@ -1,7 +1,7 @@
 """Cell-level decision-history helpers for editable grids.
 
-Editable tables use ``st.data_editor`` (not AgGrid) so cell edits do not
-trigger a full-page custom-component remount on every value change.
+History text is attached as hidden ``__tip_*`` columns, then shown on cell hover
+via AgGrid ``tooltipField`` (browser tooltips). Edits still return a normal frame.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from typing import Iterable
 
 import pandas as pd
 import streamlit as st
+from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, GridUpdateMode
 
 from services import history as history_svc
 
@@ -43,7 +44,7 @@ def attach_field_tooltips(
     actor_roles: list[str] | None = None,
     empty_message: str = "No decision history yet.",
 ) -> pd.DataFrame:
-    """Attach hidden per-field tooltip columns (used as column help text)."""
+    """Attach hidden per-field tooltip columns for AgGrid cell hover."""
     fields = [field for field in fields if field in display.columns]
     if not fields or id_col not in display.columns:
         return display
@@ -119,6 +120,12 @@ def grid_widget_key(base_key: str, df: pd.DataFrame) -> str:
     return f"{base_key}_{len(df)}_{digest}"
 
 
+def _coerce_aggrid_frame(data) -> pd.DataFrame:
+    if isinstance(data, pd.DataFrame):
+        return data.copy()
+    return pd.DataFrame(data)
+
+
 def render_history_data_editor(
     prepared: pd.DataFrame,
     *,
@@ -129,10 +136,22 @@ def render_history_data_editor(
     selectbox_options: dict[str, list[str]] | None = None,
     checkbox_fields: set[str] | None = None,
 ) -> pd.DataFrame:
-    """Editable grid via ``st.data_editor`` — avoids AgGrid full-page remounts."""
+    """Editable grid with per-cell decision-history hover tooltips."""
     if prepared.empty:
         return prepared
 
+    tip_cols = [col for col in prepared.columns if col.startswith(TIP_PREFIX)]
+    if tip_cols:
+        return _render_aggrid_history_editor(
+            prepared,
+            editor_key=editor_key,
+            editable_fields=set(editable_fields or set()),
+            extra_disabled=extra_disabled,
+            selectbox_options=selectbox_options,
+            checkbox_fields=checkbox_fields,
+        )
+
+    # Fallback when no tip columns were attached.
     grid = _strip_tooltip_columns(prepared)
     selectbox_options = selectbox_options or {}
     checkbox_fields = checkbox_fields or set()
@@ -163,6 +182,86 @@ def render_history_data_editor(
     )
 
 
+def _render_aggrid_history_editor(
+    prepared: pd.DataFrame,
+    *,
+    editor_key: str,
+    editable_fields: set[str],
+    extra_disabled: list[str] | None,
+    selectbox_options: dict[str, list[str]] | None,
+    checkbox_fields: set[str] | None,
+) -> pd.DataFrame:
+    selectbox_options = selectbox_options or {}
+    checkbox_fields = checkbox_fields or set()
+    blocked = set(extra_disabled or [])
+    blocked.update({"Assigned to me", "Assigned To"})
+
+    gb = GridOptionsBuilder.from_dataframe(prepared)
+    gb.configure_default_column(
+        filterable=True,
+        sortable=True,
+        resizable=True,
+        minWidth=90,
+        wrapText=False,
+    )
+
+    for col in prepared.columns:
+        if col.startswith(TIP_PREFIX):
+            gb.configure_column(col, hide=True)
+            continue
+
+        tip_col = tooltip_column_name(col)
+        editable = col in editable_fields and col not in blocked
+        col_kwargs: dict = {"editable": editable}
+        if tip_col in prepared.columns:
+            col_kwargs["tooltipField"] = tip_col
+
+        if col in selectbox_options:
+            values = ["" if v is None else str(v) for v in selectbox_options[col]]
+            col_kwargs["cellEditor"] = "agSelectCellEditor"
+            col_kwargs["cellEditorParams"] = {"values": values}
+        elif col in checkbox_fields:
+            col_kwargs["cellRenderer"] = "agCheckboxCellRenderer"
+            col_kwargs["cellEditor"] = "agCheckboxCellEditor"
+
+        gb.configure_column(col, **col_kwargs)
+
+    gb.configure_grid_options(
+        suppressRowClickSelection=True,
+        enableBrowserTooltips=True,
+        tooltipShowDelay=0,
+        rowHeight=40,
+        headerHeight=42,
+        animateRows=False,
+        enableCellTextSelection=True,
+        stopEditingWhenCellsLoseFocus=True,
+    )
+
+    visible = _strip_tooltip_columns(prepared)
+    row_count = len(visible)
+    height = min(max(row_count * 40 + 96, 280), 720)
+
+    response = AgGrid(
+        prepared,
+        gridOptions=gb.build(),
+        height=height,
+        theme="streamlit",
+        allow_unsafe_jscode=False,
+        fit_columns_on_grid_load=False,
+        use_container_width=True,
+        key=grid_widget_key(editor_key, visible),
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        data_return_mode=DataReturnMode.AS_INPUT,
+        reload_data=False,
+        enable_enterprise_modules=False,
+    )
+    edited = _coerce_aggrid_frame(response.get("data"))
+    return _strip_tooltip_columns(edited)
+
+
 def history_grid_caption(*, review_only: bool = False) -> None:
-    """Reserved for optional grid hints; kept as a no-op for a cleaner workspace."""
-    return
+    st.caption(
+        'Hover an editable cell for its timeline — e.g. '
+        '"Kesar 1/20/2026 2:00:00am - Use ; Tosia 2/1/2026 9:05:00am - Remove". '
+        'Empty cells show "No decision history yet."'
+    )

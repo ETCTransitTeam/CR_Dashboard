@@ -16,10 +16,25 @@ from core.snowflake_conn import execute, fetch_df_optional
 
 # Canonical notification types.
 NEW_ASSIGNMENT = "new_assignment"
+ASSIGNMENT_RELEASED = "assignment_released"
 REVIEW_COMPLETED = "review_completed"
 ADMIN_APPROVAL_REQUIRED = "admin_approval_required"
 SYNC_COMPLETED = "sync_completed"
 DATA_QUALITY_ALERT = "data_quality_alert"
+
+
+def actor_display_name(user: dict | None, *, fallback: str = "a manager") -> str:
+    """Prefer username/display name over email in notification text."""
+    if not user:
+        return fallback
+    for key in ("username", "name", "NAME", "DISPLAY_NAME"):
+        value = str(user.get(key) or "").strip()
+        if value and "@" not in value:
+            return value
+    email = str(user.get("EMAIL") or user.get("email") or "").strip()
+    if email and "@" in email:
+        return email.split("@", 1)[0]
+    return email or fallback
 
 
 def notify(

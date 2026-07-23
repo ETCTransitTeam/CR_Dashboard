@@ -130,7 +130,7 @@ def render_combined_checks_table(
     history_actor_roles: list[str] | None = None,
 ) -> pd.DataFrame:
     """Combined Checks grid with Elvis + flag fields inline editing."""
-    from views.grid_tooltips import attach_field_tooltips, render_history_data_editor
+    from views.grid_tooltips import attach_field_tooltips, history_grid_caption, render_history_data_editor
 
     if display.empty:
         return display
@@ -138,7 +138,7 @@ def render_combined_checks_table(
     @st.fragment
     def _editor_fragment() -> pd.DataFrame:
         prepared = prepare_combined_display(display)
-        empty_history_msg = "No review history yet." if history_actor_roles else "No decision history yet."
+        empty_history_msg = history_svc.EMPTY_HISTORY_TOOLTIP
         tooltip_fields = sorted(ALL_EDITABLE)
         id_col = _record_id_column(prepared)
         if show_history and id_col:
@@ -151,6 +151,7 @@ def render_combined_checks_table(
                 actor_roles=history_actor_roles,
                 empty_message=empty_history_msg,
             )
+            history_grid_caption(review_only=bool(history_actor_roles))
 
         config = editable_column_config(_strip_for_config(prepared))
         if "ADMIN_APPROVED" in prepared.columns:
@@ -197,6 +198,10 @@ def render_combined_checks_table(
                 if changed:
                     st.session_state[sig_key] = signature
                     st.toast(f"Saved {changed} field change(s).")
+                    try:
+                        st.rerun(scope="fragment")
+                    except TypeError:
+                        st.rerun()
         return edited
 
     return _editor_fragment()

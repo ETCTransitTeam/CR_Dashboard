@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from core.data_access import load_records, records_to_elvis_review
-from pipeline.runner import build_context, run_post_cleaning_pipeline
 from services.field_team import (
     REMOVE_DELETE_EDITABLE,
     SUPERVISOR_REMARK_EDITABLE,
@@ -24,7 +23,6 @@ from views.ui import (
     info_strip,
     loading,
     page_header,
-    progress_status,
     section_title,
 )
 
@@ -155,27 +153,3 @@ def render_field_page(user: dict) -> None:
             file_name=f"{project}_Removed_or_Deleted_Records_by_{date.today():%Y%m%d}.xlsx".replace(" ", "_"),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-    section_title("Generate Removed IDs (pipeline export)")
-    with action_row():
-        if st.button("Generate Removed IDs export"):
-            try:
-                with progress_status(
-                    "Generating Removed IDs export...",
-                    complete_label="Removed IDs export is ready",
-                ) as update:
-                    ctx = build_context(project)
-                    outputs = run_post_cleaning_pipeline(ctx, progress=update)
-                removed_path = outputs.get("removed_ids_xlsx")
-                if removed_path and removed_path.exists():
-                    with open(removed_path, "rb") as handle:
-                        st.download_button(
-                            "Download pipeline Removed/Deleted file",
-                            data=handle.read(),
-                            file_name=removed_path.name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-                else:
-                    st.warning("Removed IDs file was not generated.")
-            except Exception as exc:
-                st.error(f"Export failed: {exc}")

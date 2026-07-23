@@ -1166,22 +1166,56 @@ div[data-testid="stFormSubmitButton"] button {
     box-shadow: none;
     transition: background var(--ease), border-color var(--ease), color var(--ease), box-shadow var(--ease);
 }
+.stButton > button[kind="secondary"],
+div[data-testid="stFormSubmitButton"] button[kind="secondary"],
+.stButton > button[data-testid="baseButton-secondary"],
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-secondary"] {
+    background: #FFFFFF !important;
+    border-color: var(--border) !important;
+    color: var(--text) !important;
+}
+.stButton > button[kind="secondary"]:hover,
+div[data-testid="stFormSubmitButton"] button[kind="secondary"]:hover,
+.stButton > button[data-testid="baseButton-secondary"]:hover,
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-secondary"]:hover {
+    background: var(--surface-muted) !important;
+    border-color: #CBD5E1 !important;
+    color: var(--text) !important;
+}
 .stButton > button[kind="primary"],
-div[data-testid="stFormSubmitButton"] button[kind="primary"] {
+div[data-testid="stFormSubmitButton"] button[kind="primary"],
+.stButton > button[data-testid="baseButton-primary"],
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"] {
     background: var(--primary) !important;
     border-color: var(--primary) !important;
     color: #FFF !important;
 }
-.stButton > button[kind="primary"]:hover,
-div[data-testid="stFormSubmitButton"] button[kind="primary"]:hover {
-    background: var(--primary-dark) !important;
-    border-color: var(--primary-dark) !important;
-}
-.stButton > button:hover,
+.stButton > button:hover:not([kind="primary"]):not([data-testid="baseButton-primary"]),
 div[data-testid="stDownloadButton"] button:hover,
-div[data-testid="stFormSubmitButton"] button:hover {
+div[data-testid="stFormSubmitButton"] button:hover:not([kind="primary"]):not([data-testid="baseButton-primary"]) {
     border-color: #CBD5E1 !important;
     background: var(--surface-muted) !important;
+}
+/* Primary must win over the light secondary hover above */
+.stButton > button[kind="primary"]:hover,
+.stButton > button[kind="primary"]:active,
+.stButton > button[kind="primary"]:focus,
+.stButton > button[kind="primary"]:focus-visible,
+div[data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
+div[data-testid="stFormSubmitButton"] button[kind="primary"]:active,
+div[data-testid="stFormSubmitButton"] button[kind="primary"]:focus,
+div[data-testid="stFormSubmitButton"] button[kind="primary"]:focus-visible,
+.stButton > button[data-testid="baseButton-primary"]:hover,
+.stButton > button[data-testid="baseButton-primary"]:active,
+.stButton > button[data-testid="baseButton-primary"]:focus,
+.stButton > button[data-testid="baseButton-primary"]:focus-visible,
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"]:hover,
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"]:active,
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"]:focus,
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"]:focus-visible {
+    background: var(--primary-hover) !important;
+    border-color: var(--primary-hover) !important;
+    color: #FFFFFF !important;
 }
 
 div[data-baseweb="select"] > div,
@@ -1400,7 +1434,6 @@ PARENT_RUNTIME_JS = r"""
         "Field Team":"map-pin",
         "Manager Analytics":"bar-chart-3",
         "Reviewer Stats":"trending-up",
-        "Cleaning Assignments":"user-x",
         "Sync & Admin":"refresh-cw"
     };
     function loadLucide(cb) {

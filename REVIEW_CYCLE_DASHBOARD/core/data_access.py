@@ -847,14 +847,36 @@ def assign_records(
     team: str,
     priority: int = 100,
 ) -> None:
+    """Insert assignment rows in batched multi-row INSERTs (few Snowflake round-trips)."""
+    ids: list[str] = []
+    seen: set[str] = set()
     for record_id in record_ids:
+        rid = str(record_id or "").strip()
+        if not rid or rid in seen:
+            continue
+        seen.add(rid)
+        ids.append(rid)
+    if not ids:
+        return
+
+    # Keep each statement modest; one connection commit covers the whole batch via execute().
+    chunk_size = 200
+    priority_i = int(priority)
+    for start in range(0, len(ids), chunk_size):
+        chunk = ids[start : start + chunk_size]
+        values_sql = ", ".join(
+            ["(%s, %s, %s, %s, 'assigned', %s, CURRENT_TIMESTAMP())"] * len(chunk)
+        )
+        params: list = []
+        for rid in chunk:
+            params.extend([project_name, rid, assigned_to, team, priority_i])
         execute(
             f"""
             INSERT INTO {REVIEW_CYCLE_SCHEMA}.ASSIGNMENTS
             (PROJECT_NAME, RECORD_ID, ASSIGNED_TO, TEAM, STATUS, PRIORITY, ASSIGNED_AT)
-            VALUES (%s, %s, %s, %s, 'assigned', %s, CURRENT_TIMESTAMP())
+            VALUES {values_sql}
             """,
-            (project_name, record_id, assigned_to, team, priority),
+            tuple(params),
         )
 
 
@@ -885,27 +907,173 @@ def unassign_records(
     actor: str | None = None,
 ) -> int:
     """Release active assignments for the given record IDs (STATUS → released)."""
-    ids = [str(rid).strip() for rid in record_ids if str(rid).strip()]
-    if not ids:
+    unique_ids = _unique_norm_ids(record_ids)
+    if not unique_ids:
+        return 0
+    return _unassign_by_project_records(project_name, unique_ids, team=team, actor=actor)
+
+
+def unassign_by_assignment_ids(
+    assignment_ids: list[int],
+    *,
+    actor: str | None = None,
+    project_name: str | None = None,
+    record_ids: list[str] | None = None,
+    team: str = "cleaning",
+) -> int:
+    """Release active assignments by primary key; optionally also by record id as backup."""
+    ids = sorted({int(x) for x in assignment_ids if x is not None})
+    note = "Unassigned via Cleaning Assignments"
+    if actor:
+        note = f"{note} by {actor}"
+
+    released = 0
+    if ids:
+        chunk_size = 200
+        for start in range(0, len(ids), chunk_size):
+            chunk = ids[start : start + chunk_size]
+            placeholders = ", ".join(["%s"] * len(chunk))
+            released += execute(
+                f"""
+                UPDATE {REVIEW_CYCLE_SCHEMA}.ASSIGNMENTS
+                SET STATUS = 'released', NOTES = %s
+                WHERE STATUS = 'assigned'
+                  AND ASSIGNMENT_ID IN ({placeholders})
+                """,
+                (note, *chunk),
+            )
+
+    # Belt-and-suspenders: also release by normalized RECORD_ID so display/DB format drift cannot leave rows behind.
+    if project_name and record_ids:
+        released += _unassign_by_project_records(
+            project_name, record_ids, team=team, actor=actor
+        )
+    return released
+
+
+def _unique_norm_ids(record_ids: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for rid in record_ids:
+        norm = _norm_id_for_unassign(rid)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
+
+
+def _unassign_by_project_records(
+    project_name: str,
+    record_ids: list[str],
+    *,
+    team: str,
+    actor: str | None,
+) -> int:
+    unique_ids = _unique_norm_ids(record_ids)
+    if not unique_ids:
         return 0
     note = "Unassigned via Cleaning Assignments"
     if actor:
         note = f"{note} by {actor}"
-    released = 0
-    for record_id in ids:
-        execute(
-            f"""
-            UPDATE {REVIEW_CYCLE_SCHEMA}.ASSIGNMENTS
-            SET STATUS = 'released', NOTES = %s
-            WHERE PROJECT_NAME = %s
-              AND RECORD_ID = %s
-              AND TEAM = %s
-              AND STATUS = 'assigned'
-            """,
-            (note, project_name, record_id, team),
-        )
-        released += 1
-    return released
+
+    # Match RECORD_ID whether stored as "1018", "1018.0", or numeric text.
+    expanded: list[str] = []
+    numeric_ids: list[int] = []
+    for rid in unique_ids:
+        expanded.append(rid)
+        if rid.isdigit():
+            expanded.append(f"{rid}.0")
+            numeric_ids.append(int(rid))
+    expanded = list(dict.fromkeys(expanded))
+    exp_ph = ", ".join(["%s"] * len(expanded))
+    if numeric_ids:
+        num_ph = ", ".join(["%s"] * len(numeric_ids))
+        number_clause = f" OR TRY_TO_NUMBER(TRIM(TO_VARCHAR(RECORD_ID))) IN ({num_ph})"
+        params = (note, project_name, team, *expanded, *numeric_ids)
+    else:
+        number_clause = ""
+        params = (note, project_name, team, *expanded)
+    return execute(
+        f"""
+        UPDATE {REVIEW_CYCLE_SCHEMA}.ASSIGNMENTS
+        SET STATUS = 'released', NOTES = %s
+        WHERE PROJECT_NAME = %s
+          AND TEAM = %s
+          AND STATUS = 'assigned'
+          AND (
+                RECORD_ID IN ({exp_ph})
+                {number_clause}
+          )
+        """,
+        params,
+    )
+
+
+def count_active_assignments_for_records(
+    project_name: str,
+    record_ids: list[str],
+    *,
+    team: str = "cleaning",
+) -> int:
+    """Fresh (uncached) count of still-active assignment rows for the given record IDs."""
+    unique_ids = _unique_norm_ids(record_ids)
+    if not unique_ids:
+        return 0
+    expanded: list[str] = []
+    numeric_ids: list[int] = []
+    for rid in unique_ids:
+        expanded.append(rid)
+        if rid.isdigit():
+            expanded.append(f"{rid}.0")
+            numeric_ids.append(int(rid))
+    expanded = list(dict.fromkeys(expanded))
+    exp_ph = ", ".join(["%s"] * len(expanded))
+    if numeric_ids:
+        num_ph = ", ".join(["%s"] * len(numeric_ids))
+        number_clause = f" OR TRY_TO_NUMBER(TRIM(TO_VARCHAR(RECORD_ID))) IN ({num_ph})"
+        params: tuple = (project_name, team, *expanded, *numeric_ids)
+    else:
+        number_clause = ""
+        params = (project_name, team, *expanded)
+    # Bypass Streamlit read-connection cache for verification.
+    from core.snowflake_conn import cursor as sf_cursor
+
+    query = f"""
+        SELECT COUNT(*) AS N
+        FROM {REVIEW_CYCLE_SCHEMA}.ASSIGNMENTS
+        WHERE PROJECT_NAME = %s
+          AND TEAM = %s
+          AND STATUS = 'assigned'
+          AND (
+                RECORD_ID IN ({exp_ph})
+                {number_clause}
+          )
+    """
+    with sf_cursor(schema=REVIEW_CYCLE_SCHEMA) as cur:
+        cur.execute(query, params)
+        row = cur.fetchone()
+    try:
+        return int(row[0] or 0)
+    except Exception:
+        return 0
+
+
+def _norm_id_for_unassign(value) -> str:
+    text = str(value or "").strip()
+    if text.endswith(".0"):
+        try:
+            return str(int(float(text)))
+        except ValueError:
+            pass
+    try:
+        # Handles values like 1018.0 coming from pandas floats already stringified oddly.
+        as_float = float(text)
+        if as_float.is_integer():
+            return str(int(as_float))
+    except (TypeError, ValueError):
+        pass
+    return text
 
 
 def defer_assignment(assignment_id: int, hours: int = 24) -> None:

@@ -173,7 +173,7 @@ def render_editable_elvis_table(
     history_actor_roles: list[str] | None = None,
 ) -> pd.DataFrame:
     """Elvis_Review grid with inline editing for the five editable fields."""
-    from views.grid_tooltips import attach_field_tooltips, render_history_data_editor
+    from views.grid_tooltips import attach_field_tooltips, history_grid_caption, render_history_data_editor
 
     if display.empty:
         return display
@@ -181,7 +181,7 @@ def render_editable_elvis_table(
     @st.fragment
     def _editor_fragment() -> pd.DataFrame:
         prepared = prepare_editable_display(display)
-        empty_msg = "No cleaning history yet." if history_actor_roles else "No decision history yet."
+        empty_msg = history_svc.EMPTY_HISTORY_TOOLTIP
         id_col = _record_id_column(prepared)
         if show_history and id_col:
             prepared = attach_field_tooltips(
@@ -193,6 +193,7 @@ def render_editable_elvis_table(
                 actor_roles=history_actor_roles,
                 empty_message=empty_msg,
             )
+            history_grid_caption(review_only=False)
 
         edited = render_history_data_editor(
             prepared,
@@ -226,6 +227,11 @@ def render_editable_elvis_table(
                 if changed:
                     st.session_state[sig_key] = signature
                     st.toast(f"Saved {changed} field change(s).")
+                    # Reload so hover tips include the new history entry.
+                    try:
+                        st.rerun(scope="fragment")
+                    except TypeError:
+                        st.rerun()
         return edited
 
     return _editor_fragment()

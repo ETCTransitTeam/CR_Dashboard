@@ -13,6 +13,23 @@ from views.ui.loading import loading, set_operation_flash
 MARK_ALL_BRIDGE_LABEL = "RCD_MARK_ALL_READ"
 MARK_ALL_BRIDGE_KEY = "rcd_mark_all_bridge"
 
+_NOTIFICATION_TYPE_LABELS = {
+    "new_assignment": "New assignment",
+    "assignment_released": "Unassigned",
+    "review_completed": "Review completed",
+    "admin_approval_required": "Admin approval",
+    "sync_completed": "Sync completed",
+    "data_quality_alert": "Data quality",
+}
+
+
+def _notification_type_label(ntype: str) -> str:
+    key = str(ntype or "").strip().lower()
+    if key in _NOTIFICATION_TYPE_LABELS:
+        return _NOTIFICATION_TYPE_LABELS[key]
+    text = key.replace("_", " ").strip()
+    return text.title() if text else "Notice"
+
 
 def _notification_recipient(user: dict) -> str:
     return str(user.get("name") or user.get("EMAIL") or user.get("email") or "").strip()
@@ -155,13 +172,13 @@ def build_notification_panel_html(user: dict, version: int) -> str:
     for _, row in items.iterrows():
         unread = _is_unread(row.get("IS_READ"))
         cls = "ref-notif-item ref-notif-unread" if unread else "ref-notif-item"
-        ntype = html.escape(str(row.get("NTYPE") or ""))
+        ntype = html.escape(_notification_type_label(str(row.get("NTYPE") or "")))
         message = html.escape(str(row.get("MESSAGE") or ""))
         bullet = "•" if unread else ""
         parts.append(
             f'<li class="{cls}">'
             f'<span class="ref-notif-bullet">{bullet}</span>'
-            f"<span>{ntype}: {message}</span></li>"
+            f"<span><strong>{ntype}:</strong> {message}</span></li>"
         )
     parts.append("</ul>")
     return "".join(parts)

@@ -234,11 +234,10 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
         _run_boot_phase()
         return
 
-    from rc_auth.access import allowed_pages, can_manage_cleaning_assignments, is_cleaning_head
+    from rc_auth.access import allowed_pages, is_cleaning_head
     from core.config import REVIEW_CYCLE_SCHEMA
     from core.schema import refresh_projects_if_due
     from views.admin import render_admin_page
-    from views.assignment_manager import render_assignment_manager_page
     from views.cleaning import render_cleaning_page
     from views.demographic import render_demographic_page
     from views.demographic_config import render_demographic_config_page
@@ -271,7 +270,6 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
         "field": ("Field Team", render_field_page),
         "manager_dashboard": ("Manager Analytics", render_manager_dashboard),
         "reviewer_stats": ("Reviewer Stats", render_reviewer_stats_page),
-        "assignment_manager": ("Cleaning Assignments", render_assignment_manager_page),
         "sync_admin": ("Sync & Admin", render_sync_admin_page),
     }
 
@@ -328,12 +326,6 @@ def render_review_cycle(od_user: dict, rcd_role: str) -> None:
     pages = list(allowed_pages(role))
     if role == "cleaning" and not is_cleaning_head(user):
         pages = [page for page in pages if page != "history"]
-    if can_manage_cleaning_assignments(user) and "assignment_manager" not in pages:
-        # Super admins + xarin: insert before Sync & Admin when present, else append.
-        if "sync_admin" in pages:
-            pages.insert(pages.index("sync_admin"), "assignment_manager")
-        else:
-            pages.append("assignment_manager")
     labels = [PAGE_HANDLERS[key][0] for key in pages if key in PAGE_HANDLERS]
     keys = [key for key in pages if key in PAGE_HANDLERS]
     if not keys:

@@ -20,6 +20,32 @@ HISTORY_COLUMN_HELP = (
     "Decision timeline: e.g. Kesar 1/20/2026 2:00:00am - Use ; Tosia 2/1/2026 9:05:00am - Remove"
 )
 
+EMPTY_HISTORY_TOOLTIP = "No decision history yet."
+
+
+def _format_history_timestamp(value: Any) -> str:
+    """Match product format: ``1/20/2026 2:00:00am`` (no leading zeros, no space before am/pm)."""
+    ts = pd.to_datetime(value)
+    if pd.isna(ts):
+        return ""
+    hour12 = ts.hour % 12 or 12
+    ampm = "am" if ts.hour < 12 else "pm"
+    return f"{ts.month}/{ts.day}/{ts.year} {hour12}:{ts.minute:02d}:{ts.second:02d}{ampm}"
+
+
+def _format_history_detail(row: pd.Series) -> str:
+    """Prefer the new value (Use/Remove/etc.); fall back to action."""
+    new_value = row.get("NEW_VALUE")
+    if new_value is not None and not (isinstance(new_value, float) and pd.isna(new_value)):
+        text = str(new_value).strip()
+        if text:
+            return text
+    action = str(row.get("ACTION") or "").strip()
+    if action:
+        return action
+    field = str(row.get("FIELD_NAME") or "").strip()
+    return field or "updated"
+
 
 def coerce_bool(value: Any) -> bool:
     """Normalize Snowflake/pandas boolean values."""
@@ -436,7 +462,7 @@ def load_field_history_for_records(
     field_names: list[str],
     *,
     actor_roles: list[str] | None = None,
-    empty_message: str = "No decision history yet.",
+    empty_message: str = EMPTY_HISTORY_TOOLTIP,
 ) -> dict[str, dict[str, str]]:
     """Per-record, per-field formatted history for grid cell tooltips."""
     if not record_ids or not field_names:
@@ -456,21 +482,21 @@ def load_field_history_for_records(
         """,
         tuple(params),
     )
-    out: dict[str, dict[str, str]] = {rid: {} for rid in record_ids}
+    empty_text = empty_message or EMPTY_HISTORY_TOOLTIP
+    out: dict[str, dict[str, str]] = {str(rid): {} for rid in record_ids}
     if history.empty:
-        for rid in record_ids:
-            out[rid] = {field: empty_message for field in field_names}
+        for rid in out:
+            out[rid] = {field: empty_text for field in field_names}
         return out
 
-    for rid, group in history.groupby(history["RECORD_ID"].astype(str)):
+    for rid, group in history.groupby(history["RECORD_ID"].astype(str), sort=False):
         rid = str(rid)
         out.setdefault(rid, {})
         for field in field_names:
-            out[rid][field] = format_field_history_tooltip(group, field, empty_message=empty_message)
-    for rid in record_ids:
-        rid = str(rid)
+            out[rid][field] = format_field_history_tooltip(group, field, empty_message=empty_text)
+    for rid in list(out):
         for field in field_names:
-            out[rid].setdefault(field, empty_message)
+            out[rid].setdefault(field, empty_text)
     return out
 
 
@@ -489,12 +515,12 @@ def format_field_history_tooltip(
     history_df: pd.DataFrame,
     field_name: str,
     *,
-    empty_message: str = "No decision history yet.",
+    empty_message: str = EMPTY_HISTORY_TOOLTIP,
 ) -> str:
     """Timeline for one field, e.g. Final_Usage: ``Kesar 1/20/2026 2:00:00am - Use ; ...``."""
     subset = _history_rows_for_field(history_df, field_name)
     if subset.empty:
-        return empty_message
+        return empty_message or EMPTY_HISTORY_TOOLTIP
     return format_history_tooltip(subset)
 
 
@@ -503,7 +529,7 @@ def load_history_for_records(
     record_ids: list[str],
     *,
     actor_roles: list[str] | None = None,
-    empty_message: str = "No decision history yet.",
+    empty_message: str = EMPTY_HISTORY_TOOLTIP,
 ) -> dict[str, str]:
     """Batch-load formatted history tooltips for a set of record IDs."""
     if not record_ids:
@@ -523,13 +549,14 @@ def load_history_for_records(
         """,
         tuple(params),
     )
+    empty_text = empty_message or EMPTY_HISTORY_TOOLTIP
     if history.empty:
-        return {rid: empty_message for rid in record_ids}
+        return {str(rid): empty_text for rid in record_ids}
     out: dict[str, str] = {}
-    for rid, group in history.groupby(history["RECORD_ID"].astype(str)):
+    for rid, group in history.groupby(history["RECORD_ID"].astype(str), sort=False):
         out[str(rid)] = format_history_tooltip(group)
     for rid in record_ids:
-        out.setdefault(rid, empty_message)
+        out.setdefault(str(rid), empty_text)
     return out
 
 
@@ -637,23 +664,21 @@ def set_escalated(
 
 
 def format_history_tooltip(history_df: pd.DataFrame) -> str:
-    """Compact timeline for record headers, e.g. ``Kesar 1/20/2026 2:00:00am - Use``."""
+    """Cumulative timeline: ``Kesar 1/20/2026 2:00:00am - Use ; Tosia 2/1/2026 9:05:00am - Remove``."""
     if history_df is None or history_df.empty:
-        return "No decision history yet."
-    parts = []
-    for _, row in history_df.iterrows():
-        ts = pd.to_datetime(row["CREATED_AT"]).strftime("%m/%d/%Y %I:%M:%S %p").lower()
-        actor = row.get("ACTOR") or "Unknown"
-        field = row.get("FIELD_NAME") or ""
-        new_value = row.get("NEW_VALUE")
-        action = row.get("ACTION") or ""
-        if field == "Final_Usage" and new_value not in (None, ""):
-            detail = str(new_value)
-        elif action in ("Use", "Remove", "Approve"):
-            detail = action if action in ("Use", "Remove") else str(new_value or action)
-        elif new_value not in (None, ""):
-            detail = str(new_value) if field in ("Final_Usage", "cleaning_status", "review_status") else f"{field}={new_value}"
+        return EMPTY_HISTORY_TOOLTIP
+
+    view = history_df.copy()
+    if "CREATED_AT" in view.columns:
+        view = view.sort_values("CREATED_AT", ascending=True, kind="mergesort")
+
+    parts: list[str] = []
+    for _, row in view.iterrows():
+        actor = str(row.get("ACTOR") or "Unknown").strip() or "Unknown"
+        ts = _format_history_timestamp(row.get("CREATED_AT"))
+        detail = _format_history_detail(row)
+        if ts:
+            parts.append(f"{actor} {ts} - {detail}")
         else:
-            detail = action or field or "updated"
-        parts.append(f"{actor} {ts} - {detail}")
-    return " ; ".join(parts)
+            parts.append(f"{actor} - {detail}")
+    return " ; ".join(parts) if parts else EMPTY_HISTORY_TOOLTIP

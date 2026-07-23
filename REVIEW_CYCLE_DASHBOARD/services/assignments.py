@@ -15,11 +15,13 @@ import pandas as pd
 from core.config import REVIEW_CYCLE_SCHEMA
 from core.data_access import (
     assign_records,
+    count_active_assignments_for_records,
     defer_assignment,
     load_assignments,
     load_combined_checks,
     load_records,
     release_assignments,
+    unassign_by_assignment_ids,
     unassign_records,
 )
 from core.od_users import cleaning_assignee_options as od_cleaning_assignee_options
@@ -28,9 +30,11 @@ from core.snowflake_conn import fetch_df
 
 __all__ = [
     "assign_records",
+    "count_active_assignments_for_records",
     "defer_assignment",
     "release_assignments",
     "unassign_records",
+    "unassign_by_assignment_ids",
     "reviewer_load",
     "build_priority_queue",
     "pull_next",

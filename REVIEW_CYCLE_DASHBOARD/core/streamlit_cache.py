@@ -36,6 +36,20 @@ def bump_data_cache() -> None:
     if not in_streamlit_runtime():
         return
     st.session_state["data_cache_version"] = cache_version() + 1
+    # Drop long-lived read connections so the next SELECT cannot reuse a stale session.
+    try:
+        from core.snowflake_conn import _invalidate_read_connections
+
+        _invalidate_read_connections()
+    except Exception:
+        pass
+    # Explicitly clear assignment/record caches in addition to version bump.
+    try:
+        cached_load_assignments.clear()
+        cached_load_records.clear()
+        cached_fetch_df.clear()
+    except Exception:
+        pass
 
 
 @st.cache_data(show_spinner=False, ttl=_DEFAULT_TTL)

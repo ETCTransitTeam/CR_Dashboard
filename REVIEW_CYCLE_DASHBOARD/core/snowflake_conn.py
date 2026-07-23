@@ -271,9 +271,14 @@ def fetch_df_optional(query: str, params=None, schema: str | None = None) -> pd.
         raise
 
 
-def execute(query: str, params=None, schema: str | None = None) -> None:
+def execute(query: str, params=None, schema: str | None = None) -> int:
+    """Run a write statement and return Snowflake rowcount (0 if unavailable)."""
     with cursor(schema=schema) as cur:
         cur.execute(query, params or ())
+        try:
+            return int(cur.rowcount or 0)
+        except Exception:
+            return 0
 
 
 def executemany(query: str, params_seq, schema: str | None = None, chunk_size: int = 15000) -> None:

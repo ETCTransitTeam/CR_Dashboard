@@ -79,7 +79,13 @@ def render_review_page(user: dict) -> None:
                         update(1, 2, "Building and assigning the review queue...")
                         ids = assignment_svc.pull_next(project, assignee, count, team="review")
                         update(2, 2, "Sending assignment notification...")
-                        notify_svc.notify(assignee, notify_svc.NEW_ASSIGNMENT, f"Pulled {len(ids)} review records for {project}", project)
+                        actor_name = notify_svc.actor_display_name(user)
+                        notify_svc.notify(
+                            assignee,
+                            notify_svc.NEW_ASSIGNMENT,
+                            f"You were assigned {len(ids)} review record(s) for {project} by {actor_name}.",
+                            project,
+                        )
                     set_operation_flash(f"Assigned {len(ids)} record(s) to {assignee}.")
                     st.rerun()
         custom = c4.number_input("Custom N", min_value=1, max_value=500, value=10)
@@ -87,6 +93,13 @@ def render_review_page(user: dict) -> None:
             if assignee and assignee != "(no review users)":
                 with loading(f"Assigning {int(custom)} review records to {assignee}..."):
                     ids = assignment_svc.pull_next(project, assignee, int(custom), team="review")
+                    actor_name = notify_svc.actor_display_name(user)
+                    notify_svc.notify(
+                        assignee,
+                        notify_svc.NEW_ASSIGNMENT,
+                        f"You were assigned {len(ids)} review record(s) for {project} by {actor_name}.",
+                        project,
+                    )
                 set_operation_flash(f"Assigned {len(ids)} record(s) to {assignee}.")
                 st.rerun()
 
