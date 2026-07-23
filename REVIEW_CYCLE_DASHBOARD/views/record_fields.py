@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 
 from services import history as history_svc
-from views.ui import loading
 
 USAGE_OPTIONS = ["", "Use", "Remove"]
 
@@ -27,7 +26,20 @@ EDITABLE_FIELD_NAMES = frozenset(field for field, _, _ in EDITABLE_FIELDS)
 def _norm(value: Any) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
-    return str(value).strip()
+    text = str(value).strip()
+    if text.endswith(".0") and text.replace(".", "", 1).isdigit():
+        return text[:-2]
+    return text
+
+
+def _record_id_aliases(record_id: str) -> list[str]:
+    rid = _norm(record_id)
+    if not rid:
+        return []
+    aliases = [rid]
+    if rid.isdigit():
+        aliases.append(f"{rid}.0")
+    return aliases
 
 
 def field_value(payload: dict, record_row: Any, field: str) -> str:
@@ -46,6 +58,76 @@ def field_value(payload: dict, record_row: Any, field: str) -> str:
 
 def filter_editable_updates(updates: dict[str, Any]) -> dict[str, Any]:
     return {field: value for field, value in updates.items() if field in EDITABLE_FIELD_NAMES}
+
+
+def _cell_overrides_key(editor_key: str) -> str:
+    return f"{editor_key}__cell_overrides"
+
+
+def capture_cell_overrides(
+    before: pd.DataFrame,
+    after: pd.DataFrame,
+    editor_key: str,
+    fields: set[str] | frozenset[str],
+) -> None:
+    """Remember just-saved cell values so the next grid paint cannot show blanks."""
+    id_col = _record_id_column(before)
+    if not id_col or id_col not in after.columns:
+        return
+    overrides: dict[str, dict[str, Any]] = dict(st.session_state.get(_cell_overrides_key(editor_key)) or {})
+    before_map = {
+        _norm(row[id_col]): row
+        for _, row in before.iterrows()
+        if _norm(row[id_col])
+    }
+    for _, row in after.iterrows():
+        record_id = _norm(row[id_col])
+        if not record_id or record_id not in before_map:
+            continue
+        prev = before_map[record_id]
+        row_over = dict(overrides.get(record_id) or {})
+        for field in fields:
+            if field not in before.columns or field not in after.columns:
+                continue
+            new_val = row[field]
+            if _norm(prev[field]) != _norm(new_val):
+                row_over[field] = "" if new_val is None or (isinstance(new_val, float) and pd.isna(new_val)) else new_val
+        if row_over:
+            overrides[record_id] = row_over
+    st.session_state[_cell_overrides_key(editor_key)] = overrides
+
+
+def apply_cell_overrides(
+    display: pd.DataFrame,
+    editor_key: str,
+    fields: set[str] | frozenset[str],
+) -> pd.DataFrame:
+    """Paint saved values onto the grid even if a stale read cache lags behind."""
+    overrides: dict[str, dict[str, Any]] = dict(st.session_state.get(_cell_overrides_key(editor_key)) or {})
+    if not overrides or display.empty:
+        return display
+    id_col = _record_id_column(display)
+    if not id_col:
+        return display
+
+    out = display.copy()
+    remaining: dict[str, dict[str, Any]] = {}
+    for idx, row in out.iterrows():
+        record_id = _norm(row[id_col])
+        if not record_id or record_id not in overrides:
+            continue
+        row_over = dict(overrides[record_id])
+        keep: dict[str, Any] = {}
+        for field, value in row_over.items():
+            if field not in fields or field not in out.columns:
+                continue
+            if _norm(out.at[idx, field]) != _norm(value):
+                out.at[idx, field] = value
+                keep[field] = value
+        if keep:
+            remaining[record_id] = keep
+    st.session_state[_cell_overrides_key(editor_key)] = remaining
+    return out
 
 
 def prepare_editable_display(display: pd.DataFrame) -> pd.DataFrame:
@@ -104,7 +186,10 @@ def persist_editable_elvis_changes(
     if not id_col or records.empty or id_col not in after.columns:
         return 0
 
-    project_by_id = records.set_index(records["RECORD_ID"].astype(str))["PROJECT_NAME"].to_dict()
+    project_by_id = {
+        _norm(rid): project
+        for rid, project in records.set_index(records["RECORD_ID"].astype(str))["PROJECT_NAME"].to_dict().items()
+    }
     actor = user.get("name") or user.get("EMAIL")
     role = user.get("ROLE") or user.get("role")
     saved = 0
@@ -120,6 +205,11 @@ def persist_editable_elvis_changes(
             continue
         project = project_by_id.get(record_id)
         if not project:
+            for alias in _record_id_aliases(record_id):
+                project = project_by_id.get(_norm(alias))
+                if project:
+                    break
+        if not project:
             continue
         prev = before_map[record_id]
         updates: dict[str, Any] = {}
@@ -129,7 +219,7 @@ def persist_editable_elvis_changes(
             old_val = prev[field]
             new_val = row[field]
             if _norm(old_val) != _norm(new_val):
-                updates[field] = new_val
+                updates[field] = "" if new_val is None or (isinstance(new_val, float) and pd.isna(new_val)) else new_val
         if updates:
             saved += history_svc.apply_record_update(
                 project,
@@ -173,14 +263,27 @@ def render_editable_elvis_table(
     history_actor_roles: list[str] | None = None,
 ) -> pd.DataFrame:
     """Elvis_Review grid with inline editing for the five editable fields."""
-    from views.grid_tooltips import attach_field_tooltips, history_grid_caption, render_history_data_editor
+    from views.grid_tooltips import (
+        attach_field_tooltips,
+        consume_save_flash,
+        history_grid_caption,
+        mark_saved_flash,
+        render_history_data_editor,
+    )
 
     if display.empty:
         return display
 
     @st.fragment
     def _editor_fragment() -> pd.DataFrame:
+        # Feedback sits ABOVE the tall grid so save state is always visible.
+        feedback = st.empty()
+        flash = consume_save_flash(editor_key)
+        if flash:
+            feedback.success(f"Saved {flash.get('count', 0)} change(s).")
+
         prepared = prepare_editable_display(display)
+        prepared = apply_cell_overrides(prepared, editor_key, EDITABLE_FIELD_NAMES)
         empty_msg = history_svc.EMPTY_HISTORY_TOOLTIP
         id_col = _record_id_column(prepared)
         if show_history and id_col:
@@ -206,6 +309,11 @@ def render_editable_elvis_table(
         compare_before = _strip_for_config(prepared).drop(
             columns=["Assigned to me", "Assigned To"], errors="ignore"
         )
+        # After a successful save + full reload, trust the DB-backed prepared
+        # frame. AgGrid can emit a stale empty MODEL on remount.
+        if flash:
+            return compare_before
+
         compare_after = edited.drop(columns=["Assigned to me", "Assigned To"], errors="ignore")
         if _editable_frames_differ(compare_before, compare_after):
             # Avoid re-saving the same editor state on every fragment rerun.
@@ -220,18 +328,23 @@ def render_editable_elvis_table(
                 parts.append(f"{rid}:{vals}")
             signature = "\n".join(parts)
             if st.session_state.get(sig_key) != signature:
-                with loading("Saving Elvis Review changes..."):
-                    changed = persist_editable_elvis_changes(
-                        compare_before, compare_after, records, user
-                    )
+                feedback.info("Saving…")
+                changed = persist_editable_elvis_changes(
+                    compare_before, compare_after, records, user
+                )
                 if changed:
+                    capture_cell_overrides(
+                        compare_before, compare_after, editor_key, EDITABLE_FIELD_NAMES
+                    )
                     st.session_state[sig_key] = signature
-                    st.toast(f"Saved {changed} field change(s).")
-                    # Reload so hover tips include the new history entry.
-                    try:
-                        st.rerun(scope="fragment")
-                    except TypeError:
-                        st.rerun()
+                    mark_saved_flash(editor_key, changed)
+                    st.toast(f"Saved {changed} field change(s).", icon="✅")
+                    # Reload the page-level records after the cache bump. A
+                    # fragment-only rerun would reuse this fragment's stale
+                    # ``display`` closure and redraw the pre-save value.
+                    st.rerun()
+                else:
+                    feedback.empty()
         return edited
 
     return _editor_fragment()

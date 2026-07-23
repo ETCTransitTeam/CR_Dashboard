@@ -43,13 +43,20 @@ def bump_data_cache() -> None:
         _invalidate_read_connections()
     except Exception:
         pass
-    # Explicitly clear assignment/record caches in addition to version bump.
-    try:
-        cached_load_assignments.clear()
-        cached_load_records.clear()
-        cached_fetch_df.clear()
-    except Exception:
-        pass
+    # Clear every read-through cache so editable grids remount on fresh DB values.
+    for cached in (
+        cached_fetch_df,
+        cached_load_records,
+        cached_load_records_for_projects,
+        cached_load_combined_checks,
+        cached_load_assignments,
+        cached_load_record,
+        cached_records_to_elvis_review,
+    ):
+        try:
+            cached.clear()
+        except Exception:
+            pass
 
 
 @st.cache_data(show_spinner=False, ttl=_DEFAULT_TTL)

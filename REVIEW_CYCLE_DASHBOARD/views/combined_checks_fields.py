@@ -15,10 +15,11 @@ from views.record_fields import (
     _norm,
     _record_id_column,
     _strip_for_config,
+    apply_cell_overrides,
+    capture_cell_overrides,
     editable_column_config,
     prepare_editable_display,
 )
-from views.ui import loading
 
 TWO_X_FLAG_OPTIONS = ["", "Pass", "Fail", "Needs work"]
 
@@ -26,9 +27,31 @@ COMBINED_CHECK_FIELDS = frozenset({"ADMIN_APPROVED", "2x_REVIEWED_BY", "2x_REVIE
 
 ALL_EDITABLE = EDITABLE_FIELD_NAMES | COMBINED_CHECK_FIELDS
 
+COMBINED_CHECK_LEADING_COLUMNS = (
+    "Elvis_Date",
+    "elvis_id",
+    "Assigned To",
+    "Assigned to me",
+    "Final_Usage",
+    "FINAL_REVIEWER",
+    "ADMIN_APPROVED",
+    "2x_REVIEWED_BY",
+    "2x_REVIEWED_FLAG",
+    "REASON FOR REMOVAL",
+    "REASON FOR REMOVAL [Other]",
+    "POSSIBLE ERRORS",
+)
+
+
+def _order_combined_columns(display: pd.DataFrame) -> pd.DataFrame:
+    """Keep review decisions visible before the wider source-data columns."""
+    leading = [column for column in COMBINED_CHECK_LEADING_COLUMNS if column in display.columns]
+    remaining = [column for column in display.columns if column not in leading]
+    return display.loc[:, leading + remaining]
+
 
 def prepare_combined_display(display: pd.DataFrame) -> pd.DataFrame:
-    out = prepare_editable_display(display)
+    out = _order_combined_columns(prepare_editable_display(display))
     if "ADMIN_APPROVED" in out.columns:
         out["ADMIN_APPROVED"] = out["ADMIN_APPROVED"].fillna(False).astype(bool)
     for field in ("2x_REVIEWED_BY", "2x_REVIEWED_FLAG"):
@@ -130,14 +153,27 @@ def render_combined_checks_table(
     history_actor_roles: list[str] | None = None,
 ) -> pd.DataFrame:
     """Combined Checks grid with Elvis + flag fields inline editing."""
-    from views.grid_tooltips import attach_field_tooltips, history_grid_caption, render_history_data_editor
+    from views.grid_tooltips import (
+        attach_field_tooltips,
+        consume_save_flash,
+        history_grid_caption,
+        mark_saved_flash,
+        render_history_data_editor,
+    )
 
     if display.empty:
         return display
 
     @st.fragment
     def _editor_fragment() -> pd.DataFrame:
+        # Feedback sits ABOVE the tall grid so save state is always visible.
+        feedback = st.empty()
+        flash = consume_save_flash(editor_key)
+        if flash:
+            feedback.success(f"Saved {flash.get('count', 0)} change(s).")
+
         prepared = prepare_combined_display(display)
+        prepared = apply_cell_overrides(prepared, editor_key, ALL_EDITABLE)
         empty_history_msg = history_svc.EMPTY_HISTORY_TOOLTIP
         tooltip_fields = sorted(ALL_EDITABLE)
         id_col = _record_id_column(prepared)
@@ -178,6 +214,9 @@ def render_combined_checks_table(
         )
 
         compare_before = _strip_for_config(prepared)
+        if flash:
+            return compare_before
+
         compare_after = edited
         if _combined_frames_differ(compare_before, compare_after):
             sig_key = f"{editor_key}__last_saved_sig"
@@ -191,17 +230,22 @@ def render_combined_checks_table(
                 parts.append(f"{rid}:{vals}")
             signature = "\n".join(parts)
             if st.session_state.get(sig_key) != signature:
-                with loading("Saving combined-check changes..."):
-                    changed = persist_combined_changes(
-                        compare_before, compare_after, records, user
-                    )
+                feedback.info("Saving…")
+                changed = persist_combined_changes(
+                    compare_before, compare_after, records, user
+                )
                 if changed:
+                    capture_cell_overrides(
+                        compare_before, compare_after, editor_key, ALL_EDITABLE
+                    )
                     st.session_state[sig_key] = signature
-                    st.toast(f"Saved {changed} field change(s).")
-                    try:
-                        st.rerun(scope="fragment")
-                    except TypeError:
-                        st.rerun()
+                    mark_saved_flash(editor_key, changed)
+                    st.toast(f"Saved {changed} field change(s).", icon="✅")
+                    # Refresh the page-level source frames. Fragment-only
+                    # reruns retain the pre-save ``display`` closure.
+                    st.rerun()
+                else:
+                    feedback.empty()
         return edited
 
     return _editor_fragment()

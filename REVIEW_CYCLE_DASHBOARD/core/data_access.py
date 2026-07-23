@@ -233,13 +233,23 @@ def load_record(project_name: str, record_id: str) -> pd.DataFrame:
 
 
 def _load_record_uncached(project_name: str, record_id: str) -> pd.DataFrame:
-    return fetch_df(
-        f"""
-        SELECT * FROM {REVIEW_CYCLE_SCHEMA}.RECORDS
-        WHERE PROJECT_NAME = %s AND RECORD_ID = %s
-        """,
-        (project_name, record_id),
-    )
+    rid = str(record_id).strip()
+    candidates = [rid]
+    if rid.endswith(".0") and rid[:-2].isdigit():
+        candidates.append(rid[:-2])
+    elif rid.isdigit():
+        candidates.append(f"{rid}.0")
+    for candidate in candidates:
+        frame = fetch_df(
+            f"""
+            SELECT * FROM {REVIEW_CYCLE_SCHEMA}.RECORDS
+            WHERE PROJECT_NAME = %s AND RECORD_ID = %s
+            """,
+            (project_name, candidate),
+        )
+        if not frame.empty:
+            return frame
+    return pd.DataFrame()
 
 
 def _is_valid_route_code(value: Any) -> bool:
@@ -1238,12 +1248,24 @@ def _records_to_elvis_review_uncached(records: pd.DataFrame) -> pd.DataFrame:
         parts.append(_merge_checks_into_dataframe(proj_base, checks))
     merged = pd.concat(parts, ignore_index=True) if parts else records_to_dataframe(records)
     shaped = shape_to_elvis_review(merged)
-    try:
-        from pipeline.scripts.sort_improved_auto_approval_output import sort_dataframe as sort_elvis_review_rows
+    # Keep the live dashboard order stable (PIPELINE_SORT_ORDER from load_records).
+    # Tier-sorting by Final_Usage / FINAL_REVIEWER is for Excel/pipeline exports only;
+    # applying it here moves rows after every edit and confuses reviewers.
+    return _stabilize_elvis_review_order(shaped, records)
 
-        return sort_elvis_review_rows(shaped)
-    except SystemExit:
+
+def _stabilize_elvis_review_order(shaped: pd.DataFrame, records: pd.DataFrame) -> pd.DataFrame:
+    """Preserve the incoming RECORDS row order in the Elvis_Review display frame."""
+    if shaped.empty or records.empty or "RECORD_ID" not in records.columns:
         return shaped
+    id_col = next((c for c in ("elvis_id", "id") if c in shaped.columns), None)
+    if not id_col:
+        return shaped
+    order = {str(rid): i for i, rid in enumerate(records["RECORD_ID"].astype(str).tolist())}
+    out = shaped.copy()
+    out["_ord"] = out[id_col].astype(str).map(order)
+    out = out.sort_values("_ord", kind="mergesort", na_position="last").drop(columns=["_ord"])
+    return out.reset_index(drop=True)
 
 
 def build_combined_checks_export(project_name: str) -> pd.DataFrame:

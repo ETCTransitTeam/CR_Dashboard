@@ -349,10 +349,14 @@ def _add_assigned_to_column(display: pd.DataFrame, assignee_map: dict[str, str])
     out["Assigned To"] = out[id_col].map(
         lambda rid: assignee_map.get(_norm_record_id(rid)) or "Unassigned"
     )
+    # Keep KingElvis column order; place Assigned To after elvis_id (dashboard-only).
     cols = [c for c in out.columns if c != "Assigned To"]
     insert_at = 0
     for i, col in enumerate(cols):
-        if col in ("Elvis_Date", "elvis_id", "id"):
+        if col == "elvis_id":
+            insert_at = i + 1
+            break
+        if col == "Elvis_Date":
             insert_at = i + 1
     cols.insert(insert_at, "Assigned To")
     return out[cols]

@@ -192,8 +192,10 @@ def apply_record_update(
     for col, val in column_updates.items():
         set_parts.append(f"{col} = %s")
         params.append(val)
-    params.extend([project_name, record_id])
-    execute(
+    # Use the RECORD_ID value that actually exists on the loaded row.
+    persisted_id = _norm(row.get("RECORD_ID")) or record_id
+    params.extend([project_name, persisted_id])
+    rowcount = execute(
         f"""
         UPDATE {REVIEW_CYCLE_SCHEMA}.RECORDS
         SET {', '.join(set_parts)}
@@ -201,7 +203,9 @@ def apply_record_update(
         """,
         tuple(params),
     )
-    log_changes(project_name, record_id, changes, actor, actor_role, action)
+    if rowcount == 0:
+        return 0
+    log_changes(project_name, persisted_id, changes, actor, actor_role, action)
     _invalidate_read_cache()
     return len(changes)
 
@@ -497,6 +501,57 @@ def load_field_history_for_records(
     for rid in list(out):
         for field in field_names:
             out[rid].setdefault(field, empty_text)
+    return out
+
+
+def load_latest_field_values(
+    project_name: str,
+    record_ids: list[str],
+    field_names: list[str],
+    *,
+    actor_roles: list[str] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Latest NEW_VALUE per record/field from DECISION_HISTORY."""
+    if not record_ids or not field_names:
+        return {}
+    placeholders = ", ".join(["%s"] * len(record_ids))
+    field_placeholders = ", ".join(["%s"] * len(field_names))
+    role_clause = ""
+    params: list[Any] = [project_name, *record_ids, *field_names]
+    if actor_roles:
+        role_placeholders = ", ".join(["%s"] * len(actor_roles))
+        role_clause = f" AND ACTOR_ROLE IN ({role_placeholders})"
+        params.extend(actor_roles)
+    history = fetch_df(
+        f"""
+        SELECT RECORD_ID, FIELD_NAME, NEW_VALUE
+        FROM {REVIEW_CYCLE_SCHEMA}.DECISION_HISTORY
+        WHERE PROJECT_NAME = %s
+          AND RECORD_ID IN ({placeholders})
+          AND FIELD_NAME IN ({field_placeholders})
+          {role_clause}
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY RECORD_ID, FIELD_NAME
+            ORDER BY CREATED_AT DESC
+        ) = 1
+        """,
+        tuple(params),
+    )
+    out: dict[str, dict[str, str]] = {}
+    if history.empty:
+        return out
+    for _, row in history.iterrows():
+        rid = str(row["RECORD_ID"]).strip()
+        field = str(row["FIELD_NAME"]).strip()
+        value = row.get("NEW_VALUE")
+        text = "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip()
+        if text.lower() in {"nan", "none", "<na>"}:
+            text = ""
+        out.setdefault(rid, {})[field] = text
+        if rid.endswith(".0") and rid[:-2].isdigit():
+            out.setdefault(rid[:-2], {})[field] = text
+        elif rid.isdigit():
+            out.setdefault(f"{rid}.0", {})[field] = text
     return out
 
 
