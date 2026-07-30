@@ -21,6 +21,7 @@ from field_assignments.core.time_utils import (
     format_time,
     parse_assignment_filter,
     parse_time,
+    time_to_minutes,
 )
 from field_assignments.core.workbook import build_header_template, workbook_options
 
@@ -96,6 +97,22 @@ def _assignment_widget_key(index: int, suffix: str) -> str:
     return f"fa_assignment_{index}_{suffix}"
 
 
+def _ampm_time_choices(step_minutes: int = 1) -> list[str]:
+    """Build searchable 12-hour time labels (avoids cramped hour/minute dropdowns)."""
+    from datetime import time as dt_time
+
+    step = max(1, int(step_minutes or 1))
+    choices: list[str] = []
+    for total in range(0, 24 * 60, step):
+        choices.append(format_time(dt_time(total // 60, total % 60)))
+    return choices
+
+
+@st.cache_data(show_spinner=False)
+def _cached_ampm_time_choices() -> list[str]:
+    return _ampm_time_choices(1)
+
+
 def _ampm_time_input(
     label: str,
     key: str,
@@ -108,52 +125,31 @@ def _ampm_time_input(
     from datetime import time as dt_time
 
     default = value if isinstance(value, dt_time) else (parse_time(value) or dt_time(8, 0))
-    hour12 = default.hour % 12 or 12
-    minute = default.minute
-    period = "AM" if default.hour < 12 else "PM"
+    label_default = format_time(default)
 
-    h_key, m_key, p_key = f"{key}__h", f"{key}__m", f"{key}__p"
-    if h_key not in st.session_state:
-        st.session_state[h_key] = hour12
-    if m_key not in st.session_state:
-        st.session_state[m_key] = minute
-    if p_key not in st.session_state:
-        st.session_state[p_key] = period
+    # Drop legacy 3-dropdown keys from the previous picker layout.
+    for part in ("__h", "__m", "__p"):
+        st.session_state.pop(f"{key}{part}", None)
 
-    st.markdown(f"**{label}**")
-    if help:
-        st.caption(help)
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        hour = st.selectbox(
-            "Hour",
-            list(range(1, 13)),
-            key=h_key,
-            disabled=disabled,
-            label_visibility="collapsed",
-        )
-    with c2:
-        minute_val = st.selectbox(
-            "Minute",
-            list(range(0, 60)),
-            format_func=lambda item: f"{int(item):02d}",
-            key=m_key,
-            disabled=disabled,
-            label_visibility="collapsed",
-        )
-    with c3:
-        meridiem = st.selectbox(
-            "AM/PM",
-            ["AM", "PM"],
-            key=p_key,
-            disabled=disabled,
-            label_visibility="collapsed",
-        )
+    sel_key = f"{key}__sel"
+    choices = list(_cached_ampm_time_choices())
+    if label_default not in choices:
+        choices.append(label_default)
+        choices.sort(key=lambda item: time_to_minutes(item) if time_to_minutes(item) is not None else 0)
 
-    hour24 = int(hour) % 12
-    if meridiem == "PM":
-        hour24 += 12
-    result = dt_time(hour24, int(minute_val))
+    if sel_key not in st.session_state:
+        st.session_state[sel_key] = label_default
+    elif st.session_state.get(sel_key) not in choices:
+        st.session_state[sel_key] = label_default
+
+    selected = st.selectbox(
+        label,
+        options=choices,
+        key=sel_key,
+        disabled=disabled,
+        help=help,
+    )
+    result = parse_time(selected) or default
     st.session_state[key] = result
     return result
 
@@ -316,7 +312,7 @@ def _clear_assignment_widget_state(index: int) -> None:
         key = _assignment_widget_key(index, suffix)
         st.session_state.pop(key, None)
         # Clear am/pm picker sub-keys for time widgets.
-        for part in ("__h", "__m", "__p"):
+        for part in ("__h", "__m", "__p", "__sel"):
             st.session_state.pop(f"{key}{part}", None)
     st.session_state.pop(_loc_route_key(index), None)
 
@@ -1486,7 +1482,7 @@ def _clear_tod_time_widget_keys(count: int | None = None) -> None:
     for i in range(n):
         for base in (f"fa_tod_start_{i}", f"fa_tod_end_{i}"):
             st.session_state.pop(base, None)
-            for part in ("__h", "__m", "__p"):
+            for part in ("__h", "__m", "__p", "__sel"):
                 st.session_state.pop(f"{base}{part}", None)
 
 
