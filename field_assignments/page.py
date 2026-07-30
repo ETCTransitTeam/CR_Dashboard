@@ -16,7 +16,12 @@ from field_assignments.core.summary import (
     style_coverage_dataframe,
     style_start_location_dataframe,
 )
-from field_assignments.core.time_utils import parse_assignment_filter
+from field_assignments.core.time_utils import (
+    format_display_timestamp,
+    format_time,
+    parse_assignment_filter,
+    parse_time,
+)
 from field_assignments.core.workbook import build_header_template, workbook_options
 
 MAX_ASSIGNMENT_GUIDELINES = 50
@@ -89,6 +94,68 @@ _ASSIGNMENT_WIDGET_SUFFIXES = (
 
 def _assignment_widget_key(index: int, suffix: str) -> str:
     return f"fa_assignment_{index}_{suffix}"
+
+
+def _ampm_time_input(
+    label: str,
+    key: str,
+    *,
+    value=None,
+    disabled: bool = False,
+    help: str | None = None,
+):
+    """12-hour am/pm time picker (replaces military st.time_input display)."""
+    from datetime import time as dt_time
+
+    default = value if isinstance(value, dt_time) else (parse_time(value) or dt_time(8, 0))
+    hour12 = default.hour % 12 or 12
+    minute = default.minute
+    period = "AM" if default.hour < 12 else "PM"
+
+    h_key, m_key, p_key = f"{key}__h", f"{key}__m", f"{key}__p"
+    if h_key not in st.session_state:
+        st.session_state[h_key] = hour12
+    if m_key not in st.session_state:
+        st.session_state[m_key] = minute
+    if p_key not in st.session_state:
+        st.session_state[p_key] = period
+
+    st.markdown(f"**{label}**")
+    if help:
+        st.caption(help)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        hour = st.selectbox(
+            "Hour",
+            list(range(1, 13)),
+            key=h_key,
+            disabled=disabled,
+            label_visibility="collapsed",
+        )
+    with c2:
+        minute_val = st.selectbox(
+            "Minute",
+            list(range(0, 60)),
+            format_func=lambda item: f"{int(item):02d}",
+            key=m_key,
+            disabled=disabled,
+            label_visibility="collapsed",
+        )
+    with c3:
+        meridiem = st.selectbox(
+            "AM/PM",
+            ["AM", "PM"],
+            key=p_key,
+            disabled=disabled,
+            label_visibility="collapsed",
+        )
+
+    hour24 = int(hour) % 12
+    if meridiem == "PM":
+        hour24 += 12
+    result = dt_time(hour24, int(minute_val))
+    st.session_state[key] = result
+    return result
 
 
 def _guideline_store_key(index: int) -> str:
@@ -246,7 +313,11 @@ def _apply_route_location_binding(index: int, route_sel: str) -> None:
 
 def _clear_assignment_widget_state(index: int) -> None:
     for suffix in _ASSIGNMENT_WIDGET_SUFFIXES:
-        st.session_state.pop(_assignment_widget_key(index, suffix), None)
+        key = _assignment_widget_key(index, suffix)
+        st.session_state.pop(key, None)
+        # Clear am/pm picker sub-keys for time widgets.
+        for part in ("__h", "__m", "__p"):
+            st.session_state.pop(f"{key}{part}", None)
     st.session_state.pop(_loc_route_key(index), None)
 
 
@@ -294,6 +365,8 @@ def _build_guidelines_list(
     *,
     scan_order: str,
     tolerance: int,
+    min_hours: float = 0.0,
+    max_hours: float = 0.0,
 ) -> list[dict[str, str]]:
     blocks = ["(All blocks)"] + list(opts.get("blocks") or [])
     guidelines_list: list[dict[str, str]] = []
@@ -332,12 +405,14 @@ def _build_guidelines_list(
                 "route": "" if route_sel == ANY_ROUTE else route_sel,
                 "start_location": "" if start_loc == ANY_LOCATION else start_loc,
                 "end_location": "" if end_loc == ANY_LOCATION else end_loc,
-                "start_from": start_from.strftime("%H:%M"),
-                "start_to": start_to.strftime("%H:%M"),
-                "shift_from": end_from.strftime("%H:%M"),
-                "shift_to": end_to.strftime("%H:%M"),
+                "start_from": format_time(start_from),
+                "start_to": format_time(start_to),
+                "shift_from": format_time(end_from),
+                "shift_to": format_time(end_to),
                 "scan_order": scan_order,
                 "tolerance": str(tolerance),
+                "min_hours": "" if float(min_hours or 0) <= 0 else str(float(min_hours)),
+                "max_hours": "" if float(max_hours or 0) <= 0 else str(float(max_hours)),
                 "include_interlined": "true" if include_interlined else "false",
                 "mode": "route_only" if route_only else "block",
                 "route_only": "true" if route_only else "false",
@@ -398,9 +473,35 @@ def _render_assign_guidelines_and_output() -> None:
                 format_func=lambda item: item[0],
                 key="fa_scan_order",
             )[1]
+        if "fa_min_hours" not in st.session_state:
+            st.session_state["fa_min_hours"] = 6.5
+        if "fa_max_hours" not in st.session_state:
+            st.session_state["fa_max_hours"] = 9.0
+        len_col1, len_col2 = st.columns(2)
+        with len_col1:
+            min_hours = st.number_input(
+                "Assignment length: no less than (hours)",
+                min_value=0.0,
+                max_value=24.0,
+                step=0.5,
+                key="fa_min_hours",
+                help="Skip segments shorter than this. Set 0 to disable the minimum.",
+            )
+        with len_col2:
+            max_hours = st.number_input(
+                "Assignment length: no greater than (hours)",
+                min_value=0.0,
+                max_value=24.0,
+                step=0.5,
+                key="fa_max_hours",
+                help="Skip segments longer than this. Set 0 to disable the maximum.",
+            )
+        if min_hours > 0 and max_hours > 0 and min_hours > max_hours:
+            st.warning("Minimum hours is greater than maximum hours — no assignments can match.")
         st.caption(
             "Default mode stays on the same block (interlining). "
-            "Enable **No Interline (Route Only)** on a guideline to stay on one route across blocks."
+            "Enable **No Interline (Route Only)** on a guideline to stay on one route across blocks. "
+            "Times below use standard am/pm."
         )
 
     route_start = opts.get("route_start_locations") or {}
@@ -530,13 +631,13 @@ def _render_assign_guidelines_and_output() -> None:
 
                 t1, t2, t3, t4 = st.columns(4)
                 with t1:
-                    st.time_input("Start from", key=f"fa_assignment_{index}_start_from")
+                    _ampm_time_input("Start from", f"fa_assignment_{index}_start_from")
                 with t2:
-                    st.time_input("Start to", key=f"fa_assignment_{index}_start_to")
+                    _ampm_time_input("Start to", f"fa_assignment_{index}_start_to")
                 with t3:
-                    st.time_input("End from", key=f"fa_assignment_{index}_end_from")
+                    _ampm_time_input("End from", f"fa_assignment_{index}_end_from")
                 with t4:
-                    st.time_input("End to", key=f"fa_assignment_{index}_end_to")
+                    _ampm_time_input("End to", f"fa_assignment_{index}_end_to")
 
                 opt1, opt2 = st.columns(2)
                 with opt1:
@@ -578,6 +679,8 @@ def _render_assign_guidelines_and_output() -> None:
         guideline_count,
         scan_order=scan_order,
         tolerance=tolerance,
+        min_hours=float(min_hours or 0),
+        max_hours=float(max_hours or 0),
     )
 
     with st.container(border=True):
@@ -606,7 +709,13 @@ def _render_assign_guidelines_and_output() -> None:
                 st.session_state["fa_last_export_combined"] = combined_bytes
                 st.session_state["fa_updated_workbook"] = updated_bytes
                 _clear_guidelines_after_fill()
-                parts = [f"assignment {item['assignment']} on {item['count']} row(s)" for item in results]
+                parts = []
+                for item in results:
+                    hours = item.get("hours")
+                    hours_bit = f", {hours:g} hrs" if isinstance(hours, (int, float)) else ""
+                    parts.append(
+                        f"assignment {item['assignment']} on {item['count']} row(s){hours_bit}"
+                    )
                 st.session_state["fa_fill_success"] = (
                     f"Created {len(results)} assignment(s): " + "; ".join(parts) + ". "
                     "You can keep adding from step 3, or start a new RunCut in step 6."
@@ -1371,6 +1480,16 @@ def _tod_count() -> int:
     return len(st.session_state["fa_tod_ranges"])
 
 
+def _clear_tod_time_widget_keys(count: int | None = None) -> None:
+    """Drop TOD am/pm picker state so rebuilt ranges re-seed from stored values."""
+    n = count if count is not None else max(_tod_count() + 2, 8)
+    for i in range(n):
+        for base in (f"fa_tod_start_{i}", f"fa_tod_end_{i}"):
+            st.session_state.pop(base, None)
+            for part in ("__h", "__m", "__p"):
+                st.session_state.pop(f"{base}{part}", None)
+
+
 def _add_tod_range() -> None:
     _ensure_tod_ranges()
     ranges = st.session_state["fa_tod_ranges"]
@@ -1380,6 +1499,7 @@ def _add_tod_range() -> None:
     # Split the last range: previous end becomes midpoint; new range continues to 23:59:59.
     from datetime import datetime, timedelta
 
+    _clear_tod_time_widget_keys(len(ranges) + 2)
     last = ranges[-1]
     start = datetime.strptime(last.get("start", "00:00:00"), "%H:%M:%S")
     end = datetime.strptime("23:59:59", "%H:%M:%S")
@@ -1409,6 +1529,7 @@ def _remove_tod_range(index: int) -> None:
     ranges = st.session_state["fa_tod_ranges"]
     if len(ranges) <= 1 or index < 0 or index >= len(ranges):
         return
+    _clear_tod_time_widget_keys(len(ranges) + 2)
     ranges.pop(index)
     # Chain times: first starts 00:00:00, last ends 23:59:59, middles link.
     from datetime import datetime, timedelta
@@ -1496,10 +1617,10 @@ def _render_summary_tab() -> None:
                     start_default = datetime.strptime(tod.get("start", "00:00:00")[:8], "%H:%M:%S").time()
                 except ValueError:
                     start_default = time(0, 0, 0)
-                st.time_input(
+                _ampm_time_input(
                     "Start",
+                    f"fa_tod_start_{i}",
                     value=start_default,
-                    key=f"fa_tod_start_{i}",
                     disabled=i > 0,
                     help="First TOD starts at 12:00 AM. Later TODs start right after the previous end.",
                 )
@@ -1508,10 +1629,10 @@ def _render_summary_tab() -> None:
                     end_default = datetime.strptime(tod.get("end", "23:59:59")[:8], "%H:%M:%S").time()
                 except ValueError:
                     end_default = time(23, 59, 59)
-                st.time_input(
+                _ampm_time_input(
                     "End",
+                    f"fa_tod_end_{i}",
                     value=end_default,
-                    key=f"fa_tod_end_{i}",
                     disabled=i == len(tod_ranges) - 1,
                     help="Last TOD always ends at 11:59:59 PM.",
                 )
@@ -1600,7 +1721,10 @@ def _render_summary_tab() -> None:
                 sheet_name=st.session_state.get("fa_sheet_name"),
             )
             if meta:
-                st.success(f"Saved version (max Asn# {meta.get('max_asn')}) at {meta.get('uploaded_at')}.")
+                st.success(
+                    f"Saved version (max Asn# {meta.get('max_asn')}) at "
+                    f"{format_display_timestamp(meta.get('uploaded_at'))}."
+                )
             else:
                 st.warning("S3 bucket not configured (`bucket_name` in .env). Version not saved.")
 
@@ -1612,6 +1736,7 @@ def _render_summary_tab() -> None:
         for idx, version in enumerate(versions):
             row_col, load_col = st.columns([5, 1])
             with row_col:
+                uploaded_label = format_display_timestamp(version.get("uploaded_at", ""))
                 st.markdown(
                     f"""
                     <div class="fa-version-row">
@@ -1619,7 +1744,7 @@ def _render_summary_tab() -> None:
                             <div class="fa-version-name">{html.escape(str(version.get("original_filename", "workbook")))}</div>
                             <div class="fa-version-meta">Max Asn#: {html.escape(str(version.get("max_asn", "?")))}</div>
                         </div>
-                        <div class="fa-version-meta">{html.escape(str(version.get("uploaded_at", "")))}</div>
+                        <div class="fa-version-meta">{html.escape(uploaded_label)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,

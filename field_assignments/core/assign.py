@@ -17,7 +17,14 @@ from field_assignments.core.constants import (
     COL_START_TIME,
     ROUTE_ONLY_MAX_GAP_MINUTES,
 )
-from field_assignments.core.time_utils import is_blank, normalize_cell, time_in_range, time_to_minutes
+from field_assignments.core.time_utils import (
+    duration_hours,
+    duration_within_limits,
+    is_blank,
+    normalize_cell,
+    time_in_range,
+    time_to_minutes,
+)
 from field_assignments.core.workbook import workbook_options
 
 
@@ -171,6 +178,18 @@ def _iter_start_rows(sheet, scan_order: str) -> list[int]:
     return rows
 
 
+def _skip_start_rows(rules: dict[str, str]) -> set[int]:
+    raw = str(rules.get("_skip_starts", "") or "").strip()
+    if not raw:
+        return set()
+    skipped: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            skipped.add(int(part))
+    return skipped
+
+
 def find_assignment_segment(
     sheet,
     rules: dict[str, str],
@@ -178,12 +197,15 @@ def find_assignment_segment(
     route_override: str | None = None,
 ) -> tuple[int, int, str]:
     """Find a same-block assignment segment (default / interlined mode)."""
+    skipped = _skip_start_rows(rules)
     for start_row in _iter_start_rows(sheet, rules.get("scan_order", "top_to_bottom")):
+        if start_row in skipped:
+            continue
         if not row_matches_start_rules(sheet, start_row, rules, route_override=route_override):
             continue
         block = normalize_cell(sheet.cell(row=start_row, column=COL_BLOCK).value)
         for end_row in range(start_row, sheet.max_row + 1):
-            if row_matches_end_rules(
+            if not row_matches_end_rules(
                 sheet,
                 end_row,
                 rules,
@@ -191,10 +213,14 @@ def find_assignment_segment(
                 route_override=route_override,
                 require_block=True,
             ):
-                return start_row, end_row, block
+                continue
+            if not _rules_duration_ok(sheet, [start_row, end_row], rules):
+                continue
+            return start_row, end_row, block
     raise ValueError(
         "No blank assignment segment matched those rules. "
-        "Start Location and Start Time find the first row; End Location and Shift range find the final row."
+        "Start Location and Start Time find the first row; End Location and Shift range find the final row. "
+        "Also check assignment length (min/max hours) if set."
     )
 
 
@@ -223,6 +249,19 @@ def _gap_minutes(prev_end: object, next_start: object) -> int | None:
     return gap
 
 
+def _rows_duration_hours(sheet, rows: list[int]) -> float | None:
+    if not rows:
+        return None
+    start_value = sheet.cell(row=rows[0], column=COL_START_TIME).value
+    end_value = sheet.cell(row=rows[-1], column=COL_END_TIME).value
+    return duration_hours(start_value, end_value)
+
+
+def _rules_duration_ok(sheet, rows: list[int], rules: dict[str, str]) -> bool:
+    hours = _rows_duration_hours(sheet, rows)
+    return duration_within_limits(hours, rules.get("min_hours"), rules.get("max_hours"))
+
+
 def find_route_only_chain(
     sheet,
     rules: dict[str, str],
@@ -242,8 +281,11 @@ def find_route_only_chain(
     """
     route = route_override if route_override is not None else rules.get("route", "")
     max_gap = int(rules.get("route_only_max_gap", ROUTE_ONLY_MAX_GAP_MINUTES) or ROUTE_ONLY_MAX_GAP_MINUTES)
+    skipped = _skip_start_rows(rules)
 
     for start_row in _iter_start_rows(sheet, rules.get("scan_order", "top_to_bottom")):
+        if start_row in skipped:
+            continue
         if not row_matches_start_rules(sheet, start_row, rules, route_override=route):
             continue
 
@@ -311,13 +353,17 @@ def find_route_only_chain(
             # only when we stopped due to a >60-min gap (surveyor would get a second assignment).
             pass
 
+        if not _rules_duration_ok(sheet, chain, rules):
+            continue
+
         block = normalize_cell(sheet.cell(row=start_row, column=COL_BLOCK).value)
         return start_row, end_row, block, chain
 
     raise ValueError(
         "No blank route-only assignment chain matched those rules. "
         "Trips must stay on the same route, connect end-to-start at the same location, "
-        f"and board within {max_gap} minutes of the previous alighting."
+        f"and board within {max_gap} minutes of the previous alighting. "
+        "Also check assignment length (min/max hours) if set."
     )
 
 
@@ -359,14 +405,36 @@ def _find_one_assignment(
     if _is_route_only(rules):
         return find_route_only_chain(sheet, rules, route_override=route_override)
 
-    start_row, end_row, block = find_assignment_segment(sheet, rules, route_override=route_override)
-    matching_rows: list[int] = []
-    for row_number in range(start_row, end_row + 1):
-        if row_matches_segment_row(sheet, row_number, rules, block, route_override=route_override):
-            matching_rows.append(row_number)
-    if not matching_rows:
-        raise ValueError("A segment was found, but no blank Asn# rows were available to fill.")
-    return start_row, end_row, block, matching_rows
+    working = dict(rules)
+    skipped = _skip_start_rows(working)
+    last_error: Exception | None = None
+    for _ in range(max(1, sheet.max_row)):
+        try:
+            start_row, end_row, block = find_assignment_segment(
+                sheet, working, route_override=route_override
+            )
+        except ValueError as exc:
+            raise last_error or exc from exc
+
+        matching_rows = [
+            row_number
+            for row_number in range(start_row, end_row + 1)
+            if row_matches_segment_row(sheet, row_number, working, block, route_override=route_override)
+        ]
+        if not matching_rows:
+            skipped.add(start_row)
+            working["_skip_starts"] = ",".join(str(v) for v in sorted(skipped))
+            last_error = ValueError("A segment was found, but no blank Asn# rows were available to fill.")
+            continue
+        if _rules_duration_ok(sheet, matching_rows, working):
+            return start_row, end_row, block, matching_rows
+        skipped.add(start_row)
+        working["_skip_starts"] = ",".join(str(v) for v in sorted(skipped))
+        last_error = ValueError(
+            "No blank assignment segment matched the assignment length limits "
+            f"(min={working.get('min_hours') or 'none'} hrs, max={working.get('max_hours') or 'none'} hrs)."
+        )
+    raise last_error or ValueError("No blank assignment segment matched those rules.")
 
 
 def _apply_assignment(
@@ -418,6 +486,7 @@ def fill_assignment_numbers(
                         except ValueError:
                             exhausted.add(route)
                             break
+                        hours = _rows_duration_hours(sheet, matching_rows)
                         _apply_assignment(sheet, next_assignment, matching_rows)
                         results.append(
                             {
@@ -426,6 +495,7 @@ def fill_assignment_numbers(
                                 "rows": matching_rows,
                                 "count": len(matching_rows),
                                 "route": route,
+                                "hours": round(hours, 2) if hours is not None else None,
                             }
                         )
                         next_assignment += 1
@@ -448,6 +518,7 @@ def fill_assignment_numbers(
                 if created == 0:
                     raise ValueError(f"Assignment {index}: {exc}") from exc
                 break
+            hours = _rows_duration_hours(sheet, matching_rows)
             _apply_assignment(sheet, next_assignment, matching_rows)
             results.append(
                 {
@@ -455,6 +526,7 @@ def fill_assignment_numbers(
                     "assignment": next_assignment,
                     "rows": matching_rows,
                     "count": len(matching_rows),
+                    "hours": round(hours, 2) if hours is not None else None,
                 }
             )
             next_assignment += 1

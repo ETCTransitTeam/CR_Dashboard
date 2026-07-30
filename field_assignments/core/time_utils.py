@@ -60,10 +60,88 @@ def time_to_minutes(value: object) -> int | None:
 
 
 def format_time(value: object) -> str:
+    """User-facing time as standard 12-hour am/pm (e.g. ``8:30 AM``)."""
     parsed = parse_time(value)
     if parsed is None:
         return str(value or "")
-    return parsed.strftime("%I:%M %p").lstrip("0")
+    hour12 = parsed.hour % 12 or 12
+    ampm = "AM" if parsed.hour < 12 else "PM"
+    return f"{hour12}:{parsed.minute:02d} {ampm}"
+
+
+def format_time_hms(value: object) -> str:
+    """Internal HH:MM:SS storage helper (keeps overnight TOD chaining stable)."""
+    parsed = parse_time(value)
+    if parsed is None:
+        return "00:00:00"
+    return f"{parsed.hour:02d}:{parsed.minute:02d}:{parsed.second:02d}"
+
+
+def format_display_timestamp(value: object) -> str:
+    """Format version/upload stamps for UI as am/pm."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    parsed = None
+    utc_suffix = False
+    for fmt in ("%Y%m%dT%H%M%SZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            utc_suffix = fmt.endswith("Z")
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        return text
+    hour12 = parsed.hour % 12 or 12
+    ampm = "AM" if parsed.hour < 12 else "PM"
+    stamp = f"{parsed.month}/{parsed.day}/{parsed.year} {hour12}:{parsed.minute:02d}:{parsed.second:02d} {ampm}"
+    return f"{stamp} UTC" if utc_suffix else stamp
+
+
+def duration_hours(start: object, end: object) -> float | None:
+    """Elapsed hours from start to end, supporting overnight wraps."""
+    start_m = time_to_minutes(start)
+    end_m = time_to_minutes(end)
+    if start_m is None or end_m is None:
+        return None
+    span = end_m - start_m
+    if span < 0:
+        span += 24 * 60
+    return span / 60.0
+
+
+def parse_hours_limit(value: object) -> float | None:
+    """Parse a min/max hours setting; blank/zero means no limit."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "nan", "null"}:
+        return None
+    try:
+        hours = float(text)
+    except ValueError:
+        return None
+    if hours <= 0:
+        return None
+    return hours
+
+
+def duration_within_limits(hours: float | None, min_hours: object, max_hours: object) -> bool:
+    """True when assignment length is inside optional min/max hour bounds."""
+    min_h = parse_hours_limit(min_hours)
+    max_h = parse_hours_limit(max_hours)
+    if min_h is None and max_h is None:
+        return True
+    if hours is None:
+        return False
+    if min_h is not None and hours + 1e-9 < min_h:
+        return False
+    if max_h is not None and hours - 1e-9 > max_h:
+        return False
+    return True
 
 
 def subtract_minutes(value: object, minutes: int) -> str:
@@ -71,7 +149,7 @@ def subtract_minutes(value: object, minutes: int) -> str:
     if parsed is None:
         return ""
     shifted = datetime.combine(datetime.today(), parsed) - timedelta(minutes=minutes)
-    return shifted.time().strftime("%I:%M %p").lstrip("0")
+    return format_time(shifted.time())
 
 
 def display_value(header: str, value: object) -> str:
