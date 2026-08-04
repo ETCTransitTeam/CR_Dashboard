@@ -696,6 +696,9 @@ def fetch_and_process_data(project,schema):
         
         df.drop_duplicates(subset='id', inplace=True)
         print("df length after cleaning:", len(df))
+        if len(df) == 0:
+            # Soft stop: no filter/logic change — caller shows an info message.
+            return "NO_USABLE_SURVEY_RECORDS"
         # Rename route surveyed column
         if route_surveyed_code:
             df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
