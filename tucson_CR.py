@@ -7155,21 +7155,7 @@ else:
                                 st.session_state["schema"],
                             )
 
-                        if result == "NO_USABLE_SURVEY_RECORDS":
-                            progress_bar.empty()
-                            status_text.empty()
-                            time_elapsed.empty()
-                            keep_alive_placeholder.empty()
-                            status_placeholder.empty()
-                            warning_placeholder.empty()
-                            st.info(
-                                "No usable survey records found after cleaning. "
-                                "Check Pilot data (Have5Min = 1) and try Sync again."
-                            )
-                            st.session_state.sync_running = False
-                            st.session_state.sync_completed = True
-                            time.sleep(2)
-                            st.rerun()
+                        cr_goals_only = result == "CR_GOALS_ONLY"
 
                         update_progress(4, 12, "Data processing completed...", start_time)
                         update_progress(5, 12, "Updating cache...", start_time)
@@ -7228,7 +7214,11 @@ else:
                         warning_placeholder.empty()
                         
                         # Show appropriate success message
-                        if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                        if cr_goals_only:
+                            st.info(
+                                "No usable Pilot surveys yet. CR goals were loaded (Collect = 0)."
+                            )
+                        elif selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
                             st.success(
                                 f"✅ Data synced successfully to {selected_agency} schema in {total_time:.1f} seconds! "
                                 f"Schema: LACMTA_FEEDER_{selected_agency} 📂"

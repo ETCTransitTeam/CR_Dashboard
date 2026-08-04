@@ -521,6 +521,292 @@ def get_frontend_time_period_columns(project):
     return (wkday_dir_columns, wkday_time_columns)
 
 
+def sync_cr_goals_only(project, schema):
+    """
+    Load CR goals into Snowflake when Pilot has no usable survey records.
+    Does not change cleaning filters; only runs when the normal survey path
+    would have nothing to process. Writes goal/comparison/time tables with
+    Collect = 0 and leaves survey-derived reports empty.
+    """
+    if project not in PROJECTS:
+        raise KeyError(f"Project {project!r} is not in the Projects Configuration.")
+
+    project_config = PROJECTS[project]
+    bucket_name = os.getenv("bucket_name")
+    s3_client = boto3.client(
+        "s3",
+        aws_access_key_id=os.getenv("aws_access_key_id"),
+        aws_secret_access_key=os.getenv("aws_secret_access_key"),
+    )
+
+    def read_excel_from_s3(bucket, file_key, sheet_name):
+        try:
+            response = s3_client.get_object(Bucket=bucket, Key=file_key)
+            return pd.read_excel(BytesIO(response["Body"].read()), sheet_name=sheet_name)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "NoSuchKey":
+                raise FileNotFoundError(
+                    f"S3 file not found: bucket={bucket!r}, key={file_key!r}."
+                ) from e
+            raise
+
+    print(f"CR goals-only sync for {project}: loading CR/details from S3...")
+    detail_df_stops = read_excel_from_s3(
+        bucket_name, project_config["files"]["details"], "STOPS"
+    )
+    detail_df_xfers = read_excel_from_s3(
+        bucket_name, project_config["files"]["details"], "XFERS"
+    )
+    cr_file = project_config["files"]["cr"]
+
+    if project == "KCATA RAIL":
+        wkend_overall_df = read_excel_from_s3(bucket_name, cr_file, "WkEND-RAIL")
+        wkend_route_df = read_excel_from_s3(bucket_name, cr_file, "WkEND-RailTotal")
+        wkday_overall_df = read_excel_from_s3(bucket_name, cr_file, "WkDAY-RAIL")
+        wkday_route_df = read_excel_from_s3(bucket_name, cr_file, "WkDAY-RailTotal")
+    else:
+        wkend_overall_df = read_excel_from_s3(bucket_name, cr_file, "WkEND-Overall")
+        wkend_route_df = read_excel_from_s3(bucket_name, cr_file, "WkEND-RouteTotal")
+        wkday_overall_df = read_excel_from_s3(bucket_name, cr_file, "WkDAY-Overall")
+        wkday_route_df = read_excel_from_s3(bucket_name, cr_file, "WkDAY-RouteTotal")
+
+    if wkend_overall_df is not None and "LS_NAME_CODE" in wkend_overall_df.columns:
+        wkend_overall_df.dropna(subset=["LS_NAME_CODE"], inplace=True)
+    if wkday_overall_df is not None and "LS_NAME_CODE" in wkday_overall_df.columns:
+        wkday_overall_df.dropna(subset=["LS_NAME_CODE"], inplace=True)
+
+    # Empty survey frame with columns required by existing CR builders.
+    time_col = "Time_ONCode"
+    empty_survey = pd.DataFrame(
+        columns=[
+            "id",
+            "ROUTE_SURVEYEDCode",
+            "ROUTE_SURVEYED",
+            time_col,
+            "Time_ON",
+            "Day",
+            "DAY_TYPE",
+            "LocalTime",
+            "DATE_SUBMITTED",
+            "ElvisStatus",
+        ]
+    )
+    time_column = [time_col]
+    weekday_df = empty_survey.copy()
+    weekend_df = empty_survey.copy()
+
+    time_period_config = get_time_period_config(project)
+    known_hardcoded = {
+        "KCATA", "ACTRANSIT", "SALEM", "LACMTA_FEEDER", "KCATA RAIL", "TUCSON", "TUCSON RAIL"
+    }
+    if (not time_period_config or not time_period_config.get("periods")) and project not in known_hardcoded:
+        raise ValueError(
+            f"No time period config for {project}. "
+            "Add PROJECT_TIME_PERIODS in APP_CONFIG, then retry Sync."
+        )
+
+    wkend_time_value_df = create_time_value_df_with_display(
+        wkend_overall_df, weekend_df, time_column, project, time_period_config
+    )
+    wkday_time_value_df = create_time_value_df_with_display(
+        wkday_overall_df, weekday_df, time_column, project, time_period_config
+    )
+    wkend_route_direction_df = create_route_direction_level_df(
+        wkend_overall_df, weekend_df, time_column, project, time_period_config
+    )
+    wkday_route_direction_df = create_route_direction_level_df(
+        wkday_overall_df, weekday_df, time_column, project, time_period_config
+    )
+    wkday_route_level = create_route_level_df(
+        wkday_overall_df, wkday_route_df, weekday_df, time_column, project, time_period_config
+    )
+    wkend_route_level = create_route_level_df(
+        wkend_overall_df, wkend_route_df, weekend_df, time_column, project, time_period_config
+    )
+    wkday_comparison_df = copy.deepcopy(wkday_route_level)
+    wkend_comparison_df = copy.deepcopy(wkend_route_level)
+
+    if not wkday_comparison_df.empty:
+        for index, row in wkday_comparison_df.iterrows():
+            wkday_comparison_df.loc[index, "Total_DIFFERENCE"] = math.ceil(
+                max(0, (row["CR_Total"] - row["DB_Total"]))
+            )
+    elif "Total_DIFFERENCE" not in wkday_comparison_df.columns:
+        wkday_comparison_df["Total_DIFFERENCE"] = 0
+
+    if not wkend_comparison_df.empty:
+        for index, row in wkend_comparison_df.iterrows():
+            wkend_comparison_df.loc[index, "Total_DIFFERENCE"] = math.ceil(
+                max(0, (row["CR_Total"] - row["DB_Total"]))
+            )
+    elif "Total_DIFFERENCE" not in wkend_comparison_df.columns:
+        wkend_comparison_df["Total_DIFFERENCE"] = 0
+
+    rename_dict = get_time_period_rename_dict(project)
+    if rename_dict:
+        wkday_comparison_df.rename(
+            columns={
+                **rename_dict,
+                "CR_Overall_Goal": "Route Level Goal",
+                "DB_Total": "# of Surveys",
+                "Overall_Goal_DIFFERENCE": "Remaining",
+            },
+            inplace=True,
+        )
+        wkend_comparison_df.rename(
+            columns={
+                **rename_dict,
+                "CR_Overall_Goal": "Route Level Goal",
+                "DB_Total": "# of Surveys",
+                "Overall_Goal_DIFFERENCE": "Remaining",
+            },
+            inplace=True,
+        )
+        wkday_route_direction_df.rename(columns=rename_dict, inplace=True)
+        wkend_route_direction_df.rename(columns=rename_dict, inplace=True)
+
+    def sanitize_route_lookup(route_df):
+        if route_df is None or route_df.empty:
+            return pd.DataFrame(columns=["ETC_ROUTE_ID", "ETC_ROUTE_NAME"])
+        required_cols = {"ETC_ROUTE_ID", "ETC_ROUTE_NAME"}
+        if not required_cols.issubset(route_df.columns):
+            return pd.DataFrame(columns=["ETC_ROUTE_ID", "ETC_ROUTE_NAME"])
+        sanitized_df = route_df[["ETC_ROUTE_ID", "ETC_ROUTE_NAME"]].drop_duplicates().copy()
+        sanitized_df["ETC_ROUTE_ID"] = sanitized_df["ETC_ROUTE_ID"].astype(str).str.strip()
+        sanitized_df["ETC_ROUTE_NAME"] = sanitized_df["ETC_ROUTE_NAME"].astype(str).str.strip()
+        return sanitized_df[
+            sanitized_df["ETC_ROUTE_ID"].ne("")
+            & sanitized_df["ETC_ROUTE_ID"].ne("nan")
+            & sanitized_df["ETC_ROUTE_NAME"].ne("")
+            & sanitized_df["ETC_ROUTE_NAME"].ne("nan")
+        ]
+
+    route_lookup = pd.concat(
+        [sanitize_route_lookup(detail_df_xfers), sanitize_route_lookup(detail_df_stops)],
+        ignore_index=True,
+    ).drop_duplicates(subset=["ETC_ROUTE_ID"], keep="first")
+
+    def normalize_route_code(route_code):
+        code = str(route_code).strip()
+        if not code or code.lower() in {"nan", "none"}:
+            return ""
+        parts = code.split("_")
+        if len(parts) > 1 and parts[-1] in {"00", "01", "02", "03"}:
+            return "_".join(parts[:-1]).strip()
+        return code
+
+    route_name_map_exact = (
+        route_lookup.drop_duplicates(subset=["ETC_ROUTE_ID"])
+        .set_index("ETC_ROUTE_ID")["ETC_ROUTE_NAME"]
+        .to_dict()
+    )
+    route_lookup = route_lookup.copy()
+    route_lookup["BASE_ROUTE_ID"] = route_lookup["ETC_ROUTE_ID"].apply(normalize_route_code)
+    route_name_map_base = (
+        route_lookup[route_lookup["BASE_ROUTE_ID"].ne("")]
+        .drop_duplicates(subset=["BASE_ROUTE_ID"])
+        .set_index("BASE_ROUTE_ID")["ETC_ROUTE_NAME"]
+        .to_dict()
+    )
+
+    def add_route_names(df_in):
+        df_out = df_in.copy()
+        if "ROUTE_SURVEYEDCode" not in df_out.columns:
+            return df_out
+        df_out["ROUTE_SURVEYEDCode"] = df_out["ROUTE_SURVEYEDCode"].astype(str).str.strip()
+        df_out["ROUTE_SURVEYED"] = df_out["ROUTE_SURVEYEDCode"].map(route_name_map_exact)
+        missing_mask = df_out["ROUTE_SURVEYED"].isna()
+        if missing_mask.any():
+            base_codes = df_out.loc[missing_mask, "ROUTE_SURVEYEDCode"].apply(normalize_route_code)
+            df_out.loc[missing_mask, "ROUTE_SURVEYED"] = base_codes.map(route_name_map_base)
+        df_out["ROUTE_SURVEYED"] = df_out["ROUTE_SURVEYED"].fillna(
+            "Unknown Route (" + df_out["ROUTE_SURVEYEDCode"] + ")"
+        )
+        return df_out
+
+    wkday_comparison_df = add_route_names(wkday_comparison_df)
+    wkend_comparison_df = add_route_names(wkend_comparison_df)
+    wkday_route_direction_df = add_route_names(wkday_route_direction_df)
+    wkend_route_direction_df = add_route_names(wkend_route_direction_df)
+
+    from zoneinfo import ZoneInfo
+    import datetime as _dt
+
+    last_sync_time = _dt.datetime.now(ZoneInfo("America/Chicago"))
+    latest_date_df = pd.DataFrame(
+        {"Latest_Survey_Date": [pd.NaT], "Last_Sync_Date": [last_sync_time]}
+    )
+
+    drop_cols = ["CR_Total", "Total_DIFFERENCE"]
+    weekday_raw_df = empty_survey.copy()
+    weekend_raw_df = empty_survey.copy()
+
+    dataframes = {
+        "WkDAY Route DIR Comparison": wkday_route_direction_df.drop(
+            columns=[c for c in drop_cols if c in wkday_route_direction_df.columns]
+        ),
+        "WkEND Route DIR Comparison": wkend_route_direction_df.drop(
+            columns=[c for c in drop_cols if c in wkend_route_direction_df.columns]
+        ),
+        "WkDAY Route Comparison": wkday_comparison_df.drop(
+            columns=[c for c in drop_cols if c in wkday_comparison_df.columns]
+        ),
+        "WkEND Route Comparison": wkend_comparison_df.drop(
+            columns=[c for c in drop_cols if c in wkend_comparison_df.columns]
+        ),
+        "WkDAY Time Data": wkday_time_value_df,
+        "WkEND Time Data": wkend_time_value_df,
+        "WkDAY RAW DATA": weekday_raw_df,
+        "WkEND RAW DATA": weekend_raw_df,
+        "LAST SURVEY DATE": latest_date_df,
+    }
+    table_info = {
+        "WkDAY RAW DATA": "wkday_raw",
+        "WkEND RAW DATA": "wkend_raw",
+        "WkDAY Route Comparison": "wkday_comparison",
+        "WkEND Route Comparison": "wkend_comparison",
+        "WkDAY Route DIR Comparison": "wkday_dir_comparison",
+        "WkEND Route DIR Comparison": "wkend_dir_comparison",
+        "WkDAY Time Data": "wkday_time_data",
+        "WkEND Time Data": "wkend_time_data",
+        "LAST SURVEY DATE": "last_survey_date",
+    }
+
+    dtype_mapping = {
+        "object": "VARCHAR",
+        "int64": "INTEGER",
+        "float64": "FLOAT",
+        "datetime64[ns]": "TIMESTAMP",
+        "bool": "BOOLEAN",
+    }
+    conn = create_snowflake_connection(schema)
+    cur = conn.cursor()
+    try:
+        for sheet_name, table_name in table_info.items():
+            df_out = dataframes.get(sheet_name)
+            if df_out is None or len(df_out.columns) == 0:
+                print(f"Skipping {sheet_name}: no columns")
+                continue
+            df_out = df_out.loc[:, ~df_out.columns.duplicated()].copy()
+            df_out.columns = df_out.columns.astype(str)
+            cur.execute(f"DROP TABLE IF EXISTS {table_name};")
+            create_table_sql = f"CREATE TABLE {table_name} (\n"
+            for column, dtype in df_out.dtypes.items():
+                snowflake_dtype = dtype_mapping.get(str(dtype), "VARCHAR")
+                create_table_sql += f'  "{column}" {snowflake_dtype},\n'
+            create_table_sql = create_table_sql.rstrip(",\n") + "\n);"
+            cur.execute(create_table_sql)
+            if not df_out.empty:
+                write_pandas(conn, df_out, table_name=table_name.upper())
+            print(f"CR goals-only wrote {table_name}: {len(df_out)} rows")
+    finally:
+        cur.close()
+        conn.close()
+
+    print(f"CR goals-only sync complete for {project}")
+    return "CR_GOALS_ONLY"
+
+
 def fetch_and_process_data(project,schema):
     agency = st.session_state.get("selected_agency", None)
     # in some Compeletion Report LSNAMECODE is splited in some it is not so have to check that
@@ -697,8 +983,9 @@ def fetch_and_process_data(project,schema):
         df.drop_duplicates(subset='id', inplace=True)
         print("df length after cleaning:", len(df))
         if len(df) == 0:
-            # Soft stop: no filter/logic change — caller shows an info message.
-            return "NO_USABLE_SURVEY_RECORDS"
+            # No usable Pilot surveys — still load CR goals (Collect = 0).
+            # Filters/logic above are unchanged; this only replaces the hard stop.
+            return sync_cr_goals_only(project, schema)
         # Rename route surveyed column
         if route_surveyed_code:
             df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
