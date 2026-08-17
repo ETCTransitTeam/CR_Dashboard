@@ -938,17 +938,43 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
 
         ensure_period_columns(new_df, periods)
 
+        # Survey boarding stop id (for station-level rail CR rows).
+        survey_stop_col = None
+        for cand in (
+            "STATION_ID",
+            "STOP_ON_CLINTID_NEW",
+            "STATION_ID_SPLITTED",
+        ):
+            if cand in df.columns:
+                survey_stop_col = cand
+                break
+        if survey_stop_col is None:
+            for c in df.columns:
+                cl = str(c).lower().replace("_", "").replace(" ", "")
+                if cl in ("stoponclintidnew", "stoponclntid", "stoponclientid"):
+                    survey_stop_col = c
+                    break
+
         for index, row in new_df.iterrows():
             route_code = row["ROUTE_SURVEYEDCode"]
 
-            def get_counts(time_values):
+            def get_counts(time_values, _row=row):
                 mask = (df["ROUTE_SURVEYEDCode"] == route_code) & (df[time_column[0]].isin(time_values))
-                if (
-                    "STATION_ID" in new_df.columns
-                    and "STATION_ID" in df.columns
-                    and pd.notna(row.get("STATION_ID"))
-                ):
-                    mask = mask & (df["STATION_ID"].astype(str) == str(row["STATION_ID"]))
+                # Station-level CR (Skyline/rail): attribute surveys to the boarding station.
+                # Without this filter, every station row gets the full route total (inflated Collect).
+                if "STATION_ID" in new_df.columns and pd.notna(_row.get("STATION_ID")):
+                    station_id = str(_row["STATION_ID"]).strip()
+                    station_suffix = station_id.split("_")[-1]
+                    if survey_stop_col is None:
+                        return 0
+                    stop_vals = df[survey_stop_col].astype(str).str.strip()
+                    if survey_stop_col == "STATION_ID_SPLITTED":
+                        station_mask = stop_vals == station_suffix
+                    else:
+                        station_mask = (stop_vals == station_id) | (
+                            stop_vals.str.split("_").str[-1] == station_suffix
+                        )
+                    mask = mask & station_mask
                 subset_df = df[mask]
                 return subset_df.drop_duplicates(subset="id").shape[0]
 

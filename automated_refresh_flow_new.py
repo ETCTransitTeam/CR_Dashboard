@@ -531,6 +531,7 @@ def get_frontend_time_period_columns(project):
     n = len(periods)
     base = ["ROUTE_SURVEYEDCode", "ROUTE_SURVEYED"]
     if is_rail_project(project):
+        # Station Name next to Station ID so users can read the grid quickly.
         base = ["ROUTE_SURVEYEDCode", "ROUTE_SURVEYED", "STATION_ID", "STATION_NAME"]
     collect_remain = []
     goals = []
@@ -1608,6 +1609,23 @@ def fetch_and_process_data(project,schema):
     #     wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
     # else:
     print("Creating weekend route direction df for other projects")
+    # Prefer matched stop id for station-level rail Collect (Skyline).
+    if is_rail_project(project):
+        for _rail_df in (weekday_df, weekend_df):
+            if _rail_df is None or _rail_df.empty:
+                continue
+            # Prefer original boarding stop id — it already matches CR STATION_ID
+            # (e.g. SKY_1_SKY_00_10030). STOP_ON_CLINTID_NEW can collapse many
+            # boardings onto one nearest stop and inflate/skew station Collect.
+            stop_cols = check_all_characters_present(_rail_df, ["stoponclntid"])
+            if stop_cols:
+                _rail_df["STATION_ID"] = _rail_df[stop_cols[0]].astype(str)
+            elif "STOP_ON_CLINTID_NEW" in _rail_df.columns:
+                _rail_df["STATION_ID"] = _rail_df["STOP_ON_CLINTID_NEW"].astype(str)
+            if "STATION_ID" in _rail_df.columns:
+                _rail_df["STATION_ID_SPLITTED"] = _rail_df["STATION_ID"].apply(
+                    lambda x: str(x).split("_")[-1]
+                )
     # wkday_overall_df.to_csv('wkday_overall_df.csv')
     # weekday_df.to_csv('weekday_df.csv')
     # weekend_df.to_csv('weekend_df.csv')

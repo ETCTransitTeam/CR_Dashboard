@@ -2519,10 +2519,9 @@ else:
         def get_dynamic_direction_columns(dir_df):
             """For new projects: derive direction-level columns from dataframe. Preserves order: base, optional day/station, (n) Collect/Remain, (n) Goal."""
             base = [c for c in ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED'] if c in dir_df.columns]
-            for opt in ['STATION_ID', 'Day', 'DAY']:
+            for opt in ['STATION_ID', 'STATION_NAME', 'Day', 'DAY']:
                 if opt in dir_df.columns and opt not in base:
                     base.append(opt)
-                    break
             period_pattern = re.compile(r'^\((\d+)\) (Collect|Remain|Goal)$')
             matches = [(c, period_pattern.match(c)) for c in dir_df.columns if period_pattern.match(c)]
             if not matches:
