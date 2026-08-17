@@ -48,6 +48,14 @@ from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 import plotly.express as px
+
+
+def cols_with_cr_sort(df, wanted_cols):
+    """Keep display columns plus CR SORT (used for order, hidden in the grid)."""
+    cols = [c for c in wanted_cols if c in getattr(df, "columns", [])]
+    if hasattr(df, "columns") and "SORT" in df.columns and "SORT" not in cols:
+        cols.append("SORT")
+    return cols
 import plotly.graph_objects as go
 import time
 from utils import apply_lacmta_agency_filter
@@ -99,6 +107,400 @@ def _display_xlsx_name_only(value: str) -> str:
     if text.lower().endswith(".xlsx"):
         return text[:-5]
     return text
+
+
+_DEFAULT_DAY_ASSIGNMENTS = {
+    "Monday": "Weekday",
+    "Tuesday": "Weekday",
+    "Wednesday": "Weekday",
+    "Thursday": "Weekday",
+    "Friday": "Weekday",
+    "Saturday": "Weekend",
+    "Sunday": "Weekend",
+}
+
+_CR_NAME_TO_PERIOD_LABEL = {
+    "CR_Early_AM": "EARLY AM",
+    "CR_AM_Peak": "AM PEAK",
+    "CR_Midday": "MIDDAY",
+    "CR_PM_Peak": "PM PEAK",
+    "CR_Evening": "EVENING",
+}
+
+
+def _example_time_period_config_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "TIME_ON[Code]": [
+                "AM1", "AM2", "AM3", "AM4", "AM5", "AM6",
+                "MID1", "MID2", "MID3", "MID4", "MID5", "MID6",
+                "PM1", "PM2", "PM3", "EV1", "EV2", "EV3", "EV4",
+            ],
+            "TIME_ON": [
+                "Before 5:00 am", "5:00 am - 6:00 am", "6:00 am - 7:00 am",
+                "7:00 am - 8:00 am", "8:00 am - 9:00 am", "9:00 am - 10:00 am",
+                "10:00 am - 11:00 am", "11:00 am - 12:00 pm", "12:00 pm - 1:00 pm",
+                "1:00 pm - 2:00 pm", "2:00 pm - 3:00 pm", "3:00 pm - 4:00 pm",
+                "4:00 pm - 5:00 pm", "5:00 pm - 6:00 pm", "6:00 pm - 7:00 pm",
+                "7:00 pm - 8:00 pm", "8:00 pm - 9:00 pm", "9:00 pm - 10:00 pm",
+                "After 10:00 pm",
+            ],
+            "TIME_PERIOD[Code]": [1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4],
+            "TIME_PERIOD": [
+                "AM PEAK", "AM PEAK", "AM PEAK", "AM PEAK", "AM PEAK", "AM PEAK",
+                "MIDDAY", "MIDDAY", "MIDDAY", "MIDDAY", "MIDDAY", "MIDDAY",
+                "PM PEAK", "PM PEAK", "PM PEAK",
+                "EVENING", "EVENING", "EVENING", "EVENING",
+            ],
+        }
+    )
+
+
+def _period_label_from_cr_name(cr_name: str) -> str:
+    name = str(cr_name or "").strip()
+    if name in _CR_NAME_TO_PERIOD_LABEL:
+        return _CR_NAME_TO_PERIOD_LABEL[name]
+    return name.replace("CR_", "").replace("_", " ").strip() or name
+
+
+def _parse_time_period_table_text(text: str):
+    """Parse pasted TSV/CSV into a DataFrame. Returns (df, error_message)."""
+    raw = (text or "").strip()
+    if not raw:
+        return None, None
+    try:
+        if "\t" in raw:
+            df = pd.read_csv(StringIO(raw), sep="\t")
+        else:
+            df = pd.read_csv(StringIO(raw), sep=",")
+        df.columns = [str(c).strip() for c in df.columns]
+        return df, None
+    except Exception as e:
+        return None, str(e)
+
+
+def _load_project_time_config_table(project_name: str):
+    """Rebuild Create-page time table from APP_CONFIG for Edit Project Configs."""
+    conn = None
+    cur = None
+    try:
+        conn = snowflake.connector.connect(
+            user=os.getenv("SNOWFLAKE_USER"),
+            private_key=private_key_bytes,
+            account=os.getenv("SNOWFLAKE_ACCOUNT"),
+            warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+            database=os.getenv("SNOWFLAKE_DATABASE"),
+            authenticator="SNOWFLAKE_JWT",
+            role=os.getenv("SNOWFLAKE_ROLE"),
+            network_timeout=120,
+        )
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT PERIOD_ORDER, CR_NAME, CODES
+            FROM {APP_CONFIG_SCHEMA}.PROJECT_TIME_PERIODS
+            WHERE PROJECT_NAME = %s
+            ORDER BY PERIOD_ORDER
+            """,
+            (project_name,),
+        )
+        period_rows = cur.fetchall()
+        cur.execute(
+            f"""
+            SELECT CODE, DISPLAY_LABEL
+            FROM {APP_CONFIG_SCHEMA}.PROJECT_TIME_MAPPING
+            WHERE PROJECT_NAME = %s
+            """,
+            (project_name,),
+        )
+        label_by_code = {str(c).strip(): str(l).strip() for c, l in cur.fetchall()}
+    except Exception:
+        return None
+    finally:
+        try:
+            if cur:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+    if not period_rows:
+        return None
+
+    rows = []
+    for order, cr_name, codes_str in period_rows:
+        period_label = _period_label_from_cr_name(cr_name)
+        codes = [c.strip() for c in str(codes_str or "").split(",") if c.strip()]
+        for code in codes:
+            rows.append(
+                {
+                    "TIME_ON[Code]": code,
+                    "TIME_ON": label_by_code.get(code, code),
+                    "TIME_PERIOD[Code]": int(order),
+                    "TIME_PERIOD": period_label,
+                }
+            )
+    return pd.DataFrame(rows) if rows else None
+
+
+def _load_project_day_assignments(project_name: str) -> dict:
+    """Load weekday/weekend mapping; fall back to defaults if missing."""
+    out = dict(_DEFAULT_DAY_ASSIGNMENTS)
+    conn = None
+    cur = None
+    try:
+        conn = snowflake.connector.connect(
+            user=os.getenv("SNOWFLAKE_USER"),
+            private_key=private_key_bytes,
+            account=os.getenv("SNOWFLAKE_ACCOUNT"),
+            warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+            database=os.getenv("SNOWFLAKE_DATABASE"),
+            authenticator="SNOWFLAKE_JWT",
+            role=os.getenv("SNOWFLAKE_ROLE"),
+            network_timeout=120,
+        )
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT DAY_NAME, DAY_TYPE
+            FROM {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS
+            WHERE PROJECT_NAME = %s
+            """,
+            (project_name,),
+        )
+        for day_name, day_type in cur.fetchall():
+            day = str(day_name or "").strip()
+            dtype = str(day_type or "").strip()
+            if day in out and dtype in ("Weekday", "Weekend"):
+                out[day] = dtype
+    except Exception:
+        pass
+    finally:
+        try:
+            if cur:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+    return out
+
+
+def _save_project_time_period_config(cur, project_name: str, schema_name: str, time_period_df: pd.DataFrame):
+    """Replace APP_CONFIG + project-schema time tables from a Create-style time config DataFrame."""
+    required_columns = ["TIME_ON[Code]", "TIME_ON", "TIME_PERIOD[Code]", "TIME_PERIOD"]
+    df_columns = [str(col).strip() for col in time_period_df.columns]
+    missing_cols = [c for c in required_columns if c not in df_columns]
+    if missing_cols:
+        raise ValueError(
+            f"Missing required columns: {', '.join(missing_cols)}. Found: {', '.join(df_columns)}"
+        )
+
+    tod_df = time_period_df[required_columns].copy()
+    if "OPPO_TIME[CODE]" in df_columns:
+        pass  # ignored by selection above
+    tod_df = tod_df.rename(
+        columns={
+            "TIME_ON[Code]": "TIME_ON_CODE",
+            "TIME_ON": "TIME_ON_LABEL",
+            "TIME_PERIOD[Code]": "TIME_PERIOD_CODE",
+            "TIME_PERIOD": "TIME_PERIOD_NAME",
+        }
+    )
+
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_TIME_PERIODS (
+            PROJECT_NAME    VARCHAR NOT NULL,
+            PERIOD_ORDER    INTEGER NOT NULL,
+            CR_NAME         VARCHAR NOT NULL,
+            DB_NAME         VARCHAR NOT NULL,
+            DIFF_NAME       VARCHAR NOT NULL,
+            CR_COL          VARCHAR NOT NULL,
+            CODES           VARCHAR NOT NULL,
+            PRIMARY KEY (PROJECT_NAME, PERIOD_ORDER)
+        )
+        """
+    )
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_TIME_MAPPING (
+            PROJECT_NAME    VARCHAR NOT NULL,
+            CODE            VARCHAR NOT NULL,
+            DISPLAY_LABEL   VARCHAR NOT NULL,
+            PRIMARY KEY (PROJECT_NAME, CODE)
+        )
+        """
+    )
+    cur.execute(
+        f"DELETE FROM {APP_CONFIG_SCHEMA}.PROJECT_TIME_PERIODS WHERE PROJECT_NAME = %s",
+        (project_name,),
+    )
+    cur.execute(
+        f"DELETE FROM {APP_CONFIG_SCHEMA}.PROJECT_TIME_MAPPING WHERE PROJECT_NAME = %s",
+        (project_name,),
+    )
+
+    periods_by_code = (
+        tod_df.groupby(["TIME_PERIOD_CODE", "TIME_PERIOD_NAME"])
+        .agg({"TIME_ON_CODE": lambda x: list(x)})
+        .reset_index()
+    )
+    for _, row in periods_by_code.iterrows():
+        period_code = int(row["TIME_PERIOD_CODE"])
+        period_name = str(row["TIME_PERIOD_NAME"]).strip()
+        codes_list = row["TIME_ON_CODE"]
+        period_config = get_period_field_names(period_name)
+        codes_str = ",".join(str(c).strip() for c in codes_list if str(c).strip())
+        cur.execute(
+            f"""
+            INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_TIME_PERIODS
+            (PROJECT_NAME, PERIOD_ORDER, CR_NAME, DB_NAME, DIFF_NAME, CR_COL, CODES)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                project_name,
+                period_code,
+                period_config["cr_name"],
+                period_config["db_name"],
+                period_config["diff_name"],
+                str(period_code),
+                codes_str,
+            ),
+        )
+
+    for _, row in tod_df.iterrows():
+        code = str(row["TIME_ON_CODE"]).strip()
+        label = str(row["TIME_ON_LABEL"]).strip()
+        if code:
+            cur.execute(
+                f"""
+                INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_TIME_MAPPING
+                (PROJECT_NAME, CODE, DISPLAY_LABEL)
+                VALUES (%s, %s, %s)
+                """,
+                (project_name, code, label),
+            )
+
+    # Keep project schema TOD tables in sync when schema is usable.
+    schema = (schema_name or "").strip()
+    if schema:
+        used = False
+        for candidate in (f'"{schema}"', schema, schema.upper()):
+            try:
+                cur.execute(f"USE SCHEMA {candidate}")
+                used = True
+                break
+            except Exception:
+                continue
+        if used:
+            cur.execute("DROP TABLE IF EXISTS TOD")
+            cur.execute(
+                """
+                CREATE TABLE TOD (
+                    "TIME_ON_CODE" VARCHAR NOT NULL,
+                    "TIME_ON_LABEL" VARCHAR NOT NULL,
+                    "TIME_PERIOD_CODE" INTEGER NOT NULL,
+                    "TIME_PERIOD_NAME" VARCHAR NOT NULL
+                )
+                """
+            )
+            for _, row in tod_df.iterrows():
+                cur.execute(
+                    """
+                    INSERT INTO TOD
+                    ("TIME_ON_CODE", "TIME_ON_LABEL", "TIME_PERIOD_CODE", "TIME_PERIOD_NAME")
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        str(row["TIME_ON_CODE"]).strip(),
+                        str(row["TIME_ON_LABEL"]).strip(),
+                        int(row["TIME_PERIOD_CODE"]),
+                        str(row["TIME_PERIOD_NAME"]).strip(),
+                    ),
+                )
+
+            period_groups_df = (
+                tod_df[["TIME_PERIOD_CODE", "TIME_PERIOD_NAME"]]
+                .drop_duplicates()
+                .sort_values("TIME_PERIOD_CODE")
+            )
+            cur.execute("DROP TABLE IF EXISTS PERIOD_GROUPS")
+            cur.execute(
+                """
+                CREATE TABLE PERIOD_GROUPS (
+                    "PERIOD_CODE" INTEGER NOT NULL,
+                    "PERIOD_NAME" VARCHAR NOT NULL
+                )
+                """
+            )
+            for _, row in period_groups_df.iterrows():
+                cur.execute(
+                    'INSERT INTO PERIOD_GROUPS ("PERIOD_CODE", "PERIOD_NAME") VALUES (%s, %s)',
+                    (int(row["TIME_PERIOD_CODE"]), str(row["TIME_PERIOD_NAME"]).strip()),
+                )
+
+            cur.execute("DROP TABLE IF EXISTS PROJECT_PERIOD_MAPPING")
+            cur.execute(
+                """
+                CREATE TABLE PROJECT_PERIOD_MAPPING (
+                    "PROJECT_NAME" VARCHAR NOT NULL,
+                    "TIME_ON_CODE" VARCHAR NOT NULL,
+                    "TIME_ON_LABEL" VARCHAR NOT NULL,
+                    "PERIOD_CODE" INTEGER NOT NULL,
+                    "PERIOD_NAME" VARCHAR NOT NULL
+                )
+                """
+            )
+            for _, row in tod_df.iterrows():
+                cur.execute(
+                    """
+                    INSERT INTO PROJECT_PERIOD_MAPPING
+                    ("PROJECT_NAME", "TIME_ON_CODE", "TIME_ON_LABEL", "PERIOD_CODE", "PERIOD_NAME")
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        project_name,
+                        str(row["TIME_ON_CODE"]).strip(),
+                        str(row["TIME_ON_LABEL"]).strip(),
+                        int(row["TIME_PERIOD_CODE"]),
+                        str(row["TIME_PERIOD_NAME"]).strip(),
+                    ),
+                )
+
+
+def _save_project_day_assignments(cur, project_name: str, day_assignment: dict):
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS (
+            PROJECT_NAME VARCHAR NOT NULL,
+            DAY_NAME VARCHAR NOT NULL,
+            DAY_TYPE VARCHAR NOT NULL,
+            PRIMARY KEY (PROJECT_NAME, DAY_NAME)
+        )
+        """
+    )
+    cur.execute(
+        f"DELETE FROM {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS WHERE PROJECT_NAME = %s",
+        (project_name,),
+    )
+    for day_name, day_type in day_assignment.items():
+        cur.execute(
+            f"""
+            INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_DAY_ASSIGNMENTS
+            (PROJECT_NAME, DAY_NAME, DAY_TYPE)
+            VALUES (%s, %s, %s)
+            """,
+            (project_name, str(day_name).strip(), str(day_type).strip()),
+        )
+
 
 with open("path/to/key.p8", "rb") as key:
     private_key = serialization.load_pem_private_key(
@@ -293,18 +695,39 @@ else:
                 # Use agency-specific schema: LACMTA_FEEDER_<AGENCY_NAME>
                 schema_to_use = f"LACMTA_FEEDER_{selected_agency}"
                 print(f"Using agency schema: {schema_to_use}")
-            
-            conn = snowflake.connector.connect(
+
+            # Unquoted connector schema= uppercases identifiers. Mixed-case schemas
+            # (e.g. historically "Oahu_Honolulu_Rail") only resolve via quoted USE SCHEMA.
+            conn_kwargs = dict(
                 user=os.getenv('SNOWFLAKE_USER'),
                 private_key=private_key_bytes,
                 account=os.getenv('SNOWFLAKE_ACCOUNT'),
                 warehouse=os.getenv('SNOWFLAKE_WAREHOUSE'),
                 database=os.getenv('SNOWFLAKE_DATABASE'),
                 authenticator="SNOWFLAKE_JWT",
-                schema=schema_to_use,  # Use dynamic schema name
                 role=os.getenv('SNOWFLAKE_ROLE'),
-                network_timeout=120
+                network_timeout=120,
             )
+            if schema_to_use and schema_to_use == schema_to_use.upper() and _SNOWFLAKE_UNQUOTED_IDENTIFIER.match(schema_to_use):
+                conn_kwargs["schema"] = schema_to_use
+
+            conn = snowflake.connector.connect(**conn_kwargs)
+
+            if schema_to_use:
+                cur = conn.cursor()
+                try:
+                    for candidate in (schema_to_use, str(schema_to_use).upper()):
+                        try:
+                            cur.execute(f'USE SCHEMA "{candidate}"')
+                            break
+                        except Exception:
+                            try:
+                                cur.execute(f"USE SCHEMA {candidate}")
+                                break
+                            except Exception:
+                                continue
+                finally:
+                    cur.close()
             return conn
 
         def table_exists(schema_name, table_name):
@@ -315,13 +738,14 @@ else:
             cur = conn.cursor()
 
             try:
-                query = f"""
+                # Match both unquoted UPPERCASE schemas and quoted mixed-case ones.
+                query = """
                 SELECT COUNT(*)
                 FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = '{schema_name.upper()}'
-                AND TABLE_NAME = '{table_name.upper()}'
+                WHERE UPPER(TABLE_SCHEMA) = %s
+                AND UPPER(TABLE_NAME) = %s
                 """
-                cur.execute(query)
+                cur.execute(query, (str(schema_name).upper(), str(table_name).upper()))
                 result = cur.fetchone()[0]
 
                 return result > 0
@@ -2196,12 +2620,21 @@ else:
             col1, col2 = st.columns([2, 1])  # Left column is wider
 
             # Display the first dataframe on the left full screen (col1)
+            def _apply_cr_sort_for_display(df_in):
+                """Sort by CR SORT when present; drop SORT so it is not shown in the grid."""
+                if not isinstance(df_in, pd.DataFrame) or df_in.empty or "SORT" not in df_in.columns:
+                    return df_in
+                out = df_in.copy()
+                out["SORT"] = pd.to_numeric(out["SORT"], errors="coerce")
+                out = out.sort_values(["SORT"], kind="mergesort", na_position="last").reset_index(drop=True)
+                return out.drop(columns=["SORT"])
+
             with col1:
                 if current_page=='main':
                     st.subheader('Route Direction Level Comparison (WeekDAY)')
                 else:
                     st.subheader("Route Direction Level Comparison")
-                filtered_df1 = filter_dataframe(data1, search_query)
+                filtered_df1 = _apply_cr_sort_for_display(filter_dataframe(data1, search_query))
                 # render_aggrid(filtered_df1, height=500, pinned_column='ROUTE_SURVEYEDCode', key='grid1')
                 render_styled_dataframe(filtered_df1, height=500, key='grid1')
 
@@ -2230,7 +2663,7 @@ else:
 
 
                 
-                filtered_df3 = filter_dataframe(data3, search_query)
+                filtered_df3 = _apply_cr_sort_for_display(filter_dataframe(data3, search_query))
 
                 # Append TOTAL row
                 filtered_df3 = append_total_row(filtered_df3)
@@ -2389,9 +2822,11 @@ else:
             # day_column_present = check_all_characters_present(wkday_dir_df, ["day"])
             # if day_column_present:
             #     wkday_dir_columns.insert(2,day_column_present[0])
-            main_page(wkday_dir_df[wkday_dir_columns],
-                        wkday_time_df[wkday_time_columns],
-                        wkday_df[[c for c in wkday_df_columns if c in wkday_df.columns]])
+            main_page(
+                wkday_dir_df[cols_with_cr_sort(wkday_dir_df, wkday_dir_columns)],
+                wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
+                wkday_df[cols_with_cr_sort(wkday_df, wkday_df_columns)],
+            )
             if st.button("Home Page"):
                 st.query_params["page"] = "main"
                 st.rerun()
@@ -2465,9 +2900,11 @@ else:
                 if not wkend_df_columns:
                     wkend_df_columns = list(wkend_df.columns)
 
-            main_page(wkend_dir_df[wkend_dir_columns],
-                    wkend_time_df[wkend_time_columns],
-                    wkend_df[wkend_df_columns])
+            main_page(
+                wkend_dir_df[cols_with_cr_sort(wkend_dir_df, wkend_dir_columns)],
+                wkend_time_df[[c for c in wkend_time_columns if c in wkend_time_df.columns]],
+                wkend_df[cols_with_cr_sort(wkend_df, wkend_df_columns)],
+            )
 
             if st.button("Home Page"):
                 st.query_params["page"] = "main"
@@ -6896,6 +7333,52 @@ else:
             )
             selected = project_map[selected_project_name]
 
+            # Prefill Time Config / Day Type when project changes (outside form for Load/Clear buttons).
+            edit_time_input_key = f"edit_time_period_input_{selected_project_name}"
+            if st.session_state.get("edit_cfg_loaded_project") != selected_project_name:
+                loaded_time_df = _load_project_time_config_table(selected_project_name)
+                st.session_state["edit_time_period_config_table"] = loaded_time_df
+                st.session_state[edit_time_input_key] = (
+                    loaded_time_df.to_csv(sep="\t", index=False)
+                    if loaded_time_df is not None and not loaded_time_df.empty
+                    else ""
+                )
+                st.session_state["edit_day_assignments"] = _load_project_day_assignments(
+                    selected_project_name
+                )
+                st.session_state["edit_cfg_loaded_project"] = selected_project_name
+
+            st.markdown("**Time Period Config**")
+            st.caption(
+                "Same format as Create Project. Prefills from DB. "
+                "Leave blank on save to keep the existing time config unchanged."
+            )
+            load_ex_col, reload_col, clear_col, _ = st.columns([1, 1, 1, 2])
+            with load_ex_col:
+                if st.button("Load Example Table", key="edit_load_time_period_example"):
+                    example_df = _example_time_period_config_df()
+                    st.session_state["edit_time_period_config_table"] = example_df
+                    st.session_state[edit_time_input_key] = example_df.to_csv(sep="\t", index=False)
+                    st.rerun()
+            with reload_col:
+                if st.button("Reload from DB", key="edit_reload_time_period"):
+                    loaded_time_df = _load_project_time_config_table(selected_project_name)
+                    st.session_state["edit_time_period_config_table"] = loaded_time_df
+                    st.session_state[edit_time_input_key] = (
+                        loaded_time_df.to_csv(sep="\t", index=False)
+                        if loaded_time_df is not None and not loaded_time_df.empty
+                        else ""
+                    )
+                    st.session_state["edit_day_assignments"] = _load_project_day_assignments(
+                        selected_project_name
+                    )
+                    st.rerun()
+            with clear_col:
+                if st.button("Clear Time Config", key="edit_clear_time_period_table"):
+                    st.session_state["edit_time_period_config_table"] = None
+                    st.session_state[edit_time_input_key] = ""
+                    st.rerun()
+
             with st.form("edit_project_configs_form"):
                 st.caption("All editable fields are required (trim spaces before save).")
                 st.text_input("Project Name", value=selected_project_name, disabled=True)
@@ -6918,6 +7401,53 @@ else:
                     ),
                 )
                 is_active = st.checkbox("Is Active", value=selected["IS_ACTIVE"])
+
+                st.markdown("---")
+                st.markdown("**Time Period Config**")
+                st.caption(
+                    "Paste table with columns: TIME_ON[Code], TIME_ON, TIME_PERIOD[Code], TIME_PERIOD. "
+                    "OPPO_TIME[CODE] is ignored if present."
+                )
+                time_period_table_input = st.text_area(
+                    "Time period config (Table - paste tab or comma separated)",
+                    height=220,
+                    key=edit_time_input_key,
+                )
+                preview_df, preview_err = _parse_time_period_table_text(time_period_table_input)
+                if preview_err:
+                    st.warning(f"Could not parse time config preview: {preview_err}")
+                elif preview_df is not None and not preview_df.empty:
+                    st.dataframe(preview_df, use_container_width=True)
+                elif st.session_state.get("edit_time_period_config_table") is not None:
+                    st.dataframe(
+                        st.session_state["edit_time_period_config_table"],
+                        use_container_width=True,
+                    )
+
+                st.markdown("---")
+                st.markdown("**Day Type Assignment (Weekday / Weekend)**")
+                day_defaults = st.session_state.get("edit_day_assignments") or dict(
+                    _DEFAULT_DAY_ASSIGNMENTS
+                )
+                day_assignment = {}
+                header_col1, header_col2 = st.columns([2, 3])
+                with header_col1:
+                    st.markdown("**Day**")
+                with header_col2:
+                    st.markdown("**Type**")
+                for day, default in _DEFAULT_DAY_ASSIGNMENTS.items():
+                    current = day_defaults.get(day, default)
+                    col1, col2 = st.columns([2, 3])
+                    with col1:
+                        st.write(day)
+                    with col2:
+                        day_assignment[day] = st.selectbox(
+                            f"{day} Type",
+                            ["Weekday", "Weekend"],
+                            index=0 if current == "Weekday" else 1,
+                            key=f"edit_{selected_project_name}_{day}_type",
+                            label_visibility="collapsed",
+                        )
 
                 submit_edit = st.form_submit_button("Update Project Config")
 
@@ -6963,6 +7493,13 @@ else:
                     )
                     st.stop()
 
+                time_period_df, time_parse_err = _parse_time_period_table_text(time_period_table_input)
+                if time_parse_err:
+                    st.error(f"Could not parse Time Period Config: {time_parse_err}")
+                    st.stop()
+                if time_period_df is not None and not time_period_df.empty:
+                    st.session_state["edit_time_period_config_table"] = time_period_df
+
                 conn = None
                 cur = None
                 try:
@@ -7006,9 +7543,28 @@ else:
                         )
                         return
 
+                    notes = []
+                    if time_period_df is not None and not time_period_df.empty:
+                        _save_project_time_period_config(
+                            cur,
+                            selected_project_name,
+                            selected["BASE_SCHEMA"],
+                            time_period_df,
+                        )
+                        notes.append("time config")
+
+                    _save_project_day_assignments(cur, selected_project_name, day_assignment)
+                    notes.append("day type assignment")
+
                     conn.commit()
                     refresh_projects()
-                    st.success(f"✅ Project config updated for '{selected_project_name}'.")
+                    # Force reload of prefilled editors on next render
+                    st.session_state.pop("edit_cfg_loaded_project", None)
+                    st.success(
+                        f"✅ Project config updated for '{selected_project_name}'"
+                        + (f" ({', '.join(notes)})." if notes else ".")
+                    )
+                    st.info("Re-sync the project so dashboard tables rebuild with the updated time periods.")
                     st.rerun()
                 except Exception as e:
                     try:
@@ -7383,9 +7939,11 @@ else:
                             wkday_time_columns = list(wkday_time_df.columns)
                     wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['uta', 'tucson', 'stl', 'kcata']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
 
-                main_page(wkday_dir_df[[c for c in wkday_dir_columns if c in wkday_dir_df.columns]],
-                                wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
-                                wkday_df[[c for c in wkday_df_columns if c in wkday_df.columns]])
+                main_page(
+                    wkday_dir_df[cols_with_cr_sort(wkday_dir_df, wkday_dir_columns)],
+                    wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
+                    wkday_df[cols_with_cr_sort(wkday_df, wkday_df_columns)],
+                )
         else:
             if current_page == "weekday":
                 weekday_page()
@@ -7591,9 +8149,11 @@ else:
                     wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['tucson', 'lacmta_feeder', 'kcata', 'actransit', 'salem']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
 
                 try:
-                    main_page(wkday_dir_df[[c for c in wkday_dir_columns if c in wkday_dir_df.columns]],
-                            wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
-                            wkday_df[[c for c in wkday_df_columns if c in wkday_df.columns]])
+                    main_page(
+                        wkday_dir_df[cols_with_cr_sort(wkday_dir_df, wkday_dir_columns)],
+                        wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
+                        wkday_df[cols_with_cr_sort(wkday_df, wkday_df_columns)],
+                    )
                 except KeyError as e:
                     st.error(f"⚠️ Missing columns in data: {e}")
                     st.error("Available columns in weekday direction data:")

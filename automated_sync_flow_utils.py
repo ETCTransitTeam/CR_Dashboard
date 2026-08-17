@@ -908,6 +908,10 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
         else:
             new_df = pd.DataFrame()
             new_df["ROUTE_SURVEYEDCode"] = overalldf["LS_NAME_CODE"]
+            # Rail / Skyline overall sheets are station-level — keep station identity + CR order.
+            for extra_col in ("STATION_ID", "STATION_NAME", "SORT"):
+                if extra_col in overalldf.columns:
+                    new_df[extra_col] = overalldf[extra_col]
 
         def safe_convert(x):
             try:
@@ -938,7 +942,14 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
             route_code = row["ROUTE_SURVEYEDCode"]
 
             def get_counts(time_values):
-                subset_df = df[(df["ROUTE_SURVEYEDCode"] == route_code) & (df[time_column[0]].isin(time_values))]
+                mask = (df["ROUTE_SURVEYEDCode"] == route_code) & (df[time_column[0]].isin(time_values))
+                if (
+                    "STATION_ID" in new_df.columns
+                    and "STATION_ID" in df.columns
+                    and pd.notna(row.get("STATION_ID"))
+                ):
+                    mask = mask & (df["STATION_ID"].astype(str) == str(row["STATION_ID"]))
+                subset_df = df[mask]
                 return subset_df.drop_duplicates(subset="id").shape[0]
 
             db_total = 0
@@ -1894,11 +1905,26 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
                 .rename(columns={"ROUTE_SURVEYEDCode_Splited": "ROUTE_SURVEYEDCode"})
             )
 
-            route_level_df = route_level_df.merge(
-                route_df_renamed[["ROUTE_SURVEYEDCode", "CR_Overall_Goal"]],
-                on="ROUTE_SURVEYEDCode",
-                how="left",
-            )
+            # Keep original merge for existing projects; only attach CR SORT when present.
+            if "SORT" in route_df_renamed.columns:
+                route_df_renamed = route_df_renamed.copy()
+                route_df_renamed["SORT"] = pd.to_numeric(
+                    route_df_renamed["SORT"], errors="coerce"
+                )
+                route_goals = route_df_renamed.groupby(
+                    "ROUTE_SURVEYEDCode", as_index=False
+                ).agg({"CR_Overall_Goal": "sum", "SORT": "min"})
+                route_level_df = route_level_df.merge(
+                    route_goals,
+                    on="ROUTE_SURVEYEDCode",
+                    how="left",
+                )
+            else:
+                route_level_df = route_level_df.merge(
+                    route_df_renamed[["ROUTE_SURVEYEDCode", "CR_Overall_Goal"]],
+                    on="ROUTE_SURVEYEDCode",
+                    how="left",
+                )
 
             # -----------------------------
             # Calculate differences
