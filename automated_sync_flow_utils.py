@@ -1877,6 +1877,17 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             # -----------------------------
             # Calculate DB counts
             # -----------------------------
+            # Station-level rail CR (e.g. Skyline): overall_df has one row per station.
+            # Merging route-direction survey counts onto every station row, then summing,
+            # inflates "# of Surveys" (e.g. 111 -> 1443). Count surveys once per route instead.
+            station_level_cr = "STATION_ID" in overall_df.columns
+
+            if station_level_cr:
+                # Sum CR goals by directional route first (stations -> direction).
+                new_df = (
+                    new_df.groupby("ROUTE_SURVEYEDCode", as_index=False)[cr_cols + ["CR_Total"]]
+                    .sum()
+                )
 
             for p in periods:
                 subset = df[df[time_column[0]].isin(p["codes"])]
