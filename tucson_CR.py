@@ -3650,7 +3650,8 @@ else:
             "% of Black": {"low": 5, "high": 30},
             "% of Hispanic": {"low": 10, "high": 40},
             "% of LowIncome": {"low": 20, "high": 60},
-            "% of No Income": {"low": 5, "high": 25},
+            "% of Refused": {"low": 5, "high": 25},
+            "% of No Income": {"low": 5, "high": 25},  # legacy column name if present
             "% of Follow-Up Survey": {"low": 5, "high": 20},
             "% of Contest - Yes": {"low": 0, "high": 100},
             "% of Contest - (Yes & Good Info)/Overall # of Records": {"low": 0, "high": 100}

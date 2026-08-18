@@ -245,6 +245,10 @@ def normalize_survey_columns_for_reports(df: pd.DataFrame) -> pd.DataFrame:
     _ensure_standard_column(df, "VAL_ACCESS_WALK", ["ValAccessWalk"], default_value="")
     _ensure_standard_column(df, "VAL_EGRESS_WALK", ["ValEgressWalk"], default_value="")
     _ensure_standard_column(df, "INCOMECode", ["IncomeCode"], default_value="")
+    _ensure_standard_column(df, "INCOME", ["Income"], default_value="")
+    # Canonicalize Race_N / Race_other for any N so race_label_map keys (RACE_*) always match
+    # incoming projects with more than the legacy Race_1..Race_7 mapping entries.
+    df = _normalize_race_option_column_names(df)
     _ensure_standard_column(df, "HOME_ADDRESS_LAT", ["HomeAddressLat"], default_value="")
     _ensure_standard_column(df, "HOME_ADDRESS_LONG", ["HomeAddressLong"], default_value="")
     _ensure_standard_column(df, "HOME_ADDRESS_PLACE", ["HomeAddressPlace"], default_value="")
@@ -512,6 +516,91 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 
+def _find_column_ci(df, *candidates):
+    """Return the first matching column name (exact, then case-insensitive), else None."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    lower_map = {str(c).lower(): c for c in cols}
+    for name in candidates:
+        if name is None:
+            continue
+        s = str(name)
+        if s in cols:
+            return s
+        if s.lower() in lower_map:
+            return lower_map[s.lower()]
+    return None
+
+
+def _normalize_race_option_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Rename Race_1 / race_12 / Race_other → RACE_1 / RACE_12 / RACE_Other for any index.
+    Safe when the canonical name already exists (skips collide).
+    """
+    if df is None or df.empty:
+        return df
+    rename = {}
+    existing_upper = {str(c).upper(): c for c in df.columns}
+    for c in list(df.columns):
+        m = re.match(r"^Race_(\d+)$", str(c), flags=re.IGNORECASE)
+        if m:
+            target = f"RACE_{m.group(1)}"
+            if str(c) == target:
+                continue
+            if target.upper() in existing_upper and existing_upper[target.upper()] != c:
+                continue
+            rename[c] = target
+            continue
+        if re.match(r"^Race_other$", str(c), flags=re.IGNORECASE):
+            target = "RACE_Other"
+            if str(c) == target:
+                continue
+            if target.upper() in existing_upper and existing_upper[target.upper()] != c:
+                continue
+            rename[c] = target
+    if rename:
+        df = df.rename(columns=rename)
+    return df
+
+
+def income_refused_mask(df, text_candidates=None, code_candidates=None):
+    """
+    True where household income answer is a refusal (answer choice), not a blank.
+
+    Text-first and project-agnostic: matches labels containing 'Refus' / 'Prefer not',
+    or the common Elvis refuse placeholder '-------'. Also treats literal code
+    values REFUSED/REFUSE. Does NOT use hardcoded numeric codes (10, 99, etc.),
+    which vary by survey design.
+    """
+    if df is None or len(df) == 0:
+        return pd.Series(dtype=bool)
+
+    if text_candidates is None:
+        text_candidates = ("INCOME", "Income", "INCOME_", "Income_")
+    if code_candidates is None:
+        code_candidates = ("INCOMECode", "IncomeCode", "INCOME_Code_", "Income_Code_")
+
+    mask = pd.Series(False, index=df.index)
+
+    text_col = _find_column_ci(df, *text_candidates)
+    if text_col is not None:
+        s = df[text_col].astype(str).str.strip()
+        mask = (
+            s.str.contains(r"refus", case=False, na=False, regex=True)
+            | s.str.contains(r"prefer not", case=False, na=False, regex=True)
+            | s.eq("-------")
+            | s.str.fullmatch(r"-{3,}", na=False)
+        )
+
+    code_col = _find_column_ci(df, *code_candidates)
+    if code_col is not None:
+        c = df[code_col].astype(str).str.strip().str.upper()
+        mask = mask | c.isin(["REFUSED", "REFUSE"])
+
+    return mask
+
+
 def get_race_number(race_col):
     """Extract number from RACE_X or RACE_OTHER for sorting purposes
 
@@ -547,11 +636,18 @@ def add_race_metrics_to_list(metrics_list, df, race_label_map=None, column_suffi
             race_name = race_label_map[race_col]
             # Add suffix if provided (e.g., 'RACE_1' -> 'RACE_1_')
             race_col_with_suffix = race_col + column_suffix if column_suffix else race_col
+            resolved = _find_column_ci(df, race_col_with_suffix, race_col)
             
-            if race_col_with_suffix in df.columns:
+            if resolved is not None:
                 metrics_list.append((
                     race_name,
-                    df[race_col_with_suffix].astype(str).str.strip().str.upper() == 'YES'
+                    df[resolved].astype(str).str.strip().str.upper() == 'YES'
+                ))
+            else:
+                # Keep column in report at 0% when label exists but field is absent
+                metrics_list.append((
+                    race_name,
+                    pd.Series(False, index=df.index)
                 ))
     else:
         # Fallback to hardcoded mappings for backward compatibility
@@ -562,10 +658,11 @@ def add_race_metrics_to_list(metrics_list, df, race_label_map=None, column_suffi
         ]
         
         for race_name, race_col in default_race_metrics:
-            if race_col in df.columns:
+            resolved = _find_column_ci(df, race_col)
+            if resolved is not None:
                 metrics_list.append((
                     race_name,
-                    df[race_col].astype(str).str.strip().str.upper() == 'YES'
+                    df[resolved].astype(str).str.strip().str.upper() == 'YES'
                 ))
 
 
@@ -2904,28 +3001,23 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
                 .isin(['1', '2', '3', '4'])
         ),
 
-        ('No Income',
-            filtered_elvis['INCOMECode'].isna() |
-            filtered_elvis['INCOMECode']
-                .astype(str).str.strip().str.replace('.0', '', regex=False)
-                .isin(['10'])
-        ),
+        ('Refused', income_refused_mask(filtered_elvis)),
     ]
     
     # Add race metrics dynamically from race_label_map
     if race_label_map and len(race_label_map) > 0:
         print("Using dynamically extracted race labels from race_label_map.")
         print(f"Extracted race columns: {list(race_label_map.keys())}")
-        # Use dynamically extracted race labels
         # Sort race columns by number (RACE_1, RACE_2, etc.) for consistent ordering
         sorted_race_cols = sorted(race_label_map.keys(), key=get_race_number)
         
         for race_col in sorted_race_cols:
             race_name = race_label_map[race_col]
-            if race_col in filtered_elvis.columns:
+            resolved = _find_column_ci(filtered_elvis, race_col)
+            if resolved is not None:
                 metrics.append((
                     race_name,
-                    filtered_elvis[race_col].astype(str).str.strip().str.upper() == 'YES'
+                    filtered_elvis[resolved].astype(str).str.strip().str.upper() == 'YES'
                 ))
             else:
                 # If column doesn't exist, create a Series of False values with same index
@@ -2957,10 +3049,11 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
             ]
         
         for race_name, race_col in race_metrics:
-            if race_col in filtered_elvis.columns:
+            resolved = _find_column_ci(filtered_elvis, race_col)
+            if resolved is not None:
                 metrics.append((
                     race_name,
-                    filtered_elvis[race_col].astype(str).str.strip().str.upper() == 'YES'
+                    filtered_elvis[resolved].astype(str).str.strip().str.upper() == 'YES'
                 ))
     
     # First get total records per interviewer
@@ -3071,7 +3164,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income'
+        '% of LowIncome', '% of Refused'
     ]
     
     # Add race columns dynamically based on what was actually created
@@ -3080,7 +3173,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
     # Filter to only race columns (exclude other percentage columns we know about)
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
-        '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Egress Walk', '% of LowIncome', '% of Refused',
         '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
     race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
@@ -3265,9 +3358,7 @@ def process_surveyor_data(df, elvis_df, race_label_map=None):
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('No Income', 
-         (address_filtered['INCOME_Code_'].isna()) | 
-         (address_filtered['INCOME_Code_'].astype(str) == '14')),
+        ('Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically (need to get race_label_map from function parameter)
     # Note: This function needs to accept race_label_map parameter
@@ -3395,7 +3486,7 @@ def process_surveyor_data(df, elvis_df, race_label_map=None):
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income', '% of Hispanic', '% of Black', '% of White',
+        '% of LowIncome', '% of Refused', '% of Hispanic', '% of Black', '% of White',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
@@ -3568,9 +3659,7 @@ def process_route_data(df, elvis_df, race_label_map=None):
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('No Income', 
-         (address_filtered['INCOME_Code_'].isna()) | 
-         (address_filtered['INCOME_Code_'].astype(str) == 'REFUSED')),
+        ('Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically
     add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
@@ -3703,14 +3792,14 @@ def process_route_data(df, elvis_df, race_label_map=None):
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income'
+        '% of LowIncome', '% of Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
-        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Refused',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
@@ -3962,9 +4051,8 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
         ))
 
         metrics.append((
-            'No Income',
-            filtered_elvis['INCOMECode_clean'].isin(['10']) |
-            filtered_elvis['INCOMECode'].isna()
+            'Refused',
+            income_refused_mask(filtered_elvis)
         ))
 
     
@@ -4307,11 +4395,7 @@ def process_surveyor_date_data_transit_ls6(
          filtered_elvis['INCOMECode']
             .astype(str).str.replace('.0', '', regex=False)
             .isin(['1', '2', '3', '4'])),
-        ('No Income',
-         filtered_elvis['INCOMECode'].isna() |
-         filtered_elvis['INCOMECode']
-            .astype(str).str.replace('.0', '', regex=False)
-            .isin(['10']))
+        ('Refused', income_refused_mask(filtered_elvis))
     ]
 
     add_race_metrics_to_list(metrics, filtered_elvis, race_label_map=race_label_map)
@@ -4461,14 +4545,14 @@ def process_surveyor_date_data_transit_ls6(
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income'
+        '% of LowIncome', '% of Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
-        '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Egress Walk', '% of LowIncome', '% of Refused',
         '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
     race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
@@ -4943,9 +5027,7 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_ma
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('No Income', 
-         (address_filtered['INCOME_Code_'].isna()) | 
-         (address_filtered['INCOME_Code_'].astype(str) == 'REFUSED')),
+        ('Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically
     add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
@@ -5073,14 +5155,14 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_ma
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income'
+        '% of LowIncome', '% of Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
-        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Refused',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
@@ -5269,9 +5351,7 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('No Income', 
-         (address_filtered['INCOME_Code_'].isna()) | 
-         (address_filtered['INCOME_Code_'].astype(str) == 'REFUSED')),
+        ('Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically
     add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
@@ -5403,14 +5483,14 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of No Income'
+        '% of LowIncome', '% of Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
-        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of No Income',
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Refused',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
