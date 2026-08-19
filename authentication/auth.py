@@ -1,6 +1,7 @@
 import os
 import csv
 import html
+import re
 from io import StringIO
 from urllib.parse import urlencode
 from cryptography.hazmat.backends import default_backend
@@ -3633,6 +3634,27 @@ def _accounts_action_link(email: str, action: str, label: str, css_class: str, t
     )
 
 
+def _run_accounts_status_action(email: str, make_active: bool) -> None:
+    """Activate/deactivate without a full browser navigation (keeps login session)."""
+    if is_super_admin(email):
+        st.session_state["accounts_role_error"] = "Protected account cannot be changed."
+        return
+    if toggle_user_status(email, make_active):
+        status_label = "activated" if make_active else "deactivated"
+        st.session_state["accounts_role_toast"] = f"{email} {status_label} successfully."
+    else:
+        st.session_state["accounts_role_error"] = f"Could not update status for {email}."
+
+
+def _go_accounts_password_update(email: str) -> None:
+    if is_super_admin(email):
+        st.session_state["accounts_role_error"] = "Protected account cannot be changed."
+        return
+    st.session_state["password_update_target_email"] = email
+    st.session_state.pop("password_update_selected_email", None)
+    st.query_params["page"] = "password_update"
+
+
 def _handle_accounts_action_query() -> None:
     action = _query_param_value("acct_action")
     email = _query_param_value("acct_email")
@@ -3645,17 +3667,12 @@ def _handle_accounts_action_query() -> None:
         st.rerun()
 
     if action == "password":
-        st.session_state["password_update_target_email"] = email
-        st.session_state.pop("password_update_selected_email", None)
+        _go_accounts_password_update(email)
         _clear_accounts_action_params()
-        st.query_params["page"] = "password_update"
         st.rerun()
 
     if action in {"activate", "deactivate"}:
-        make_active = action == "activate"
-        if toggle_user_status(email, make_active):
-            status_label = "activated" if make_active else "deactivated"
-            st.session_state["accounts_role_toast"] = f"{email} {status_label} successfully."
+        _run_accounts_status_action(email, make_active=(action == "activate"))
         _clear_accounts_action_params()
         st.query_params["page"] = "accounts_management"
         st.rerun()
@@ -3874,7 +3891,6 @@ def accounts_management_page():
                     unsafe_allow_html=True,
                 )
             with row6:
-                st.markdown('<div class="acct-actions-cell"></div>', unsafe_allow_html=True)
                 if is_super:
                     st.markdown(
                         '<div class="acct-action-group">'
@@ -3882,22 +3898,41 @@ def accounts_management_page():
                         '</div>',
                         unsafe_allow_html=True,
                     )
-                elif user.get("is_active"):
-                    st.markdown(
-                        '<div class="acct-action-group">'
-                        + _accounts_action_link(user_email, "password", "Pass", "password", "Change password")
-                        + _accounts_action_link(user_email, "deactivate", "Deact", "danger", "Deactivate account")
-                        + '</div>',
-                        unsafe_allow_html=True,
-                    )
                 else:
-                    st.markdown(
-                        '<div class="acct-action-group">'
-                        + _accounts_action_link(user_email, "password", "Pass", "password", "Change password")
-                        + _accounts_action_link(user_email, "activate", "Active", "success", "Activate account")
-                        + '</div>',
-                        unsafe_allow_html=True,
-                    )
+                    # Use Streamlit buttons (not <a href>) so activate/deactivate/password
+                    # stay in-session. HTML links force a full reload and drop logged_in.
+                    safe_key = re.sub(r"[^a-zA-Z0-9]", "_", str(user_email).lower())
+                    action_cols = st.columns(2, gap="small")
+                    with action_cols[0]:
+                        if st.button(
+                            "Pass",
+                            key=f"acct_pw_{safe_key}",
+                            use_container_width=True,
+                            help="Change password",
+                        ):
+                            _go_accounts_password_update(user_email)
+                            st.rerun()
+                    with action_cols[1]:
+                        if user.get("is_active"):
+                            if st.button(
+                                "Deact",
+                                key=f"acct_deact_{safe_key}",
+                                use_container_width=True,
+                                help="Deactivate account",
+                                type="secondary",
+                            ):
+                                _run_accounts_status_action(user_email, make_active=False)
+                                st.rerun()
+                        else:
+                            if st.button(
+                                "Active",
+                                key=f"acct_act_{safe_key}",
+                                use_container_width=True,
+                                help="Activate account",
+                                type="primary",
+                            ):
+                                _run_accounts_status_action(user_email, make_active=True)
+                                st.rerun()
 
             if idx < len(page_users) - 1:
                 st.markdown(

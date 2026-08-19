@@ -614,14 +614,23 @@ if not st.session_state["logged_in"]:
     elif current_page=='create_user':
         create_new_user_page()
     else:
-        st.write(
-            "This link is not valid here (missing or unknown **page** in the URL), "
-            "or your session timed out. Use **Login** below."
-        )
-        if st.button("Login"):
-            # st.experimental_set_query_params(page="login")
-            # st.rerun()
-            st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
+        # accounts_management requires login. Old Activate HTML links reloaded the page,
+        # dropped session, and landed here — send users to login instead of a dead-end error.
+        if current_page == "accounts_management":
+            st.warning("Please log in as a super admin to manage accounts.")
+            st.markdown(
+                '<meta http-equiv="refresh" content="0;url=/?page=login">',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.write(
+                "This link is not valid here (missing or unknown **page** in the URL), "
+                "or your session timed out. Use **Login** below."
+            )
+            if st.button("Login"):
+                # st.experimental_set_query_params(page="login")
+                # st.rerun()
+                st.markdown(f'<meta http-equiv="refresh" content="0;url=/?page=login">', unsafe_allow_html=True)
     st.stop()
 else:
     if not is_authenticated():
