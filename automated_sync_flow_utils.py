@@ -433,6 +433,259 @@ def empty_route_level_df(periods):
     return pd.DataFrame(columns=list(dict.fromkeys(cols)))
 
 
+def _find_dataframe_column(df, *candidates):
+    """Case/spacing-insensitive column lookup."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    normalized = {
+        str(c).strip().lower().replace("_", " ").replace("-", " "): c
+        for c in df.columns
+    }
+    for name in candidates:
+        if name is None:
+            continue
+        key = str(name).strip().lower().replace("_", " ").replace("-", " ")
+        if key in normalized:
+            return normalized[key]
+        # also exact
+        if name in df.columns:
+            return name
+    return None
+
+
+def create_rail_station_overall_level_df(overall_df, route_df, survey_df, time_column, periods):
+    """
+    Rail station-level overall goals from CR RailTotal (Brad/Jason):
+    - De-dupe SINGLE ENTRY STATION
+    - Goal = sum(ROUTE_TOTAL) per single station (WB+EB rolled up)
+    - Surveys attributed via directional STATION_ID / LS_NAME_CODE lookup
+    """
+    periods = deduplicate_periods(periods or [])
+    station_col = _find_dataframe_column(
+        route_df,
+        "SINGLE ENTRY STATION",
+        "SINGLE_ENTRY_STATION",
+        "Single Entry Station",
+    )
+    if station_col is None or route_df is None or route_df.empty:
+        return None
+
+    total_col = _find_dataframe_column(route_df, "ROUTE_TOTAL", "Route Total")
+    if total_col is None:
+        return None
+
+    code_col = _find_dataframe_column(
+        route_df, "LS_NAME_CODE", "SURVEY_ROUTE_CODE", "ETC_ROUTE_ID"
+    )
+    sort_col = _find_dataframe_column(route_df, "SORT")
+
+    rdf = route_df.copy()
+    rdf[station_col] = rdf[station_col].astype(str).str.strip()
+    rdf = rdf[
+        rdf[station_col].ne("")
+        & ~rdf[station_col].str.lower().isin(["nan", "none", "null"])
+    ].copy()
+    if rdf.empty:
+        return None
+
+    rdf[total_col] = pd.to_numeric(rdf[total_col], errors="coerce").fillna(0)
+    if sort_col is not None:
+        rdf[sort_col] = pd.to_numeric(rdf[sort_col], errors="coerce")
+        goals = (
+            rdf.groupby(station_col, as_index=False)
+            .agg(CR_Overall_Goal=(total_col, "sum"), SORT=(sort_col, "min"))
+        )
+    else:
+        goals = (
+            rdf.groupby(station_col, as_index=False)
+            .agg(CR_Overall_Goal=(total_col, "sum"))
+        )
+
+    goals = goals.rename(columns={station_col: "ROUTE_SURVEYED"})
+    goals["CR_Overall_Goal"] = (
+        goals["CR_Overall_Goal"]
+        .fillna(0)
+        .apply(lambda x: int(math.ceil(float(x))) if pd.notna(x) else 0)
+    )
+
+    if code_col is not None:
+        # Stable display code: first directional LS_NAME_CODE for that single station
+        first_codes = (
+            rdf.groupby(station_col, as_index=False)[code_col]
+            .first()
+            .rename(columns={station_col: "ROUTE_SURVEYED", code_col: "ROUTE_SURVEYEDCode"})
+        )
+        goals = goals.merge(first_codes, on="ROUTE_SURVEYED", how="left")
+    else:
+        goals["ROUTE_SURVEYEDCode"] = goals["ROUTE_SURVEYED"]
+
+    cr_cols = [p["cr_name"] for p in periods]
+    db_cols = [p["db_name"] for p in periods]
+    for p in periods:
+        goals[p["cr_name"]] = 0
+        goals[p["db_name"]] = 0
+
+    entry_col = _find_dataframe_column(
+        route_df, "ENTRY STATION", "ENTRY_STATION", "Entry Station"
+    )
+    # Directional LS_NAME_CODE alone is NOT unique per station (WB/EB codes repeat).
+    # Prefer ENTRY STATION / STATION_NAME to connect overall + surveys → single station.
+    lookup_cols = [station_col]
+    if entry_col is not None:
+        lookup_cols.insert(0, entry_col)
+    if code_col is not None:
+        lookup_cols.append(code_col)
+    lookup = rdf[list(dict.fromkeys(lookup_cols))].drop_duplicates().copy()
+
+    station_id_to_single = {}
+    station_suffix_to_singles = {}
+    if overall_df is not None and not overall_df.empty:
+        odf = overall_df.copy()
+        overall_entry = _find_dataframe_column(
+            odf, "ENTRY STATION", "ENTRY_STATION", "STATION_NAME", "LS_NAME"
+        )
+        merged = False
+        if entry_col is not None and overall_entry is not None:
+            odf[overall_entry] = odf[overall_entry].astype(str).str.strip()
+            lookup_join = lookup.copy()
+            lookup_join[entry_col] = lookup_join[entry_col].astype(str).str.strip()
+            odf = odf.merge(
+                lookup_join,
+                left_on=overall_entry,
+                right_on=entry_col,
+                how="left",
+                suffixes=("", "_rt"),
+            )
+            merged = True
+        elif code_col is not None and "LS_NAME_CODE" in odf.columns and entry_col is None:
+            # Last resort: only safe if each LS_NAME_CODE maps to one SINGLE ENTRY STATION
+            code_unique = (
+                lookup.groupby(code_col)[station_col].nunique()
+                if code_col in lookup.columns
+                else pd.Series(dtype=int)
+            )
+            if not code_unique.empty and code_unique.max() == 1:
+                odf["LS_NAME_CODE"] = odf["LS_NAME_CODE"].astype(str).str.strip()
+                odf = odf.merge(
+                    lookup,
+                    left_on="LS_NAME_CODE",
+                    right_on=code_col,
+                    how="left",
+                    suffixes=("", "_rt"),
+                )
+                merged = True
+
+        single_key = station_col if station_col in odf.columns else None
+        if single_key is None and f"{station_col}_rt" in odf.columns:
+            single_key = f"{station_col}_rt"
+
+        if merged and single_key:
+            for p in periods:
+                cr_src = resolve_overall_df_col(odf, p["cr_col"])
+                odf["_cr_tmp"] = (
+                    pd.to_numeric(odf[cr_src], errors="coerce")
+                    .fillna(0)
+                    .apply(lambda x: math.ceil(float(x)) if pd.notna(x) else 0)
+                )
+                per = odf.groupby(single_key)["_cr_tmp"].sum()
+                goals[p["cr_name"]] = (
+                    goals["ROUTE_SURVEYED"].map(per).fillna(0).astype(float)
+                )
+
+            if "STATION_ID" in odf.columns:
+                for _, row in odf.iterrows():
+                    single = row.get(single_key)
+                    sid = row.get("STATION_ID")
+                    if pd.isna(single) or pd.isna(sid):
+                        continue
+                    single = str(single).strip()
+                    sid = str(sid).strip()
+                    station_id_to_single[sid] = single
+                    suffix = sid.split("_")[-1]
+                    station_suffix_to_singles.setdefault(suffix, set()).add(single)
+
+    if cr_cols:
+        goals["CR_Total"] = goals[cr_cols].sum(axis=1)
+    else:
+        goals["CR_Total"] = goals["CR_Overall_Goal"]
+
+    # Survey boarding → single station
+    survey_stop_col = None
+    if survey_df is not None and not survey_df.empty:
+        for cand in ("STATION_ID", "STOP_ON_CLINTID_NEW", "STATION_ID_SPLITTED"):
+            if cand in survey_df.columns:
+                survey_stop_col = cand
+                break
+        if survey_stop_col is None:
+            for c in survey_df.columns:
+                cl = str(c).lower().replace("_", "").replace(" ", "")
+                if cl in ("stoponclintidnew", "stoponclntid", "stoponclientid"):
+                    survey_stop_col = c
+                    break
+
+    def _resolve_single_station(stop_val: str):
+        stop_val = str(stop_val).strip()
+        if not stop_val or stop_val.lower() in {"nan", "none"}:
+            return None
+        # Prefer exact boarding STATION_ID from the RAIL sheet lookup.
+        if stop_val in station_id_to_single:
+            return station_id_to_single[stop_val]
+        # Suffix only when unambiguous across the CR (rare).
+        suffix = stop_val.split("_")[-1]
+        candidates = station_suffix_to_singles.get(suffix) or set()
+        if len(candidates) == 1:
+            return next(iter(candidates))
+        return None
+
+    for p in periods:
+        goals[p["db_name"]] = 0
+
+    if (
+        survey_df is not None
+        and not survey_df.empty
+        and survey_stop_col is not None
+        and time_column
+    ):
+        time_col = time_column[0] if isinstance(time_column, (list, tuple)) else time_column
+        work = survey_df.copy()
+        work["_single_station"] = (
+            work[survey_stop_col].astype(str).map(_resolve_single_station)
+        )
+        work = work[work["_single_station"].notna()]
+        if not work.empty:
+            for p in periods:
+                subset = work[work[time_col].isin(p["codes"])]
+                counts = (
+                    subset.drop_duplicates(subset="id")
+                    .groupby("_single_station")["id"]
+                    .count()
+                )
+                goals[p["db_name"]] = (
+                    goals["ROUTE_SURVEYED"].map(counts).fillna(0).astype(float)
+                )
+
+    if db_cols:
+        goals["DB_Total"] = goals[db_cols].sum(axis=1)
+    else:
+        goals["DB_Total"] = 0
+
+    ensure_period_columns(goals, periods)
+    compute_period_differences(goals, periods)
+    diff_cols = [p["diff_name"] for p in periods]
+    goals["Total_DIFFERENCE"] = goals[diff_cols].sum(axis=1) if diff_cols else 0
+    goals["Overall_Goal_DIFFERENCE"] = (
+        (goals["CR_Overall_Goal"] - goals["DB_Total"])
+        .fillna(0)
+        .clip(lower=0)
+        .apply(lambda x: int(math.ceil(float(x))))
+    )
+
+    if "SORT" in goals.columns:
+        goals = goals.sort_values("SORT", kind="mergesort")
+
+    return goals.reset_index(drop=True)
+
+
 def row_diff_value(row, *candidate_columns):
     """Return first positive difference value found under any of the candidate column names."""
     for col in candidate_columns:
@@ -601,6 +854,90 @@ def income_refused_mask(df, text_candidates=None, code_candidates=None):
     return mask
 
 
+def race_metric_display_name(label: str) -> str:
+    """Prefix race/ethnicity metric labels with R/E: for Surveyor Report grouping."""
+    s = str(label or "").strip()
+    if not s:
+        return "R/E: Unknown"
+    if s.upper().startswith("R/E:"):
+        return s
+    return f"R/E: {s}"
+
+
+def _is_blankish_contact_value(series: pd.Series) -> pd.Series:
+    s = series.astype(str).str.strip()
+    return (
+        series.isna()
+        | s.eq("")
+        | s.str.lower().isin(["nan", "none", "null", "-", "-------", "n/a", "na"])
+    )
+
+
+def contest_entry_mask(df) -> pd.Series:
+    """
+    True when the respondent entered the contest.
+
+    Prefer REG_2_WIN_CONTACT_NAME filled (newer surveys dropped the Yes/No prompt).
+    Also OR in legacy REGISTER_TO_WIN_* = Yes when present so older projects still count.
+    """
+    if df is None or len(df) == 0:
+        return pd.Series(dtype=bool)
+
+    mask = pd.Series(False, index=df.index)
+
+    name_col = _find_column_ci(
+        df,
+        "REG_2_WIN_CONTACT_NAME",
+        "Reg2WinContactName",
+        "REG_2_WIN_CONTACT_NAME_",
+        "REG2WIN_CONTACT_NAME_",
+        "Reg2WinContact_NAME",
+    )
+    if name_col is not None:
+        mask = mask | (~_is_blankish_contact_value(df[name_col]))
+
+    yn_col = _find_column_ci(
+        df,
+        "REGISTER_TO_WIN_YNCODE",
+        "RegisterToWinYNCode",
+        "REGISTER_TO_WIN_Y_NCODE",
+        "REGISTER_TO_WIN_Y_N",
+        "REGISTER_TO_WIN_Y_N_",
+    )
+    if yn_col is not None:
+        yn = df[yn_col].astype(str).str.strip().str.replace(".0", "", regex=False)
+        mask = mask | yn.str.upper().isin(["1", "YES", "Y", "TRUE"])
+
+    return mask
+
+
+def contest_valid_contact_mask(df) -> pd.Series:
+    """Contest entry with both name and phone filled (good contact info)."""
+    if df is None or len(df) == 0:
+        return pd.Series(dtype=bool)
+    name_col = _find_column_ci(
+        df,
+        "REG_2_WIN_CONTACT_NAME",
+        "Reg2WinContactName",
+        "REG_2_WIN_CONTACT_NAME_",
+        "REG2WIN_CONTACT_NAME_",
+        "Reg2WinContact_NAME",
+    )
+    phone_col = _find_column_ci(
+        df,
+        "REG_2_WIN_CONTACT_PHONE",
+        "Reg2WinContactPhone",
+        "REG_2_WIN_CONTACT_PHONE_",
+        "REG2WIN_CONTACT_PHONE_",
+        "Reg2WinContact_PHONE",
+    )
+    if name_col is None or phone_col is None:
+        return pd.Series(False, index=df.index)
+    return (~_is_blankish_contact_value(df[name_col])) & (
+        ~_is_blankish_contact_value(df[phone_col])
+    )
+
+
 def get_race_number(race_col):
     """Extract number from RACE_X or RACE_OTHER for sorting purposes
 
@@ -633,7 +970,7 @@ def add_race_metrics_to_list(metrics_list, df, race_label_map=None, column_suffi
         sorted_race_cols = sorted(race_label_map.keys(), key=get_race_number)
         
         for race_col in sorted_race_cols:
-            race_name = race_label_map[race_col]
+            race_name = race_metric_display_name(race_label_map[race_col])
             # Add suffix if provided (e.g., 'RACE_1' -> 'RACE_1_')
             race_col_with_suffix = race_col + column_suffix if column_suffix else race_col
             resolved = _find_column_ci(df, race_col_with_suffix, race_col)
@@ -661,7 +998,7 @@ def add_race_metrics_to_list(metrics_list, df, race_label_map=None, column_suffi
             resolved = _find_column_ci(df, race_col)
             if resolved is not None:
                 metrics_list.append((
-                    race_name,
+                    race_metric_display_name(race_name),
                     df[resolved].astype(str).str.strip().str.upper() == 'YES'
                 ))
 
@@ -1932,6 +2269,24 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             if overall_df is None or overall_df.empty:
                 return empty_route_level_df(periods)
 
+            # Rail: Station Level Overall Goals from RailTotal SINGLE ENTRY STATION
+            # (directional WB/EB goals summed per unique station). Falls back to
+            # legacy route aggregation if the RailTotal column is missing.
+            if project and "RAIL" in str(project).upper():
+                rail_station_df = create_rail_station_overall_level_df(
+                    overall_df, route_df, df, time_column, periods
+                )
+                if rail_station_df is not None and not rail_station_df.empty:
+                    print(
+                        f"Rail station-level overall: {len(rail_station_df)} unique "
+                        f"SINGLE ENTRY STATION rows for {project}"
+                    )
+                    return rail_station_df
+                print(
+                    f"RailTotal SINGLE ENTRY STATION not found/usable for {project}; "
+                    "falling back to route-level aggregation."
+                )
+
             def convert_string_to_integer(x):
                 try:
                     return float(x)
@@ -3001,7 +3356,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
                 .isin(['1', '2', '3', '4'])
         ),
 
-        ('Refused', income_refused_mask(filtered_elvis)),
+        ('Income Refused', income_refused_mask(filtered_elvis)),
     ]
     
     # Add race metrics dynamically from race_label_map
@@ -3012,7 +3367,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         sorted_race_cols = sorted(race_label_map.keys(), key=get_race_number)
         
         for race_col in sorted_race_cols:
-            race_name = race_label_map[race_col]
+            race_name = race_metric_display_name(race_label_map[race_col])
             resolved = _find_column_ci(filtered_elvis, race_col)
             if resolved is not None:
                 metrics.append((
@@ -3052,7 +3407,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
             resolved = _find_column_ci(filtered_elvis, race_col)
             if resolved is not None:
                 metrics.append((
-                    race_name,
+                    race_metric_display_name(race_name),
                     filtered_elvis[resolved].astype(str).str.strip().str.upper() == 'YES'
                 ))
     
@@ -3061,12 +3416,13 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
     total_records_group = total_records_group.rename(columns={'id': 'total_records'})
     
     for name, condition in metrics:
+        safe_count_key = re.sub(r'[^a-z0-9]+', '_', str(name).lower()).strip('_') + '_count'
         metric_group = (
             filtered_elvis[condition]
             .groupby('INTERV_INIT')['id']
             .count()
             .reset_index()
-            .rename(columns={'id': f'{name.lower()}_count'})
+            .rename(columns={'id': safe_count_key})
         )
         
         metric_percent = total_records_group.merge(
@@ -3074,7 +3430,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         ).fillna(0)
         
         metric_percent[f'% of {name}'] = (
-            (metric_percent[f'{name.lower()}_count'] / metric_percent['total_records']) * 100
+            (metric_percent[safe_count_key] / metric_percent['total_records']) * 100
         ).apply(format_percentage)
         
         summary_df = summary_df.merge(
@@ -3089,13 +3445,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         (elvis_df['HAVE_5_MIN_FOR_SURVECode'].astype(str) == '1')
     ].copy()
     
-    contest_filtered['contest_yes'] = (
-            contest_filtered['REGISTER_TO_WIN_YNCODE']
-                .astype(str)
-                .str.strip()
-                .str.replace('.0', '', regex=False)
-                .eq('1')
-        )
+    contest_filtered['contest_yes'] = contest_entry_mask(contest_filtered)
     
     contest_group = contest_filtered.groupby('INTERV_INIT').agg(
         total_records=('id', 'count'),
@@ -3111,13 +3461,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         how='left'
     ).fillna('0.0%')
     
-    contest_filtered['valid_contest'] = (
-        contest_filtered['contest_yes'] &
-        contest_filtered['REG_2_WIN_CONTACT_NAME'].notna() & 
-        (contest_filtered['REG_2_WIN_CONTACT_NAME'].astype(str).str.strip() != '') &
-        contest_filtered['REG_2_WIN_CONTACT_PHONE'].notna() & 
-        (contest_filtered['REG_2_WIN_CONTACT_PHONE'].astype(str).str.strip() != '')
-    )
+    contest_filtered['valid_contest'] = contest_valid_contact_mask(contest_filtered)
     
     contest_valid_group = contest_filtered.groupby('INTERV_INIT').agg(
         total_records=('id', 'count'),
@@ -3164,7 +3508,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of Refused'
+        '% of LowIncome', '% of Income Refused'
     ]
     
     # Add race columns dynamically based on what was actually created
@@ -3173,7 +3517,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
     # Filter to only race columns (exclude other percentage columns we know about)
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
-        '% of Egress Walk', '% of LowIncome', '% of Refused',
+        '% of Egress Walk', '% of LowIncome', '% of Income Refused',
         '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
     race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
@@ -3182,10 +3526,12 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
     def get_race_name_for_sorting(col_name):
         # Extract race name from '% of <Race Name>'
         race_name = col_name.replace('% of ', '')
+        if race_name.upper().startswith('R/E:'):
+            race_name = race_name.split(':', 1)[1].strip()
         # Try to find matching race column in race_label_map
         if race_label_map:
             for col, label in race_label_map.items():
-                if label == race_name:
+                if label == race_name or race_metric_display_name(label) == col_name.replace('% of ', ''):
                     return get_race_number(col)
         # Fallback: try to extract number from common patterns
         return 999  # Default to end
@@ -3358,7 +3704,7 @@ def process_surveyor_data(df, elvis_df, race_label_map=None):
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('Refused', income_refused_mask(address_filtered)),
+        ('Income Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically (need to get race_label_map from function parameter)
     # Note: This function needs to accept race_label_map parameter
@@ -3417,9 +3763,7 @@ def process_surveyor_data(df, elvis_df, race_label_map=None):
     
     # Contest metrics
     contest_filtered = followup_filtered.copy()
-    contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_Y_N'].astype(str).str.strip().str.upper() == 'YES'
-    )
+    contest_filtered['contest_yes'] = contest_entry_mask(contest_filtered)
     
     contest_group = contest_filtered.groupby('INTERV_INIT').agg(
         total_records=('id', 'count'),
@@ -3435,13 +3779,7 @@ def process_surveyor_data(df, elvis_df, race_label_map=None):
         how='left'
     ).fillna('0.0%')
     
-    contest_filtered['valid_contest'] = (
-        contest_filtered['contest_yes'] &
-        contest_filtered['REG2WIN_CONTACT_NAME_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_NAME_'].astype(str).str.strip() != '') &
-        contest_filtered['REG2WIN_CONTACT_PHONE_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_PHONE_'].astype(str).str.strip() != '')
-    )
+    contest_filtered['valid_contest'] = contest_valid_contact_mask(contest_filtered)
     
     contest_valid_group = contest_filtered.groupby('INTERV_INIT').agg(
         total_records=('id', 'count'),
@@ -3486,7 +3824,7 @@ def process_surveyor_data(df, elvis_df, race_label_map=None):
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of Refused', '% of Hispanic', '% of Black', '% of White',
+        '% of LowIncome', '% of Income Refused', '% of Hispanic', '% of Black', '% of White',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
@@ -3659,7 +3997,7 @@ def process_route_data(df, elvis_df, race_label_map=None):
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('Refused', income_refused_mask(address_filtered)),
+        ('Income Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically
     add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
@@ -3718,9 +4056,7 @@ def process_route_data(df, elvis_df, race_label_map=None):
     
     # Contest metrics
     contest_filtered = followup_filtered.copy()
-    contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_Y_N'].astype(str).str.strip().str.upper() == 'YES'
-    )
+    contest_filtered['contest_yes'] = contest_entry_mask(contest_filtered)
     
     contest_group = contest_filtered.groupby('ROUTE_ROOT').agg(
         total_records=('id', 'count'),
@@ -3736,13 +4072,7 @@ def process_route_data(df, elvis_df, race_label_map=None):
         how='left'
     ).fillna('0.0%')
     
-    contest_filtered['valid_contest'] = (
-        contest_filtered['contest_yes'] &
-        contest_filtered['REG2WIN_CONTACT_NAME_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_NAME_'].astype(str).str.strip() != '') &
-        contest_filtered['REG2WIN_CONTACT_PHONE_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_PHONE_'].astype(str).str.strip() != '')
-    )
+    contest_filtered['valid_contest'] = contest_valid_contact_mask(contest_filtered)
     
     contest_valid_group = contest_filtered.groupby('ROUTE_ROOT').agg(
         total_records=('id', 'count'),
@@ -3792,14 +4122,14 @@ def process_route_data(df, elvis_df, race_label_map=None):
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of Refused'
+        '% of LowIncome', '% of Income Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
-        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Refused',
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Income Refused',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
@@ -3808,9 +4138,11 @@ def process_route_data(df, elvis_df, race_label_map=None):
     # Sort race columns
     def get_race_name_for_sorting(col_name):
         race_name = col_name.replace('% of ', '')
+        if race_name.upper().startswith('R/E:'):
+            race_name = race_name.split(':', 1)[1].strip()
         if race_label_map:
             for col, label in race_label_map.items():
-                if label == race_name:
+                if label == race_name or race_metric_display_name(label) == col_name.replace('% of ', ''):
                     return get_race_number(col)
         return 999
     race_columns = sorted(race_columns, key=get_race_name_for_sorting)
@@ -4051,7 +4383,7 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
         ))
 
         metrics.append((
-            'Refused',
+            'Income Refused',
             income_refused_mask(filtered_elvis)
         ))
 
@@ -4097,13 +4429,7 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
     if contest_columns_exist:
         contest_filtered = filtered_elvis.copy()
         # Check for "YES" values (considering case and whitespace)
-        contest_filtered['contest_yes'] = (
-            contest_filtered['REGISTER_TO_WIN_YNCODE']
-                .astype(str)
-                .str.strip()
-                .str.replace('.0', '', regex=False)
-                .eq('1')
-        )
+        contest_filtered['contest_yes'] = contest_entry_mask(contest_filtered)
         
         contest_group = contest_filtered.groupby('ROUTE_ROOT').agg(
             total_records=('id', 'count'),
@@ -4121,13 +4447,7 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
         ).fillna('0.0%')
         
         # Check for valid contest entries (not empty or dash)
-        contest_filtered['valid_contest'] = (
-            contest_filtered['contest_yes'] &
-            contest_filtered['REG_2_WIN_CONTACT_NAME'].notna() & 
-            (~contest_filtered['REG_2_WIN_CONTACT_NAME'].astype(str).str.strip().isin(['-', ''])) &
-            contest_filtered['REG_2_WIN_CONTACT_PHONE'].notna() & 
-            (~contest_filtered['REG_2_WIN_CONTACT_PHONE'].astype(str).str.strip().isin(['-', '']))
-        )
+        contest_filtered['valid_contest'] = contest_valid_contact_mask(contest_filtered)
         
         contest_valid_group = contest_filtered.groupby('ROUTE_ROOT').agg(
             total_records=('id', 'count'),
@@ -4395,7 +4715,7 @@ def process_surveyor_date_data_transit_ls6(
          filtered_elvis['INCOMECode']
             .astype(str).str.replace('.0', '', regex=False)
             .isin(['1', '2', '3', '4'])),
-        ('Refused', income_refused_mask(filtered_elvis))
+        ('Income Refused', income_refused_mask(filtered_elvis))
     ]
 
     add_race_metrics_to_list(metrics, filtered_elvis, race_label_map=race_label_map)
@@ -4426,13 +4746,7 @@ def process_surveyor_date_data_transit_ls6(
     
     # Contest metrics only (removed follow-up section)
     contest_filtered = filtered_elvis.copy()
-    contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_YNCODE']
-            .astype(str)
-            .str.strip()
-            .str.replace('.0', '', regex=False)
-            .eq('1')
-    )
+    contest_filtered['contest_yes'] = contest_entry_mask(contest_filtered)
     
     contest_group = contest_filtered.groupby('Date_Surveyor').agg(
         total_records=('id', 'count'),
@@ -4448,13 +4762,7 @@ def process_surveyor_date_data_transit_ls6(
         how='left'
     ).fillna('0.0%')
     
-    contest_filtered['valid_contest'] = (
-        contest_filtered['contest_yes'] &
-        contest_filtered['REG_2_WIN_CONTACT_NAME'].notna() & 
-        (contest_filtered['REG_2_WIN_CONTACT_NAME'].astype(str).str.strip() != '') &
-        contest_filtered['REG_2_WIN_CONTACT_PHONE'].notna() & 
-        (contest_filtered['REG_2_WIN_CONTACT_PHONE'].astype(str).str.strip() != '')
-    )
+    contest_filtered['valid_contest'] = contest_valid_contact_mask(contest_filtered)
     
     contest_valid_group = contest_filtered.groupby('Date_Surveyor').agg(
         total_records=('id', 'count'),
@@ -4545,14 +4853,14 @@ def process_surveyor_date_data_transit_ls6(
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of Refused'
+        '% of LowIncome', '% of Income Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
-        '% of Egress Walk', '% of LowIncome', '% of Refused',
+        '% of Egress Walk', '% of LowIncome', '% of Income Refused',
         '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
     race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
@@ -4560,9 +4868,11 @@ def process_surveyor_date_data_transit_ls6(
     # Sort race columns
     def get_race_name_for_sorting(col_name):
         race_name = col_name.replace('% of ', '')
+        if race_name.upper().startswith('R/E:'):
+            race_name = race_name.split(':', 1)[1].strip()
         if race_label_map:
             for col, label in race_label_map.items():
-                if label == race_name:
+                if label == race_name or race_metric_display_name(label) == col_name.replace('% of ', ''):
                     return get_race_number(col)
         return 999
     race_columns = sorted(race_columns, key=get_race_name_for_sorting)
@@ -5027,7 +5337,7 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_ma
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('Refused', income_refused_mask(address_filtered)),
+        ('Income Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically
     add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
@@ -5085,9 +5395,7 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_ma
     
     # Contest metrics
     contest_filtered = followup_filtered.copy()
-    contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_Y_N'].astype(str).str.strip().str.upper() == 'YES'
-    )
+    contest_filtered['contest_yes'] = contest_entry_mask(contest_filtered)
     
     contest_group = contest_filtered.groupby('Date_Surveyor').agg(
         total_records=('id', 'count'),
@@ -5103,13 +5411,7 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_ma
         how='left'
     ).fillna('0.0%')
     
-    contest_filtered['valid_contest'] = (
-        contest_filtered['contest_yes'] &
-        contest_filtered['REG2WIN_CONTACT_NAME_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_NAME_'].astype(str).str.strip() != '') &
-        contest_filtered['REG2WIN_CONTACT_PHONE_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_PHONE_'].astype(str).str.strip() != '')
-    )
+    contest_filtered['valid_contest'] = contest_valid_contact_mask(contest_filtered)
     
     contest_valid_group = contest_filtered.groupby('Date_Surveyor').agg(
         total_records=('id', 'count'),
@@ -5155,14 +5457,14 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_ma
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of Refused'
+        '% of LowIncome', '% of Income Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in summary_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
-        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Refused',
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Income Refused',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
@@ -5171,9 +5473,11 @@ def process_surveyor_date_data(df, elvis_df, survey_date_surveyor, race_label_ma
     # Sort race columns
     def get_race_name_for_sorting(col_name):
         race_name = col_name.replace('% of ', '')
+        if race_name.upper().startswith('R/E:'):
+            race_name = race_name.split(':', 1)[1].strip()
         if race_label_map:
             for col, label in race_label_map.items():
-                if label == race_name:
+                if label == race_name or race_metric_display_name(label) == col_name.replace('% of ', ''):
                     return get_race_number(col)
         return 999
     race_columns = sorted(race_columns, key=get_race_name_for_sorting)
@@ -5351,7 +5655,7 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
         ('Access Walk', address_filtered['VAL_ACCESS_WALK'] == 1),
         ('Egress Walk', address_filtered['VAL_EGRESS_WALK'] == 1),
         ('LowIncome', address_filtered['INCOME_Code_'].astype(str).isin(['1', '2', '3', '4'])),
-        ('Refused', income_refused_mask(address_filtered)),
+        ('Income Refused', income_refused_mask(address_filtered)),
     ]
     # Add race metrics dynamically
     add_race_metrics_to_list(metrics, address_filtered, race_label_map=race_label_map, column_suffix='_')
@@ -5409,9 +5713,7 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
     
     # Contest metrics
     contest_filtered = followup_filtered.copy()
-    contest_filtered['contest_yes'] = (
-        contest_filtered['REGISTER_TO_WIN_Y_N'].astype(str).str.strip().str.upper() == 'YES'
-    )
+    contest_filtered['contest_yes'] = contest_entry_mask(contest_filtered)
     
     contest_group = contest_filtered.groupby('Date_Route').agg(
         total_records=('id', 'count'),
@@ -5427,13 +5729,7 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
         how='left'
     ).fillna('0.0%')
     
-    contest_filtered['valid_contest'] = (
-        contest_filtered['contest_yes'] &
-        contest_filtered['REG2WIN_CONTACT_NAME_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_NAME_'].astype(str).str.strip() != '') &
-        contest_filtered['REG2WIN_CONTACT_PHONE_'].notna() & 
-        (contest_filtered['REG2WIN_CONTACT_PHONE_'].astype(str).str.strip() != '')
-    )
+    contest_filtered['valid_contest'] = contest_valid_contact_mask(contest_filtered)
     
     contest_valid_group = contest_filtered.groupby('Date_Route').agg(
         total_records=('id', 'count'),
@@ -5483,14 +5779,14 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
         '# of Records Reviewed', '# of Records Not Reviewed', 'SurveyTime (All)',
         'SurveyTime (TripLogic)', 'SurveyTime (DemoLogic)', '% of Incomplete Home Address',
         '% of Homeless', '% of 0 Transfers', '% of Access Walk', '% of Egress Walk',
-        '% of LowIncome', '% of Refused'
+        '% of LowIncome', '% of Income Refused'
     ]
     
     # Get all race percentage columns that exist
     all_percent_cols = [col for col in route_report_df.columns if col.startswith('% of')]
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of Homeless', '% of 0 Transfers', 
-        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Refused',
+        '% of Access Walk', '% of Egress Walk', '% of LowIncome', '% of Income Refused',
         '% of Follow-Up Survey', '% of Contest - Yes', 
         '% of Contest - (Yes & Good Info)/Overall # of Records'
     ]
@@ -5499,9 +5795,11 @@ def process_route_date_data(df, elvis_df, survey_date_route, race_label_map=None
     # Sort race columns
     def get_race_name_for_sorting(col_name):
         race_name = col_name.replace('% of ', '')
+        if race_name.upper().startswith('R/E:'):
+            race_name = race_name.split(':', 1)[1].strip()
         if race_label_map:
             for col, label in race_label_map.items():
-                if label == race_name:
+                if label == race_name or race_metric_display_name(label) == col_name.replace('% of ', ''):
                     return get_race_number(col)
         return 999
     race_columns = sorted(race_columns, key=get_race_name_for_sorting)

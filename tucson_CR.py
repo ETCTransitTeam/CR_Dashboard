@@ -2580,7 +2580,7 @@ else:
                         ordered.append(col)
             return base + ordered
 
-        def main_page(data1, data2, data3):
+        def main_page(data1, data2, data3, route_level_title="Route Level Comparison", route_goal_label=None):
             """Main page display with dynamic data"""
             # -------------------------------
             # Overall Dashboard Description with full table
@@ -2675,7 +2675,11 @@ else:
 
                 # Append TOTAL row
                 filtered_df3 = append_total_row(filtered_df3)
-                st.subheader("Route Level Comparison")
+                if route_goal_label and "Route Level Goal" in filtered_df3.columns:
+                    filtered_df3 = filtered_df3.rename(
+                        columns={"Route Level Goal": route_goal_label}
+                    )
+                st.subheader(route_level_title)
                 render_styled_dataframe(filtered_df3, height=400, key='grid3')
                 # 🔒 Locked summary (TOP)
                 # total_remaining = get_total_remaining(filtered_df3)
@@ -3659,6 +3663,7 @@ else:
             "% of Black": {"low": 5, "high": 30},
             "% of Hispanic": {"low": 10, "high": 40},
             "% of LowIncome": {"low": 20, "high": 60},
+            "% of Income Refused": {"low": 5, "high": 25},
             "% of Refused": {"low": 5, "high": 25},
             "% of No Income": {"low": 5, "high": 25},  # legacy column name if present
             "% of Follow-Up Survey": {"low": 5, "high": 20},
@@ -3811,6 +3816,11 @@ else:
             
             # Create a copy of row to avoid modifying the original
             display_row = row.copy()
+            # Clarify income refused label for surveyors
+            if "% of Income Refused" in display_row:
+                display_row["Income: % of Refused"] = display_row.pop("% of Income Refused")
+            elif "% of Refused" in display_row:
+                display_row["Income: % of Refused"] = display_row.pop("% of Refused")
             # Rename "% of Contest - Yes" to "Average Contest Entry" for better display
             if "% of Contest - Yes" in display_row:
                 display_row["Average Contest Entry"] = display_row.pop("% of Contest - Yes")
@@ -7952,6 +7962,8 @@ else:
                     wkday_dir_df[cols_with_cr_sort(wkday_dir_df, wkday_dir_columns)],
                     wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
                     wkday_df[cols_with_cr_sort(wkday_df, wkday_df_columns)],
+                    route_level_title="Station Level Comparison",
+                    route_goal_label="Station Level Goal",
                 )
         else:
             if current_page == "weekday":

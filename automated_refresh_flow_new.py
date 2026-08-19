@@ -751,6 +751,11 @@ def sync_cr_goals_only(project, schema):
         df_out = df_in.copy()
         if "ROUTE_SURVEYEDCode" not in df_out.columns:
             return df_out
+        # Preserve station-level names already set (RailTotal SINGLE ENTRY STATION).
+        preset = None
+        if "ROUTE_SURVEYED" in df_out.columns:
+            s = df_out["ROUTE_SURVEYED"].astype(str).str.strip()
+            preset = s.where(~s.isin(["", "nan", "None", "none"]) & df_out["ROUTE_SURVEYED"].notna())
         df_out["ROUTE_SURVEYEDCode"] = df_out["ROUTE_SURVEYEDCode"].astype(str).str.strip()
         df_out["ROUTE_SURVEYED"] = df_out["ROUTE_SURVEYEDCode"].map(route_name_map_exact)
         missing_mask = df_out["ROUTE_SURVEYED"].isna()
@@ -760,6 +765,8 @@ def sync_cr_goals_only(project, schema):
         df_out["ROUTE_SURVEYED"] = df_out["ROUTE_SURVEYED"].fillna(
             "Unknown Route (" + df_out["ROUTE_SURVEYEDCode"] + ")"
         )
+        if preset is not None:
+            df_out["ROUTE_SURVEYED"] = preset.combine_first(df_out["ROUTE_SURVEYED"])
         return df_out
 
     wkday_comparison_df = apply_cr_sort(add_route_names(wkday_comparison_df))
@@ -1802,6 +1809,11 @@ def fetch_and_process_data(project,schema):
         # Function to safely map route names
         def add_route_names(df):
             df = df.copy()
+            # Preserve station-level names already set (RailTotal SINGLE ENTRY STATION).
+            preset = None
+            if "ROUTE_SURVEYED" in df.columns:
+                s = df["ROUTE_SURVEYED"].astype(str).str.strip()
+                preset = s.where(~s.isin(["", "nan", "None", "none"]) & df["ROUTE_SURVEYED"].notna())
             df['ROUTE_SURVEYEDCode'] = df['ROUTE_SURVEYEDCode'].astype(str).str.strip()
             df['ROUTE_SURVEYED'] = df['ROUTE_SURVEYEDCode'].map(route_name_map_exact)
 
@@ -1813,6 +1825,8 @@ def fetch_and_process_data(project,schema):
             df['ROUTE_SURVEYED'] = df['ROUTE_SURVEYED'].fillna(
                 'Unknown Route (' + df['ROUTE_SURVEYEDCode'] + ')'
             )
+            if preset is not None:
+                df["ROUTE_SURVEYED"] = preset.combine_first(df["ROUTE_SURVEYED"])
             return df
 
         # Apply to all DataFrames that need route names, then CR SORT order.
