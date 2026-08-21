@@ -24,6 +24,7 @@ from rc_auth.access import (
 from services import assignments as assignment_svc
 from services import notifications as notify_svc
 from views.assignment_manager import render_unassign_records_panel
+from views.data_source import render_data_source_control
 from views.filters import apply_record_filters, record_id_column, subset_records_for_display
 from views.record_fields import render_editable_elvis_table
 from views.ui import (
@@ -450,6 +451,7 @@ def render_cleaning_page(user: dict) -> None:
     project = require_active_project()
     if not project:
         return
+    render_data_source_control(user, project)
     project_filter = [project]
 
     run_sync = False

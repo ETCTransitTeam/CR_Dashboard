@@ -621,6 +621,7 @@ def set_combined_check_fields(
     updates: dict[str, Any],
     actor: str,
     actor_role: str,
+    action: str = "Edit-Checks",
 ) -> int:
     """Update COMBINED_CHECKS reviewer/admin fields and log changes."""
     from core.schema import repair_combined_checks_reviewer_columns
@@ -670,7 +671,7 @@ def set_combined_check_fields(
         """,
         tuple(params),
     )
-    log_changes(project_name, record_id, changes, actor, actor_role, action="Edit-Checks")
+    log_changes(project_name, record_id, changes, actor, actor_role, action=action)
     _invalidate_read_cache()
     return len(changes)
 

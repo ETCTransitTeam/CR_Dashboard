@@ -7,6 +7,7 @@ from core.data_access import load_assignments, load_combined_checks, load_record
 from services import assignments as assignment_svc
 from services import notifications as notify_svc
 from views.combined_checks_fields import render_combined_checks_table
+from views.data_source import render_data_source_control
 from views.filters import apply_record_filters
 from views.ui import (
     empty_state,
@@ -52,6 +53,8 @@ def render_review_page(user: dict) -> None:
     project = require_active_project()
     if not project:
         return
+
+    render_data_source_control(user, project)
 
     with loading("Loading the review priority queue..."):
         queue = assignment_svc.build_priority_queue(project, exclude_active=True, team="review")
