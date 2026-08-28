@@ -172,7 +172,7 @@ def get_client_allowed_projects(email: str):
     try:
         cur.execute(
             f"""
-            SELECT PROJECT_NAME
+            SELECT DISTINCT PROJECT_NAME
             FROM {APP_CONFIG_SCHEMA}.CLIENT_PROJECT_ACCESS
             WHERE LOWER(USER_EMAIL) = LOWER(%s)
               AND COALESCE(IS_ACTIVE, TRUE) = TRUE
@@ -180,11 +180,12 @@ def get_client_allowed_projects(email: str):
             """,
             (email,),
         )
-        return [
-            row[0]
-            for row in (cur.fetchall() or [])
-            if row and row[0] and is_frontend_visible_project(row[0])
-        ]
+        seen = []
+        for row in (cur.fetchall() or []):
+            name = row[0] if row else None
+            if name and is_frontend_visible_project(name) and name not in seen:
+                seen.append(name)
+        return seen
     finally:
         cur.close()
         conn.close()
@@ -1911,7 +1912,7 @@ def client_project_select_page():
 
     projects = st.session_state.get("client_candidate_projects") or []
     schema_value = get_frontend_projects()
-    projects = [p for p in projects if p in schema_value]
+    projects = list(dict.fromkeys(p for p in projects if p in schema_value))
     if not projects:
         st.error("No active projects found for your account. Contact administrator.")
         if st.button(
