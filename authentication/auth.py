@@ -1914,6 +1914,12 @@ def client_project_select_page():
     projects = [p for p in projects if p in schema_value]
     if not projects:
         st.error("No active projects found for your account. Contact administrator.")
+        if st.button(
+            "Sign out",
+            key="client_no_project_sign_out",
+            icon=":material/logout:",
+        ):
+            logout()
         return
 
     if len(projects) == 1:

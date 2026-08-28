@@ -5645,6 +5645,16 @@ else:
                             st.rerun()
                         return
 
+                    # Human-readable route label for the map filter (fallback to code if name is blank).
+                    route_labels = (
+                        location_df["route_name"].astype(str).str.strip()
+                        .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "none": pd.NA})
+                    )
+                    location_df = location_df.copy()
+                    location_df["_route_filter_label"] = route_labels.fillna(
+                        location_df["route_code"].astype(str)
+                    )
+
                     # Search (consistent with other pages)
                     search_query = st.text_input("🔍 Search", value="")
                     filtered_locations = filter_dataframe(location_df, search_query)
@@ -5674,13 +5684,15 @@ else:
 
                     st.subheader("📍 Map Filters")
 
-                    # Filter options
                     route_options = sorted(
-                        location_df["route_code"].dropna().unique().tolist()
+                        location_df["_route_filter_label"].dropna().unique().tolist()
                     )
                     location_type_options = sorted(
                         location_df["location_type"].dropna().unique().tolist()
                     )
+                    stored_routes = st.session_state.get("location_routes") or []
+                    if stored_routes and not set(stored_routes).issubset(set(route_options)):
+                        st.session_state.location_routes = []
 
                     col1, col2, col3 = st.columns(3)
 
@@ -5749,7 +5761,7 @@ else:
 
                     if selected_routes:
                         temp_filtered = temp_filtered[
-                            temp_filtered["route_code"].isin(selected_routes)
+                            temp_filtered["_route_filter_label"].isin(selected_routes)
                         ]
 
                     if selected_location_types:
@@ -7863,35 +7875,36 @@ else:
 
         # === End of Unified Button Row ===
         
-        # ---- Validation Section Box ----
-        with st.container(key="validation_section"):
-            st.html("""
-            <style>
-            div.st-key-toggle_right {
-                display: flex;
-                justify-content: flex-end;
-            }
-            </style>
-            """)
+        # ---- Validation Section Box (staff only; hidden for clients) ----
+        if role.upper() != "CLIENT":
+            with st.container(key="validation_section"):
+                st.html("""
+                <style>
+                div.st-key-toggle_right {
+                    display: flex;
+                    justify-content: flex-end;
+                }
+                </style>
+                """)
 
-            with st.container(border=True):
-                bar_left, bar_right = st.columns([10, 2], vertical_alignment="center")
+                with st.container(border=True):
+                    bar_left, bar_right = st.columns([10, 2], vertical_alignment="center")
 
-                with bar_left:
-                    st.markdown(
-                        "### Dashboard Validation "
-                        "<span style='font-size:0.85rem; color:#6b7280;'>"
-                        "— enable to view DB metrics"
-                        "</span>",
-                        unsafe_allow_html=True,
-                    )
+                    with bar_left:
+                        st.markdown(
+                            "### Dashboard Validation "
+                            "<span style='font-size:0.85rem; color:#6b7280;'>"
+                            "— enable to view DB metrics"
+                            "</span>",
+                            unsafe_allow_html=True,
+                        )
 
-                with bar_right:
-                    with st.container(key="toggle_right"):
-                        show_metrics = st.toggle("Enable", value=False, label_visibility="collapsed")
+                    with bar_right:
+                        with st.container(key="toggle_right"):
+                            show_metrics = st.toggle("Enable", value=False, label_visibility="collapsed")
 
-                if show_metrics:
-                    show_database_metrics_popup()
+                    if show_metrics:
+                        show_database_metrics_popup()
 
         # Show "no project data" on every page that uses data (not just main)
         PAGES_NOT_REQUIRING_DATA = {

@@ -548,6 +548,51 @@ def is_rail_project(project: str) -> bool:
     return "RAIL" in str(project or "").upper()
 
 
+def _rail_cr_route_and_station_ids(*cr_dfs):
+    """Unique rail CR route codes and station IDs (including direction-stripped routes)."""
+    routes = set()
+    stations = set()
+    for cr in cr_dfs:
+        if cr is None or not isinstance(cr, pd.DataFrame) or cr.empty:
+            continue
+        if "LS_NAME_CODE" in cr.columns:
+            routes.update(cr["LS_NAME_CODE"].dropna().astype(str).str.strip().tolist())
+        if "STATION_ID" in cr.columns:
+            stations.update(cr["STATION_ID"].dropna().astype(str).str.strip().tolist())
+    route_ids = set(routes)
+    for code in routes:
+        parts = str(code).split("_")
+        if len(parts) > 1 and parts[-1] in {"00", "01", "02", "03"}:
+            route_ids.add("_".join(parts[:-1]))
+    return route_ids, stations
+
+
+def filter_surveys_to_rail_cr(survey_df, route_ids, station_ids):
+    """Keep surveys that match rail CR routes or boarding stations. Bus rows are dropped."""
+    if survey_df is None or not isinstance(survey_df, pd.DataFrame) or survey_df.empty:
+        return survey_df
+    if not route_ids and not station_ids:
+        return survey_df
+
+    mask = pd.Series(False, index=survey_df.index)
+    if route_ids and "ROUTE_SURVEYEDCode" in survey_df.columns:
+        codes = survey_df["ROUTE_SURVEYEDCode"].astype(str).str.strip()
+        split_codes = codes.map(
+            lambda x: "_".join(x.split("_")[:-1]) if "_" in x else x
+        )
+        mask = mask | codes.isin(route_ids) | split_codes.isin(route_ids)
+    if route_ids and "ROUTE_SURVEYEDCode_Splited" in survey_df.columns:
+        mask = mask | survey_df["ROUTE_SURVEYEDCode_Splited"].astype(str).str.strip().isin(route_ids)
+    if station_ids:
+        for col in ("STATION_ID", "STOP_ON_CLINTID_NEW", "BOARDING LOCATION"):
+            if col in survey_df.columns:
+                mask = mask | survey_df[col].astype(str).str.strip().isin(station_ids)
+        stop_cols = check_all_characters_present(survey_df, ["stoponclntid"])
+        if stop_cols:
+            mask = mask | survey_df[stop_cols[0]].astype(str).str.strip().isin(station_ids)
+    return survey_df.loc[mask].copy()
+
+
 def apply_cr_sort(df: pd.DataFrame) -> pd.DataFrame:
     """Order rows by CR SORT when present; leave other frames unchanged."""
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
@@ -1606,16 +1651,6 @@ def fetch_and_process_data(project,schema):
         wkday_overall_df.dropna(subset=['LS_NAME_CODE'], inplace=True)
  
     time_period_config = get_time_period_config(project)
-    if project not in ["KCATA RAIL"]:
-        wkend_time_value_df=create_time_value_df_with_display(wkend_overall_df,weekend_df,time_column,project,time_period_config)
-        wkday_time_value_df=create_time_value_df_with_display(wkday_overall_df,weekday_df,time_column,project,time_period_config)
-    
-    # ----- Route Direction DF -----
-    # if project in ["ACTRANSIT", "SALEM", "KCATA", "LACMTA_FEEDER"]:
-    #     wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
-    #     wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
-    # else:
-    print("Creating weekend route direction df for other projects")
     # Prefer matched stop id for station-level rail Collect (Skyline).
     if is_rail_project(project):
         for _rail_df in (weekday_df, weekend_df):
@@ -1633,6 +1668,31 @@ def fetch_and_process_data(project,schema):
                 _rail_df["STATION_ID_SPLITTED"] = _rail_df["STATION_ID"].apply(
                     lambda x: str(x).split("_")[-1]
                 )
+        # Time Range / Collected Totals must count rail surveys only.
+        # Generic rail shares Pilot with bus; KCATA RAIL has its own path.
+        if project != "KCATA RAIL":
+            _before_wd, _before_we = len(weekday_df), len(weekend_df)
+            rail_routes, rail_stations = _rail_cr_route_and_station_ids(
+                wkday_overall_df, wkend_overall_df
+            )
+            weekday_df = filter_surveys_to_rail_cr(weekday_df, rail_routes, rail_stations)
+            weekend_df = filter_surveys_to_rail_cr(weekend_df, rail_routes, rail_stations)
+            print(
+                f"Rail-only survey filter for {project}: "
+                f"weekday {len(weekday_df)}/{_before_wd}, "
+                f"weekend {len(weekend_df)}/{_before_we}"
+            )
+
+    if project not in ["KCATA RAIL"]:
+        wkend_time_value_df=create_time_value_df_with_display(wkend_overall_df,weekend_df,time_column,project,time_period_config)
+        wkday_time_value_df=create_time_value_df_with_display(wkday_overall_df,weekday_df,time_column,project,time_period_config)
+    
+    # ----- Route Direction DF -----
+    # if project in ["ACTRANSIT", "SALEM", "KCATA", "LACMTA_FEEDER"]:
+    #     wkend_route_direction_df = create_route_direction_level_df(wkend_overall_df, weekend_df, time_column, project)
+    #     wkday_route_direction_df = create_route_direction_level_df(wkday_overall_df, weekday_df, time_column, project)
+    # else:
+    print("Creating weekend route direction df for other projects")
     # wkday_overall_df.to_csv('wkday_overall_df.csv')
     # weekday_df.to_csv('weekday_df.csv')
     # weekend_df.to_csv('weekend_df.csv')
