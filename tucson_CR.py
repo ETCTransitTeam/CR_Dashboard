@@ -5127,6 +5127,7 @@ else:
                 refusal_blanks_daily_df = pd.DataFrame()
 
             st.title("📊 Refusal Analysis Dashboard")
+            is_client = str(role).upper() == "CLIENT"
             refusal_work = refusal_analysis_df.copy() if refusal_analysis_df is not None else pd.DataFrame()
             if not refusal_work.empty and "INTERV_INIT" in refusal_work.columns:
                 refusal_work["INTERV_INIT"] = refusal_work["INTERV_INIT"].astype(str)
@@ -5134,16 +5135,23 @@ else:
             if len(refusal_work) > 1:
                 refusal_work = refusal_work.iloc[1:].copy()
 
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-                "📋 Refusal Overview",
-                "👥 Interviewer Refusals",
-                "🛣️ Route Refusals",
-                "🧑‍🤝‍🧑 Demographics",
-                "📊 Blanks % Totals",
-                "📅 Blanks % By Day",
-            ])
+            if is_client:
+                tab_overview, tab_route, tab_demo = st.tabs([
+                    "📋 Refusal Overview",
+                    "🛣️ Route Refusals",
+                    "🧑‍🤝‍🧑 Demographics",
+                ])
+            else:
+                tab_overview, tab_interv, tab_route, tab_demo, tab_blanks, tab_blanks_day = st.tabs([
+                    "📋 Refusal Overview",
+                    "👥 Interviewer Refusals",
+                    "🛣️ Route Refusals",
+                    "🧑‍🤝‍🧑 Demographics",
+                    "📊 Blanks % Totals",
+                    "📅 Blanks % By Day",
+                ])
 
-            with tab1:
+            with tab_overview:
                 if refusal_work.empty:
                     st.warning("No refusal data available. Please sync data first.")
                     if st.button("Sync Data", key="refusal_sync_tab1"):
@@ -5156,14 +5164,17 @@ else:
                     total_refusals = len(refusal_df)
                     total_approaches = len(refusal_work)
                     refusal_rate = (total_refusals / total_approaches * 100) if total_approaches > 0 else 0
+                    response_rate = (100.0 - refusal_rate) if total_approaches > 0 else 0
                 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("Total Refusals", f"{total_refusals:,}")
                 with col2:
                     st.metric("Total Approaches", f"{total_approaches:,}")
                 with col3:
                     st.metric("Overall Refusal Rate", f"{refusal_rate:.1f}%")
+                with col4:
+                    st.metric("Overall Response Rate", f"{response_rate:.1f}%")
                 
                 # Refusal reasons breakdown
                 st.subheader("Refusal Reasons Breakdown")
@@ -5223,76 +5234,77 @@ else:
                 else:
                     st.info("Date data not available for trend analysis.")
             
-            with tab2:
-                st.subheader("Interviewer Refusal Analysis")
-                
-                # FIX: Check if required columns exist
-                if 'INTERV_INIT' not in refusal_analysis_df.columns:
-                    st.warning("Interviewer data not available.")
-                else:
-                    # Get ALL interviewers from the full dataset (including those with 0 refusals)
-                    all_interviewers = refusal_analysis_df['INTERV_INIT'].unique()
+            if not is_client:
+                with tab_interv:
+                    st.subheader("Interviewer Refusal Analysis")
                     
-                    # Interviewer-level refusal statistics - include ALL interviewers
-                    interviewer_refusals = refusal_df.groupby('INTERV_INIT').size().reset_index(name='Total Refusals')
-                    
-                    # Calculate success rates for comparison - for ALL interviewers
-                    interviewer_success = refusal_analysis_df.groupby('INTERV_INIT').agg({
-                        'HAVE_5_MIN_LABEL': lambda x: (x == 'Yes I can participate in the survey (have 5 min+)').sum() if 'HAVE_5_MIN_LABEL' in refusal_analysis_df.columns else 0,
-                        'HAVE_5_MIN_FOR_SURVECode': 'count'
-                    }).reset_index()
-                    
-                    interviewer_success.columns = ['INTERV_INIT', 'Successful Surveys', 'Total Approaches']
-                    interviewer_success['Success Rate %'] = (interviewer_success['Successful Surveys'] / interviewer_success['Total Approaches'] * 100).round(2)
-                    
-                    # FIX: Use outer merge to include ALL interviewers, even those with 0 refusals
-                    interviewer_stats = pd.merge(interviewer_success, interviewer_refusals, on='INTERV_INIT', how='left')
-                    
-                    # Fill NaN values for interviewers with 0 refusals
-                    interviewer_stats['Total Refusals'] = interviewer_stats['Total Refusals'].fillna(0)
-                    interviewer_stats['Refusal Rate %'] = (interviewer_stats['Total Refusals'] / interviewer_stats['Total Approaches'] * 100).round(2)
-                    
-                    # Rename for display
-                    interviewer_stats_display = interviewer_stats.rename(columns={'INTERV_INIT': 'Interviewer'})
-                    
-                    # FIX: Show ALL interviewers, not just top 10
-                    st.write(f"**All Interviewers Refusal Statistics ({len(interviewer_stats_display)} total)**")
-                    
-                    # Add search and filter functionality for large tables
-                    search_interviewer = st.text_input("Search Interviewers:", "")
-                    
-                    if search_interviewer:
-                        filtered_interviewers = interviewer_stats_display[
-                            interviewer_stats_display['Interviewer'].str.contains(search_interviewer, case=False, na=False)
-                        ]
+                    # FIX: Check if required columns exist
+                    if 'INTERV_INIT' not in refusal_analysis_df.columns:
+                        st.warning("Interviewer data not available.")
                     else:
-                        filtered_interviewers = interviewer_stats_display
-                    
-                    # Display all interviewers with pagination or scroll
-                    st.dataframe(
-                        filtered_interviewers[['Interviewer', 'Total Approaches', 'Successful Surveys', 'Success Rate %', 'Total Refusals', 'Refusal Rate %']],
-                        use_container_width=True,
-                        hide_index=True,
-                        height=400
-                    )
-                    
-                    # Chart: Interviewers with highest refusal rates (still show top for visualization)
-                    if not interviewer_stats_display.empty:
-                        st.subheader("Top Interviewers by Refusal Rate")
-                        # Filter out interviewers with 0 approaches to avoid division errors
-                        valid_interviewers = interviewer_stats_display[interviewer_stats_display['Total Approaches'] > 0]
-                        if not valid_interviewers.empty:
-                            top_refusal_interviewers = valid_interviewers.nlargest(min(10, len(valid_interviewers)), 'Refusal Rate %')
-                            
-                            if not top_refusal_interviewers.empty:
-                                fig_interv = px.bar(top_refusal_interviewers, 
-                                                x='Interviewer', y='Refusal Rate %',
-                                                title=f"Top {len(top_refusal_interviewers)} Interviewers by Refusal Rate",
-                                                hover_data=['Total Refusals', 'Total Approaches'])
-                                fig_interv.update_layout(xaxis_tickangle=-45)
-                                st.plotly_chart(fig_interv, use_container_width=True)
+                        # Get ALL interviewers from the full dataset (including those with 0 refusals)
+                        all_interviewers = refusal_analysis_df['INTERV_INIT'].unique()
+                        
+                        # Interviewer-level refusal statistics - include ALL interviewers
+                        interviewer_refusals = refusal_df.groupby('INTERV_INIT').size().reset_index(name='Total Refusals')
+                        
+                        # Calculate success rates for comparison - for ALL interviewers
+                        interviewer_success = refusal_analysis_df.groupby('INTERV_INIT').agg({
+                            'HAVE_5_MIN_LABEL': lambda x: (x == 'Yes I can participate in the survey (have 5 min+)').sum() if 'HAVE_5_MIN_LABEL' in refusal_analysis_df.columns else 0,
+                            'HAVE_5_MIN_FOR_SURVECode': 'count'
+                        }).reset_index()
+                        
+                        interviewer_success.columns = ['INTERV_INIT', 'Successful Surveys', 'Total Approaches']
+                        interviewer_success['Success Rate %'] = (interviewer_success['Successful Surveys'] / interviewer_success['Total Approaches'] * 100).round(2)
+                        
+                        # FIX: Use outer merge to include ALL interviewers, even those with 0 refusals
+                        interviewer_stats = pd.merge(interviewer_success, interviewer_refusals, on='INTERV_INIT', how='left')
+                        
+                        # Fill NaN values for interviewers with 0 refusals
+                        interviewer_stats['Total Refusals'] = interviewer_stats['Total Refusals'].fillna(0)
+                        interviewer_stats['Refusal Rate %'] = (interviewer_stats['Total Refusals'] / interviewer_stats['Total Approaches'] * 100).round(2)
+                        
+                        # Rename for display
+                        interviewer_stats_display = interviewer_stats.rename(columns={'INTERV_INIT': 'Interviewer'})
+                        
+                        # FIX: Show ALL interviewers, not just top 10
+                        st.write(f"**All Interviewers Refusal Statistics ({len(interviewer_stats_display)} total)**")
+                        
+                        # Add search and filter functionality for large tables
+                        search_interviewer = st.text_input("Search Interviewers:", "")
+                        
+                        if search_interviewer:
+                            filtered_interviewers = interviewer_stats_display[
+                                interviewer_stats_display['Interviewer'].str.contains(search_interviewer, case=False, na=False)
+                            ]
+                        else:
+                            filtered_interviewers = interviewer_stats_display
+                        
+                        # Display all interviewers with pagination or scroll
+                        st.dataframe(
+                            filtered_interviewers[['Interviewer', 'Total Approaches', 'Successful Surveys', 'Success Rate %', 'Total Refusals', 'Refusal Rate %']],
+                            use_container_width=True,
+                            hide_index=True,
+                            height=400
+                        )
+                        
+                        # Chart: Interviewers with highest refusal rates (still show top for visualization)
+                        if not interviewer_stats_display.empty:
+                            st.subheader("Top Interviewers by Refusal Rate")
+                            # Filter out interviewers with 0 approaches to avoid division errors
+                            valid_interviewers = interviewer_stats_display[interviewer_stats_display['Total Approaches'] > 0]
+                            if not valid_interviewers.empty:
+                                top_refusal_interviewers = valid_interviewers.nlargest(min(10, len(valid_interviewers)), 'Refusal Rate %')
+                                
+                                if not top_refusal_interviewers.empty:
+                                    fig_interv = px.bar(top_refusal_interviewers, 
+                                                    x='Interviewer', y='Refusal Rate %',
+                                                    title=f"Top {len(top_refusal_interviewers)} Interviewers by Refusal Rate",
+                                                    hover_data=['Total Refusals', 'Total Approaches'])
+                                    fig_interv.update_layout(xaxis_tickangle=-45)
+                                    st.plotly_chart(fig_interv, use_container_width=True)
 
-            with tab3:
+            with tab_route:
                 st.subheader("Route Refusal Analysis")
                 
                 # FIX: Check if required columns exist
@@ -5361,7 +5373,7 @@ else:
                                 fig_routes.update_layout(xaxis_tickangle=-45)
                                 st.plotly_chart(fig_routes, use_container_width=True) 
 
-            with tab4:
+            with tab_demo:
                 st.subheader("Demographic Analysis of Refusals")
                 
                 col1, col2 = st.columns(2)
@@ -5530,53 +5542,54 @@ else:
                 else:
                     st.info("Race/ethnicity data not available.")
             
-            # Summary insights
-            st.subheader("📈 Key Insights")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**Refusal Statistics:**")
-                st.write(f"• Total refusals: {total_refusals:,}")
-                st.write(f"• Overall refusal rate: {refusal_rate:.1f}%")
+            if not is_client:
+                # Summary insights (staff only)
+                st.subheader("📈 Key Insights")
                 
-                if 'interviewer_stats_display' in locals() and not interviewer_stats_display.empty:
-                    max_refusal_interviewer = interviewer_stats_display.nlargest(1, 'Refusal Rate %')
-                    if not max_refusal_interviewer.empty:
-                        st.write(f"• Highest refusal rate interviewer: {max_refusal_interviewer.iloc[0]['Interviewer']} ({max_refusal_interviewer.iloc[0]['Refusal Rate %']}%)")
+                col1, col2 = st.columns(2)
                 
-                if 'route_stats_display' in locals() and not route_stats_display.empty:
-                    max_refusal_route = route_stats_display.nlargest(1, 'Refusal Rate %')
-                    if not max_refusal_route.empty:
-                        st.write(f"• Highest refusal rate route: {max_refusal_route.iloc[0]['Route']} ({max_refusal_route.iloc[0]['Refusal Rate %']}%)")
-            
-            with col2:
-                st.write("**Recommendations:**")
-                st.write("• Focus training on interviewers with high refusal rates")
-                st.write("• Investigate routes with consistently high refusal rates")
-                st.write("• Consider language assistance for non-English speakers")
-                st.write("• Review approach techniques in high-refusal demographic groups")
-            
+                with col1:
+                    st.write("**Refusal Statistics:**")
+                    st.write(f"• Total refusals: {total_refusals:,}")
+                    st.write(f"• Overall refusal rate: {refusal_rate:.1f}%")
+                    
+                    if 'interviewer_stats_display' in locals() and not interviewer_stats_display.empty:
+                        max_refusal_interviewer = interviewer_stats_display.nlargest(1, 'Refusal Rate %')
+                        if not max_refusal_interviewer.empty:
+                            st.write(f"• Highest refusal rate interviewer: {max_refusal_interviewer.iloc[0]['Interviewer']} ({max_refusal_interviewer.iloc[0]['Refusal Rate %']}%)")
+                    
+                    if 'route_stats_display' in locals() and not route_stats_display.empty:
+                        max_refusal_route = route_stats_display.nlargest(1, 'Refusal Rate %')
+                        if not max_refusal_route.empty:
+                            st.write(f"• Highest refusal rate route: {max_refusal_route.iloc[0]['Route']} ({max_refusal_route.iloc[0]['Refusal Rate %']}%)")
+                
+                with col2:
+                    st.write("**Recommendations:**")
+                    st.write("• Focus training on interviewers with high refusal rates")
+                    st.write("• Investigate routes with consistently high refusal rates")
+                    st.write("• Consider language assistance for non-English speakers")
+                    st.write("• Review approach techniques in high-refusal demographic groups")
+
+                with tab_blanks:
+                    _render_refusal_blanks_table(
+                        refusal_blanks_totals_df,
+                        "Refusal / No Answer (Blanks) — % of Totals",
+                        default_sort_col="TOTAL_PCT",
+                        is_daily=False,
+                    )
+
+                with tab_blanks_day:
+                    _render_refusal_blanks_table(
+                        refusal_blanks_daily_df,
+                        "Refusal / No Answer (Blanks) — % by Day",
+                        default_sort_col="TOTAL_PCT",
+                        is_daily=True,
+                    )
+
             # Navigation
             if st.button("🔙 Home Page", key="refusal_tab4_home"):
                 st.query_params["page"] = "main"
                 st.rerun()
-
-            with tab5:
-                _render_refusal_blanks_table(
-                    refusal_blanks_totals_df,
-                    "Refusal / No Answer (Blanks) — % of Totals",
-                    default_sort_col="TOTAL_PCT",
-                    is_daily=False,
-                )
-
-            with tab6:
-                _render_refusal_blanks_table(
-                    refusal_blanks_daily_df,
-                    "Refusal / No Answer (Blanks) — % by Day",
-                    default_sort_col="TOTAL_PCT",
-                    is_daily=True,
-                )
 
         def location_maps_page():
             """
