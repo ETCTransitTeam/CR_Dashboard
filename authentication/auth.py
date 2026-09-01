@@ -19,6 +19,7 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 import logging
+import threading
 import streamlit.components.v1 as components
 
 # Set up basic logging (warnings/errors only in production runtime)
@@ -112,7 +113,9 @@ def is_frontend_visible_project(project_name: str) -> bool:
     return (project_name or "").strip() not in FRONTEND_HIDDEN_PROJECTS
 
 
-def get_projects():
+@st.cache_data(ttl=120, show_spinner=False)
+def _active_project_configs() -> dict:
+    """Active project -> base schema. Cached so page loads don't re-query Snowflake."""
     conn = user_connect_to_snowflake()
     cur = conn.cursor()
 
@@ -129,6 +132,31 @@ def get_projects():
     conn.close()
 
     return projects
+
+
+_LANDING_STATS_TTL_SECONDS = 300
+_landing_stats_lock = threading.Lock()
+_landing_stats_store: dict = {}
+_landing_stats_threads: dict = {}
+
+
+def clear_landing_stats_cache() -> None:
+    """Drop cached landing-page project stats (call after a sync writes new data)."""
+    with _landing_stats_lock:
+        _landing_stats_store.clear()
+
+
+def clear_projects_cache() -> None:
+    """Drop the cached project list after project configs change."""
+    try:
+        _active_project_configs.clear()
+    except Exception:
+        pass
+    clear_landing_stats_cache()
+
+
+def get_projects():
+    return dict(_active_project_configs())
 
 
 def filter_frontend_projects(projects):
@@ -1816,6 +1844,17 @@ def _portal_select_styles() -> None:
             min-height: 95px;
             box-shadow: 0 4px 12px rgba(19, 55, 79, 0.07);
         }
+        .project-card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .project-card-left {
+            min-width: 160px;
+            flex: 0 1 180px;
+        }
         .project-card-name {
             font-size: 16px;
             font-weight: 700;
@@ -1827,6 +1866,42 @@ def _portal_select_styles() -> None:
             font-size: 12px;
             color: #63758a;
             margin: 0;
+        }
+        .project-metrics {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            background: rgb(0, 104, 148);
+            border-radius: 10px;
+            padding: 8px;
+            flex: 1 1 360px;
+        }
+        .project-metric {
+            background: rgba(255,255,255,0.62);
+            border-radius: 8px;
+            border: 1px solid rgba(180, 200, 255, 0.45);
+            padding: 6px 8px;
+            text-align: center;
+            min-width: 108px;
+            flex: 1 1 108px;
+        }
+        .project-metric-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #123f72;
+            margin: 0 0 4px 0;
+        }
+        .project-metric-value {
+            font-size: 12px;
+            font-weight: 700;
+            color: #1e3a5f;
+            background: #ffffff;
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: inline-block;
+            font-family: ui-monospace, "Roboto Mono", Menlo, monospace;
+            letter-spacing: -0.2px;
         }
         .project-chip {
             display: inline-block;
@@ -1899,6 +1974,413 @@ def enforce_client_project_session():
         "Please contact your administrator."
     )
     st.rerun()
+
+
+_HIDE_WEEKEND_LANDING_PROJECTS = frozenset({"wtp_regional_triangle_nc"})
+_AWAITING_DATA = "Awaiting Data"
+
+
+def _use_project_schema(cur, conn, schema: str) -> bool:
+    if not schema:
+        return False
+    for candidate in (schema, str(schema).upper()):
+        try:
+            cur.execute(f'USE SCHEMA "{candidate}"')
+            return True
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            try:
+                cur.execute(f"USE SCHEMA {candidate}")
+                return True
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+    return False
+
+
+def _landing_try_scalar(cur, conn, sql: str):
+    try:
+        cur.execute(sql)
+        row = cur.fetchone()
+        return row[0] if row else None
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def _format_last_refresh(value) -> str:
+    if value is None:
+        return _AWAITING_DATA
+    try:
+        from zoneinfo import ZoneInfo
+
+        dt = value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or text.lower() in {"nat", "none", "nan"}:
+                return _AWAITING_DATA
+            dt = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+        elif hasattr(value, "to_pydatetime"):
+            dt = value.to_pydatetime()
+        if getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=ZoneInfo("America/Chicago"))
+        else:
+            dt = dt.astimezone(ZoneInfo("America/Chicago"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+    except Exception:
+        return _AWAITING_DATA
+
+
+def _format_last_completed(value) -> str:
+    if value is None:
+        return _AWAITING_DATA
+    try:
+        dt = value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text or text.lower() in {"nat", "none", "nan"}:
+                return _AWAITING_DATA
+            dt = datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+        elif hasattr(value, "to_pydatetime"):
+            dt = value.to_pydatetime()
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return _AWAITING_DATA
+
+
+def _empty_landing_stats(project_name: str) -> dict:
+    return {
+        "weekday": 0,
+        "weekend": 0,
+        "last_refresh": _AWAITING_DATA,
+        "last_completed": _AWAITING_DATA,
+        "show_weekend": str(project_name or "").strip().lower() not in _HIDE_WEEKEND_LANDING_PROJECTS,
+    }
+
+
+_LANDING_TABLES = (
+    "WKDAY_COMPARISON",
+    "WKEND_COMPARISON",
+    "LAST_SURVEY_DATE",
+    "WKDAY_RAW",
+    "WKEND_RAW",
+)
+_LANDING_COLUMNS = (
+    "# of Surveys",
+    "Last_Sync_Date",
+    "Latest_Survey_Date",
+    "LocalTime",
+    "DATE_SUBMITTED",
+)
+
+
+def _q(identifier: str) -> str:
+    """Quote a Snowflake identifier so mixed-case schema names resolve."""
+    return '"' + str(identifier or "").replace('"', '""') + '"'
+
+
+def _landing_metadata(cur, schemas):
+    """One metadata read: database name, which landing tables/columns exist, real schema names."""
+    table_list = ", ".join(f"'{t}'" for t in _LANDING_TABLES)
+    column_list = ", ".join("'" + c.replace("'", "''") + "'" for c in _LANDING_COLUMNS)
+    schema_list = ", ".join(
+        "'" + str(s or "").upper().replace("'", "''") + "'" for s in schemas if s
+    )
+    if not schema_list:
+        return None, set(), {}
+    cur.execute(
+        f"""
+        SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE UPPER(TABLE_SCHEMA) IN ({schema_list})
+          AND TABLE_NAME IN ({table_list})
+          AND COLUMN_NAME IN ({column_list})
+        """
+    )
+    database = None
+    available = set()
+    schema_names = {}
+    for catalog, schema, table, column in (cur.fetchall() or []):
+        database = database or str(catalog)
+        schema_names.setdefault(str(schema).upper(), str(schema))
+        available.add((str(schema).upper(), str(table).upper(), str(column)))
+    return database, available, schema_names
+
+
+def _landing_batch_sql(project_pairs, database, available, schema_names) -> str:
+    """Single UNION ALL query so all project cards load in one round trip."""
+    selects = []
+    for project_name, schema in project_pairs:
+        schema_upper = str(schema or "").upper()
+        actual_schema = schema_names.get(schema_upper)
+        if not actual_schema:
+            continue
+        prefix = f"{_q(database)}.{_q(actual_schema)}"
+
+        def has(table, column):
+            return (schema_upper, table, column) in available
+
+        def sum_surveys(table):
+            if not has(table, "# of Surveys"):
+                return "NULL"
+            return (
+                f'(SELECT SUM(TRY_TO_NUMBER(TO_VARCHAR("# of Surveys")))'
+                f" FROM {prefix}.{_q(table)})"
+            )
+
+        # Header uses LocalTime when the raw tables have it, DATE_SUBMITTED otherwise.
+        completed_parts = []
+        for column in ("LocalTime", "DATE_SUBMITTED"):
+            completed_parts = [
+                f'SELECT MAX(TRY_TO_TIMESTAMP(TO_VARCHAR({_q(column)}))) AS ts FROM {prefix}.{_q(table)}'
+                for table in ("WKDAY_RAW", "WKEND_RAW")
+                if has(table, column)
+            ]
+            if completed_parts:
+                break
+        completed_sql = (
+            f"(SELECT MAX(ts) FROM ({' UNION ALL '.join(completed_parts)}))"
+            if completed_parts
+            else "NULL"
+        )
+        sync_sql = (
+            f'(SELECT MAX("Last_Sync_Date") FROM {prefix}.{_q("LAST_SURVEY_DATE")})'
+            if has("LAST_SURVEY_DATE", "Last_Sync_Date")
+            else "NULL"
+        )
+        latest_sql = (
+            f'(SELECT MAX("Latest_Survey_Date") FROM {prefix}.{_q("LAST_SURVEY_DATE")})'
+            if has("LAST_SURVEY_DATE", "Latest_Survey_Date")
+            else "NULL"
+        )
+        escaped_name = str(project_name).replace("'", "''")
+        selects.append(
+            f"SELECT '{escaped_name}' AS PROJECT,"
+            f" {sum_surveys('WKDAY_COMPARISON')} AS WEEKDAY_RECORDS,"
+            f" {sum_surveys('WKEND_COMPARISON')} AS WEEKEND_RECORDS,"
+            f" TO_VARCHAR({sync_sql}) AS LAST_SYNC,"
+            f" TO_VARCHAR({completed_sql}) AS LAST_COMPLETED,"
+            f" TO_VARCHAR({latest_sql}) AS LATEST_SURVEY"
+        )
+    return "\nUNION ALL\n".join(selects)
+
+
+def fetch_admin_landing_project_stats(project_pairs: tuple) -> dict:
+    """Weekday/weekend counts + last refresh/completed for admin project cards."""
+    if not project_pairs:
+        return {}
+    conn = user_connect_to_snowflake()
+    cur = conn.cursor()
+    try:
+        stats = {name: _empty_landing_stats(name) for name, _ in project_pairs}
+        database, available, schema_names = _landing_metadata(
+            cur, [schema for _, schema in project_pairs]
+        )
+        sql = _landing_batch_sql(project_pairs, database, available, schema_names) if database else ""
+        if sql:
+            cur.execute(sql)
+            for project_name, weekday, weekend, last_sync, last_completed, latest in (cur.fetchall() or []):
+                row_stats = stats.get(project_name)
+                if row_stats is None:
+                    continue
+                for key, value in (("weekday", weekday), ("weekend", weekend)):
+                    try:
+                        row_stats[key] = int(float(value)) if value is not None else 0
+                    except (TypeError, ValueError):
+                        row_stats[key] = 0
+                row_stats["last_refresh"] = _format_last_refresh(last_sync)
+                row_stats["last_completed"] = _format_last_completed(last_completed or latest)
+            return stats
+        return stats
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return _fetch_landing_stats_per_project(cur, conn, project_pairs)
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _fetch_landing_stats_per_project(cur, conn, project_pairs: tuple) -> dict:
+    """Slower per-project fallback if the batched metadata/stats query fails."""
+    stats = {}
+    for project_name, schema in project_pairs:
+        row_stats = _empty_landing_stats(project_name)
+        if not _use_project_schema(cur, conn, schema):
+            stats[project_name] = row_stats
+            continue
+        wd = _landing_try_scalar(
+            cur,
+            conn,
+            'SELECT COALESCE(SUM("# of Surveys"), 0) FROM WKDAY_COMPARISON',
+        )
+        we = _landing_try_scalar(
+            cur,
+            conn,
+            'SELECT COALESCE(SUM("# of Surveys"), 0) FROM WKEND_COMPARISON',
+        )
+        sync = _landing_try_scalar(
+            cur,
+            conn,
+            'SELECT MAX("Last_Sync_Date") FROM LAST_SURVEY_DATE',
+        )
+        completed = None
+        for col in ('"LocalTime"', '"DATE_SUBMITTED"'):
+            weekday_done = _landing_try_scalar(
+                cur,
+                conn,
+                f'SELECT MAX(TRY_TO_TIMESTAMP(TO_VARCHAR({col}))) FROM WKDAY_RAW',
+            )
+            weekend_done = _landing_try_scalar(
+                cur,
+                conn,
+                f'SELECT MAX(TRY_TO_TIMESTAMP(TO_VARCHAR({col}))) FROM WKEND_RAW',
+            )
+            candidates = [v for v in (weekday_done, weekend_done) if v is not None]
+            if candidates:
+                completed = max(candidates)
+                break
+        if completed is None:
+            completed = _landing_try_scalar(
+                cur,
+                conn,
+                'SELECT MAX("Latest_Survey_Date") FROM LAST_SURVEY_DATE',
+            )
+        if wd is not None:
+            try:
+                row_stats["weekday"] = int(wd)
+            except (TypeError, ValueError):
+                row_stats["weekday"] = 0
+        if we is not None:
+            try:
+                row_stats["weekend"] = int(we)
+            except (TypeError, ValueError):
+                row_stats["weekend"] = 0
+        row_stats["last_refresh"] = _format_last_refresh(sync)
+        row_stats["last_completed"] = _format_last_completed(completed)
+        stats[project_name] = row_stats
+    return stats
+
+
+def get_landing_stats_if_ready(schema_items: tuple):
+    """Return already-loaded project-card stats, or None when they still need loading."""
+    with _landing_stats_lock:
+        entry = _landing_stats_store.get(schema_items)
+    if not entry:
+        return None
+    loaded_at, stats = entry
+    if (time.time() - loaded_at) >= _LANDING_STATS_TTL_SECONDS:
+        return None
+    return stats
+
+
+def _landing_stats_ignoring_age(schema_items: tuple):
+    """Last loaded stats even if past the TTL. Syncs clear the store, so this is never post-sync data."""
+    with _landing_stats_lock:
+        entry = _landing_stats_store.get(schema_items)
+    return entry[1] if entry else None
+
+
+def warm_landing_stats(schema_items: tuple) -> None:
+    """
+    Load project-card stats off the script thread.
+
+    Querying inside a page run keeps the previous page on screen until Snowflake
+    answers, so the picker reads whatever is ready and this fills the rest in.
+    """
+    if not schema_items or get_landing_stats_if_ready(schema_items) is not None:
+        return
+    with _landing_stats_lock:
+        running = _landing_stats_threads.get(schema_items)
+        if running is not None and running.is_alive():
+            return
+
+        def _load():
+            try:
+                stats = fetch_admin_landing_project_stats(schema_items)
+            except Exception as exc:
+                logger.warning("Landing project stats failed: %s", exc)
+                return
+            with _landing_stats_lock:
+                _landing_stats_store[schema_items] = (time.time(), stats)
+
+        thread = threading.Thread(target=_load, name="od-landing-stats", daemon=True)
+        _landing_stats_threads[schema_items] = thread
+        thread.start()
+
+
+def wait_for_landing_stats(schema_items: tuple, timeout: float = 12.0):
+    """
+    Give the background load a bounded head start so the picker opens with numbers.
+
+    Returns None if it is still loading, in which case the caller shows placeholders.
+    """
+    stats = get_landing_stats_if_ready(schema_items)
+    if stats is not None:
+        return stats
+
+    warm_landing_stats(schema_items)
+
+    # Expired numbers beat an empty card: show them now, the refresh lands on the next visit.
+    stale = _landing_stats_ignoring_age(schema_items)
+    if stale is not None:
+        return stale
+
+    with _landing_stats_lock:
+        thread = _landing_stats_threads.get(schema_items)
+    if thread is not None:
+        thread.join(timeout)
+    return get_landing_stats_if_ready(schema_items)
+
+
+def _project_metric_html(label: str, value: str) -> str:
+    return (
+        '<div class="project-metric">'
+        f'<p class="project-metric-label">{html.escape(label)}</p>'
+        f'<p class="project-metric-value">{html.escape(value)}</p>'
+        "</div>"
+    )
+
+
+def _admin_project_card_html(project_name: str, stats: dict | None, loading: bool = False) -> str:
+    data = stats or _empty_landing_stats(project_name)
+    if loading:
+        metrics = [_project_metric_html("Weekday Records", "…")]
+        if data.get("show_weekend", True):
+            metrics.append(_project_metric_html("Weekend Records", "…"))
+        metrics.append(_project_metric_html("⏱ Last Refresh", "…"))
+        metrics.append(_project_metric_html("Last Completed", "…"))
+    else:
+        metrics = [_project_metric_html("Weekday Records", f"{int(data.get('weekday') or 0):,}")]
+        if data.get("show_weekend", True):
+            metrics.append(_project_metric_html("Weekend Records", f"{int(data.get('weekend') or 0):,}"))
+        metrics.append(_project_metric_html("⏱ Last Refresh", str(data.get("last_refresh") or _AWAITING_DATA)))
+        metrics.append(_project_metric_html("Last Completed", str(data.get("last_completed") or _AWAITING_DATA)))
+    safe_name = html.escape(project_name)
+    return f"""
+                <div class="project-card">
+                    <div class="project-card-top">
+                        <div class="project-card-left">
+                            <p class="project-card-name">{safe_name}</p>
+                            <p class="project-card-meta">OD Collection Dashboard</p>
+                            <span class="project-chip">Available</span>
+                        </div>
+                        <div class="project-metrics">
+                            {''.join(metrics)}
+                        </div>
+                    </div>
+                </div>
+                """
 
 
 def client_project_select_page():
@@ -2007,7 +2489,7 @@ def od_project_select_page():
         """
         <div class="project-hero">
             <p class="project-hero-title">Pick Your Project</p>
-            <p class="project-hero-sub">Choose an OD Collection project to open the dashboard.</p>
+            <p class="project-hero-sub">Choose an OD Collection project to open the dashboard. Cards show weekday/weekend records and last refresh times.</p>
         </div>
         <div class="project-select-wrap">
             <p class="project-select-title">Choose Your Project</p>
@@ -2017,18 +2499,29 @@ def od_project_select_page():
         unsafe_allow_html=True,
     )
 
+    # Stats are warmed in the background from the portal hub; wait only if still loading.
+    schema_items = tuple(schema_value.items())
+    landing_stats = wait_for_landing_stats(schema_items)
+    stats_warm = landing_stats is not None
+    if not stats_warm:
+        landing_stats = {}
+        if st.button(
+            "Refresh project status",
+            key="od_project_stats_refresh",
+            icon=":material/refresh:",
+        ):
+            st.rerun()
+
     cols = st.columns(2)
     for idx, project_name in enumerate(projects):
         col = cols[idx % 2]
         with col:
             st.markdown(
-                f"""
-                <div class="project-card">
-                    <p class="project-card-name">{project_name}</p>
-                    <p class="project-card-meta">OD Collection Dashboard</p>
-                    <span class="project-chip">Available</span>
-                </div>
-                """,
+                _admin_project_card_html(
+                    project_name,
+                    landing_stats.get(project_name),
+                    loading=not stats_warm,
+                ),
                 unsafe_allow_html=True,
             )
             if st.button(
@@ -2083,6 +2576,13 @@ def portal_select_page():
     if not portals:
         st.error("No portals are configured for your account. Contact an administrator.")
         return
+
+    if PORTAL_OD in portals and role != "CLIENT":
+        # Start loading project-card stats now so the OD picker opens with numbers.
+        try:
+            warm_landing_stats(tuple(get_frontend_projects().items()))
+        except Exception as exc:
+            logger.warning("Could not start landing stats warm-up: %s", exc)
 
     _portal_hub_styles()
     safe_name = html.escape(username)

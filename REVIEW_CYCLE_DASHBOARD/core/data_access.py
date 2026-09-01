@@ -535,6 +535,7 @@ def upsert_records_from_dataframe(
     df: pd.DataFrame,
     batch_id: str,
     mark_new: bool = True,
+    updated_by: str = "pipeline",
 ) -> dict[str, int]:
     """Incrementally upsert pipeline records.
 
@@ -588,7 +589,7 @@ def upsert_records_from_dataframe(
                     "BATCH_ID": batch_id,
                     "RECORD_PAYLOAD": json.dumps(merged_payload, default=str),
                     "UPDATED_AT": now,
-                    "UPDATED_BY": "pipeline",
+                    "UPDATED_BY": updated_by,
                 }
                 if supervisor_comment is not None:
                     row_update["SUPERVISOR_COMMENT"] = str(supervisor_comment).strip()
@@ -619,7 +620,7 @@ def upsert_records_from_dataframe(
                 "REASON_FOR_REMOVAL": payload.get("REASON FOR REMOVAL"),
                 "RECORD_PAYLOAD": json.dumps(payload, default=str),
                 "UPDATED_AT": now,
-                "UPDATED_BY": "pipeline",
+                "UPDATED_BY": updated_by,
             }
         )
         originals.append(
@@ -1115,14 +1116,26 @@ def store_reviewer_stats(project_name: str, batch_id: str, stats_by_sheet: dict[
     for stat_type, df in stats_by_sheet.items():
         if df is None or df.empty:
             continue
-        for _, row in df.iterrows():
-            stat_key = " | ".join(str(row.iloc[i]) for i in range(min(2, len(row.index))))
-            for col in df.columns:
+        work = df.reset_index(drop=True)
+        for _, row in work.iterrows():
+            key_parts = []
+            for i in range(min(2, len(work.columns))):
+                part = row.iloc[i]
+                if part is None or (isinstance(part, float) and pd.isna(part)):
+                    continue
+                text = str(part).strip()
+                if text and text.lower() not in {"nan", "none"}:
+                    key_parts.append(text)
+            stat_key = " | ".join(key_parts)[:512] or "summary"
+            for col in work.columns:
                 value = row[col]
-                metric_text = None
                 metric_value = None
-                if isinstance(value, (int, float)) and pd.notna(value):
+                metric_text = None
+                if value is None or (isinstance(value, float) and pd.isna(value)) or pd.isna(value):
+                    pass
+                elif pd.api.types.is_number(value) and not isinstance(value, bool):
                     metric_value = float(value)
+                    metric_text = str(value)
                 else:
                     metric_text = str(value)
                 rows.append(
@@ -1143,7 +1156,7 @@ def store_reviewer_stats(project_name: str, batch_id: str, stats_by_sheet: dict[
         (project_name,),
     )
     stats_df = pd.DataFrame(rows)
-    # One row per metric cell; reviewer_stats xlsx can exceed Snowflake's 200k expression limit.
+    stats_df["METRIC_VALUE"] = pd.to_numeric(stats_df["METRIC_VALUE"], errors="coerce")
     append_dataframe(stats_df, "REVIEWER_STATS", chunk_size=15000)
 
 

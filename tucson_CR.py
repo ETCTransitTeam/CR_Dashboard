@@ -43,7 +43,7 @@ from utils import (
     build_group_option_column_maps,
     demographic_display_key_for_group_name,
 )
-from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
+from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,clear_projects_cache,clear_landing_stats_cache,warm_landing_stats,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -691,6 +691,12 @@ else:
         selected_schema = st.session_state.get("schema") or ""
         selected_project = str(st.session_state.get("selected_project", "") or "").lower()
         schema_key = str(selected_schema).lower()
+        hide_weekend = selected_project == "wtp_regional_triangle_nc"
+        WEEKEND_MENU_LABELS = (
+            "☀︎   WEEKEND-OVERALL",
+            "⦾  WEEKEND StationWise Comparison",
+        )
+        WEEKEND_PAGE_KEYS = ("weekend", "weekend_station")
         def create_snowflake_connection():
             # Get selected project and agency
             selected_agency = st.session_state.get("selected_agency", None)
@@ -1406,6 +1412,13 @@ else:
         email = user["email"]
         role = user["role"]
 
+        if str(role).upper() != "CLIENT":
+            # Keep the project-picker cards warm so switching projects shows stats at once.
+            try:
+                warm_landing_stats(tuple(schema_value.items()))
+            except Exception:
+                pass
+
         
 
         # Sidebar Styling
@@ -2063,9 +2076,22 @@ else:
                     if 'rail' in schema_key:
                         menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
 
+            if hide_weekend:
+                menu_items = [item for item in menu_items if item not in WEEKEND_MENU_LABELS]
+
             # --- Session State ---
             if "selected_page" not in st.session_state:
                 st.session_state.selected_page = "🏠︎   Home"
+
+            if hide_weekend and (
+                current_page in WEEKEND_PAGE_KEYS
+                or st.session_state.get("selected_page") in WEEKEND_MENU_LABELS
+                or st.session_state.get("sidebar_menu") in WEEKEND_MENU_LABELS
+            ):
+                st.session_state.selected_page = "🏠︎   Home"
+                st.session_state.sidebar_menu = "🏠︎   Home"
+                st.query_params["page"] = "main"
+                st.rerun()
             
             # Check if current page is a management page
             management_page_keys = [
@@ -2423,6 +2449,14 @@ else:
         </style>
         """, unsafe_allow_html=True)
 
+            weekend_metric_html = ""
+            if not hide_weekend:
+                weekend_metric_html = f"""
+                        <div class="metric-card">
+                            <p class="metric-label">Weekend Records</p>
+                            <p class="metric-value">{weekend_records:,}</p>
+                        </div>"""
+
             # === HEADER CONTENT ===
             st.markdown(f"""
             <div class="professional-header">
@@ -2435,11 +2469,7 @@ else:
                         <div class="metric-card">
                             <p class="metric-label">Weekday Records</p>
                             <p class="metric-value">{weekday_records:,}</p>
-                        </div>
-                        <div class="metric-card">
-                            <p class="metric-label">Weekend Records</p>
-                            <p class="metric-value">{weekend_records:,}</p>
-                        </div>
+                        </div>{weekend_metric_html}
                         <div class="metric-card">
                             <p class="metric-label">⏱ Last Refresh</p>
                             <p class="metric-value">{formatted_date}</p>
@@ -7255,6 +7285,7 @@ else:
 
                     conn.commit()
                     refresh_projects()
+                    clear_projects_cache()
 
                     st.success("✅ Project added successfully")
                     st.balloons()  # celebratory balloons on success
@@ -7602,6 +7633,7 @@ else:
 
                     conn.commit()
                     refresh_projects()
+                    clear_projects_cache()
                     # Force reload of prefilled editors on next render
                     st.session_state.pop("edit_cfg_loaded_project", None)
                     st.success(
@@ -7850,6 +7882,8 @@ else:
                         # Mark sync as completed successfully BEFORE rerun
                         st.session_state.sync_running = False
                         st.session_state.sync_completed = True
+                        # Landing-page cards must show the new records/refresh time
+                        clear_landing_stats_cache()
                         # Cache key was already incremented during sync (line 4430), so data will be fresh
                         # Small delay to show success message, then rerun to refresh UI and fetch fresh data
                         time.sleep(1.5)

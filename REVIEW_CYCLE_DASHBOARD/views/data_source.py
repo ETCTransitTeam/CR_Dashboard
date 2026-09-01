@@ -54,7 +54,7 @@ def render_data_source_control(user: dict, project: str) -> None:
             key=SOURCE_KEY,
             help=(
                 "Snowflake is the live source for these pages. "
-                "Excel upload imports matching decision fields into Snowflake, then the pages reload from Snowflake."
+                "Excel upload updates matching rows and adds any new elvis_id / id rows, then the pages reload from Snowflake."
             ),
         )
         last = st.session_state.get(LAST_IMPORT_KEY) or {}
@@ -67,7 +67,7 @@ def render_data_source_control(user: dict, project: str) -> None:
 
         st.caption(
             f"Upload the KingElvis / SharePoint workbook for `{project}`. "
-            "Existing Snowflake records only."
+            "Matching rows are updated; new elvis_id / id rows are added to the queue."
         )
         uploaded = st.file_uploader(
             "Excel workbook (.xlsx)",
@@ -86,7 +86,7 @@ def render_data_source_control(user: dict, project: str) -> None:
             type="primary",
             disabled=uploaded is None,
             key="rcd_excel_import_btn",
-            help="Write workbook changes into Snowflake for matching elvis_id / id rows.",
+            help="Update matching Snowflake rows and insert any new elvis_id / id rows from the workbook.",
         ):
             actor = user.get("name") or user.get("EMAIL") or "unknown"
             role = user.get("ROLE") or user.get("role") or ""
@@ -95,7 +95,7 @@ def render_data_source_control(user: dict, project: str) -> None:
                     f"Importing workbook into Snowflake for {project}...",
                     complete_label="Workbook import finished",
                 ) as update:
-                    update(1, 2, "Reading the uploaded workbook and matching records...")
+                    update(1, 2, "Reading the workbook, updating matches, and adding new records...")
                     sheet = read_uploaded_workbook(uploaded, worksheet)
                     result = import_sheet_into_snowflake(project, str(actor), str(role), sheet)
                     update(2, 2, "Refreshing the dashboard cache...")

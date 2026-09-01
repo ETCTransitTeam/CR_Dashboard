@@ -21,6 +21,8 @@ LOCAL_DATA_DIR=local_data
 
 Place the encrypted Snowflake private key at `path/to/key.p8` relative to the repo root.
 
+Elvis Review and Combined Checks can import a KingElvis / SharePoint `.xlsx`. Choosing **Excel upload** updates matching Snowflake rows and inserts any new `elvis_id` / `id` rows so they show in the queue; both pages keep reading Snowflake afterward.
+
 ## Access
 
 After signing in at `/?page=login`, users with Review Cycle access choose **Review Cycle Dashboard** on the portal picker. Role mapping:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from core.data_access import load_reviewer_stats
@@ -37,6 +38,39 @@ def _friendly_error(exc: Exception) -> str:
     return f"Reviewer stats failed: {detail[:280]}"
 
 
+def _cell_value(row: pd.Series) -> object:
+    numeric = row.get("METRIC_VALUE")
+    if numeric is not None and pd.notna(numeric):
+        return numeric
+    text = row.get("METRIC_TEXT")
+    if text is None or (isinstance(text, float) and pd.isna(text)):
+        return None
+    cleaned = str(text).strip()
+    if not cleaned or cleaned.lower() in {"nan", "none", "<na>"}:
+        return None
+    return cleaned
+
+
+def _display_stats_table(view: pd.DataFrame) -> pd.DataFrame:
+    """Rebuild the original sheet from STAT_KEY / metric rows, including text cells."""
+    if view.empty:
+        return view
+    work = view.copy()
+    work["_value"] = work.apply(_cell_value, axis=1)
+    work = work.drop_duplicates(subset=["STAT_KEY", "METRIC_NAME"], keep="first")
+    pivot = work.pivot(index="STAT_KEY", columns="METRIC_NAME", values="_value")
+    pivot.columns = [str(col) for col in pivot.columns]
+    pivot = pivot.reset_index()
+    metric_cols = [c for c in pivot.columns if c != "STAT_KEY"]
+    # Summary sheets are one row of named metrics — show Metric / Value instead of a blank-looking grid.
+    if len(pivot) <= 1 and len(metric_cols) > 3:
+        values = pivot.iloc[0] if len(pivot) else pd.Series(dtype=object)
+        return pd.DataFrame(
+            {"Metric": metric_cols, "Value": [values.get(col) for col in metric_cols]}
+        )
+    return pivot
+
+
 def render_reviewer_stats_page(user: dict) -> None:
     from core.session_project import require_active_project
 
@@ -58,6 +92,12 @@ def render_reviewer_stats_page(user: dict) -> None:
                     complete_label="Reviewer statistics complete",
                 ) as update:
                     result = sync_project(project, phase="stats", progress=update)
+                try:
+                    from core.streamlit_cache import bump_data_cache
+
+                    bump_data_cache()
+                except Exception:
+                    pass
                 set_operation_flash(format_ingest_counts(result.get("counts", {})))
                 st.rerun()
             except Exception as exc:
@@ -78,11 +118,9 @@ def render_reviewer_stats_page(user: dict) -> None:
         with tabs[i]:
             section_title(str(stat_type))
             view = stats[stats["STAT_TYPE"].astype(str) == stat_type] if stat_types else stats
-            pivot = view.pivot_table(
-                index="STAT_KEY",
-                columns="METRIC_NAME",
-                values="METRIC_VALUE",
-                aggfunc="first",
-            ).reset_index()
-            st.dataframe(pivot, use_container_width=True, hide_index=True)
+            table = _display_stats_table(view)
+            if table.empty:
+                st.caption("No displayable rows for this sheet.")
+            else:
+                st.dataframe(table, use_container_width=True, hide_index=True)
             info_strip(f"{len(view)} metric row(s)")

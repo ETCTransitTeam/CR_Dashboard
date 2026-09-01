@@ -193,28 +193,97 @@ def _stage_script_support_files(ctx: PipelineContext) -> None:
             shutil.copy2(source, scripts_dir / helper)
 
 
-def _fetch_mysql_csv(database: str, table: str, output_path: Path) -> None:
+def _mysql_hosts() -> list[str]:
+    """SQL_HOST first, then SQL_HOST_FALLBACK, then the non-replica hostname if applicable."""
     from core.config import env
 
-    host = env("SQL_HOST")
+    hosts: list[str] = []
+    for name in ("SQL_HOST", "SQL_HOST_FALLBACK"):
+        value = env(name)
+        if value and value not in hosts:
+            hosts.append(value)
+    derived: list[str] = []
+    for host in list(hosts):
+        if "-ro-replica" in host:
+            derived.append(host.replace("-ro-replica", "", 1))
+        elif "-replica" in host:
+            derived.append(host.replace("-replica", "", 1))
+    for host in derived:
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def _fetch_mysql_csv(database: str, table: str, output_path: Path) -> None:
+    from core.config import env
+    import pymysql
+
+    hosts = _mysql_hosts()
     user = env("SQL_USER")
     password = env("SQL_PASSWORD")
-    if not all([host, user, password]):
+    if not hosts or not all([user, password]):
         raise RuntimeError("MySQL credentials missing in .env")
-    sys.path.insert(0, str(SCRIPTS_DIR))
-    from database import DatabaseConnector
 
-    connector = DatabaseConnector(host, database, user, password)
-    connector.connect()
+    conn = None
+    last_exc: Exception | None = None
+    for host in hosts:
+        try:
+            conn = pymysql.connect(
+                host=host,
+                db=database,
+                user=user,
+                password=password,
+                connect_timeout=8,
+            )
+            break
+        except Exception as exc:
+            last_exc = exc
+            conn = None
+    if conn is None:
+        tried = ", ".join(f"`{h}`" for h in hosts)
+        raise RuntimeError(
+            f"Could not connect to MySQL database `{database}` (tried {tried}): {last_exc}"
+        ) from last_exc
+
     try:
-        cur = connector.connection.cursor()
-        cur.execute(f"SELECT * FROM {table}")
-        columns = [desc[0] for desc in cur.description]
-        rows = cur.fetchall()
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT * FROM {table}")
+            columns = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
         df = pd.DataFrame(rows, columns=columns)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not read MySQL table `{database}.{table}`: {exc}"
+        ) from exc
     finally:
-        connector.disconnect()
+        conn.close()
     df.to_csv(output_path, index=False)
+
+
+def _stage_table_csv(
+    database: str | None,
+    table: str | None,
+    output_path: Path,
+    csv_name: str | None = None,
+    required: bool = True,
+) -> bool:
+    """Pull a MySQL table to CSV, or copy a local export if MySQL is unreachable."""
+    if output_path.exists():
+        return True
+    mysql_error: Exception | None = None
+    if database and table:
+        try:
+            _fetch_mysql_csv(database, table, output_path)
+            return True
+        except Exception as exc:
+            mysql_error = exc
+    resolved = _resolve_csv_input(csv_name or output_path.name)
+    if resolved is not None:
+        shutil.copy2(resolved, output_path)
+        return True
+    if required and mysql_error is not None:
+        raise mysql_error
+    return output_path.exists()
 
 
 def _input_search_dirs() -> list[Path]:
@@ -342,10 +411,19 @@ def _stage_header_mapping(ctx: PipelineContext) -> Path:
 
 
 def stage_inputs(ctx: PipelineContext) -> None:
-    if ctx.elvis_database and ctx.elvis_table:
-        _fetch_mysql_csv(ctx.elvis_database, ctx.elvis_table, ctx.workspace / ctx.elvis_csv_name)
-    if ctx.main_database and ctx.main_table and ctx.main_table_csv:
-        _fetch_mysql_csv(ctx.main_database, ctx.main_table, ctx.workspace / ctx.main_table_csv)
+    _stage_table_csv(
+        ctx.elvis_database,
+        ctx.elvis_table,
+        ctx.workspace / ctx.elvis_csv_name,
+        ctx.elvis_csv_name,
+    )
+    if ctx.main_table_csv:
+        _stage_table_csv(
+            ctx.main_database,
+            ctx.main_table,
+            ctx.workspace / ctx.main_table_csv,
+            ctx.main_table_csv,
+        )
 
     _stage_header_mapping(ctx)
     _stage_required_file(ctx, ctx.details_file)
@@ -704,6 +782,43 @@ def _run_reviewer_stats_script(ctx: PipelineContext) -> None:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"Reviewer stats failed: {_extract_script_failure(detail)}")
 
+
+def _write_records_csv_from_snowflake(ctx: PipelineContext, dest: Path) -> None:
+    """Write dashboard records as an ODBC-like CSV when MySQL is unreachable."""
+    from core.data_access import load_records, records_to_dataframe
+
+    records = load_records(ctx.project_name)
+    if records.empty:
+        raise RuntimeError(
+            f"MySQL is unreachable and there are no Review Cycle records in Snowflake "
+            f"for {ctx.project_name}. Connect to VPN (or a network that can reach "
+            "db.etc-research.com) and retry."
+        )
+    df = records_to_dataframe(records)
+    if "id" not in df.columns and "elvis_id" in df.columns:
+        df["id"] = df["elvis_id"]
+    df.to_csv(dest, index=False)
+
+
+def _stage_reviewer_stats_inputs(ctx: PipelineContext) -> None:
+    """Stage stats from local CSVs or Snowflake. Do not block on live MySQL."""
+    _stage_header_mapping(ctx)
+    elvis_path = ctx.workspace / ctx.elvis_csv_name
+    resolved = _resolve_csv_input(ctx.elvis_csv_name)
+    if resolved is not None:
+        shutil.copy2(resolved, elvis_path)
+    if not elvis_path.exists():
+        _write_records_csv_from_snowflake(ctx, elvis_path)
+
+    if ctx.main_table_csv:
+        main_path = ctx.workspace / ctx.main_table_csv
+        resolved_main = _resolve_csv_input(ctx.main_table_csv)
+        if resolved_main is not None:
+            shutil.copy2(resolved_main, main_path)
+        if not main_path.exists():
+            shutil.copy2(elvis_path, main_path)
+
+
 def run_reviewer_stats_pipeline(ctx: PipelineContext, progress=None) -> dict[str, Path]:
     """Stage inputs and run reviewer_stats_kcata.py without the flag scripts."""
     from pipeline.progress import PipelineProgress
@@ -711,7 +826,7 @@ def run_reviewer_stats_pipeline(ctx: PipelineContext, progress=None) -> dict[str
     prog = progress or PipelineProgress()
     prog.set_total(3)
     prog.update(1, "Staging reviewer-stat inputs...")
-    stage_inputs(ctx)
+    _stage_reviewer_stats_inputs(ctx)
     _stage_script_support_files(ctx)
     prog.update(2, "Preparing the KingElvis workbook...")
     _ensure_kingelvis_workbook(ctx)

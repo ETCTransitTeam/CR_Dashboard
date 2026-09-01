@@ -1,4 +1,4 @@
-"""Import Elvis Review / Combined Checks decision fields from an uploaded workbook into Snowflake."""
+"""Import an Elvis Review workbook into Snowflake: update matching rows, insert new ones."""
 
 from __future__ import annotations
 
@@ -10,7 +10,13 @@ from typing import Any
 import pandas as pd
 
 from core.config import REVIEW_CYCLE_SCHEMA
-from core.data_access import _parse_payload, load_combined_checks, load_records
+from core.data_access import (
+    _parse_payload,
+    load_combined_checks,
+    load_records,
+    upsert_combined_checks_from_dataframe,
+    upsert_records_from_dataframe,
+)
 from core.snowflake_conn import executemany, merge_upsert
 from services import history as history_svc
 from services.history import FIELD_TO_COLUMN
@@ -48,6 +54,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 class SheetsImportResult:
     rows_read: int = 0
     records_updated: int = 0
+    records_inserted: int = 0
     fields_changed: int = 0
     unmatched_rows: int = 0
     skipped_empty: int = 0
@@ -128,6 +135,14 @@ def _sheet_record_id(row: pd.Series) -> str:
         if rid:
             return rid
     return ""
+
+
+def _prepare_insert_row(row: pd.Series, record_id: str) -> pd.Series:
+    """Copy a sheet row and pin elvis_id / id so pipeline ingest can insert it."""
+    data = row.to_dict()
+    data["elvis_id"] = record_id
+    data["id"] = record_id
+    return pd.Series(data)
 
 
 def _elvis_updates_from_row(row: pd.Series, lookup: dict[str, str]) -> dict[str, Any]:
@@ -312,7 +327,7 @@ def import_sheet_into_snowflake(
     actor_role: str,
     sheet: pd.DataFrame,
 ) -> SheetsImportResult:
-    """Write matching workbook decision fields into existing Snowflake rows."""
+    """Import workbook rows into Snowflake: update matching IDs, insert missing ones."""
     result = SheetsImportResult(rows_read=int(len(sheet)))
     if sheet.empty:
         return result
@@ -329,6 +344,7 @@ def import_sheet_into_snowflake(
     check_rows: list[dict[str, Any]] = []
     history_rows: list[tuple[Any, ...]] = []
     touched: set[str] = set()
+    new_sheet_rows: list[pd.Series] = []
 
     for _, row in sheet.iterrows():
         sheet_id = _sheet_record_id(row)
@@ -337,7 +353,11 @@ def import_sheet_into_snowflake(
             continue
         persisted_id = existing.get(sheet_id) or existing.get(_norm_record_id(sheet_id))
         if not persisted_id:
-            result.unmatched_rows += 1
+            new_id = _norm_record_id(sheet_id) or sheet_id
+            if new_id in seen_ids:
+                continue
+            seen_ids.add(new_id)
+            new_sheet_rows.append(_prepare_insert_row(row, new_id))
             continue
         if persisted_id in seen_ids:
             continue
@@ -381,6 +401,34 @@ def import_sheet_into_snowflake(
             result.fields_changed += field_count
 
     result.records_updated = len(touched)
+
+    if new_sheet_rows:
+        new_df = pd.DataFrame(new_sheet_rows)
+        batch_id = f"excel_upload_{datetime.utcnow().strftime('%Y%m%d')}"
+        insert_counts = upsert_records_from_dataframe(
+            project_name,
+            new_df,
+            batch_id,
+            mark_new=True,
+            updated_by=actor or "excel_upload",
+        )
+        result.records_inserted = int(insert_counts.get("inserted") or 0)
+        if result.records_inserted:
+            upsert_combined_checks_from_dataframe(project_name, new_df, batch_id)
+            history_rows.extend(
+                _history_row(
+                    project_name,
+                    str(row.get("elvis_id") or ""),
+                    "RECORD",
+                    "",
+                    "imported",
+                    actor,
+                    actor_role,
+                )
+                for row in new_sheet_rows
+            )
+        else:
+            result.unmatched_rows += len(new_sheet_rows)
 
     if record_rows:
         merge_upsert(
@@ -426,6 +474,8 @@ def format_import_result(result: SheetsImportResult) -> str:
         f"Updated {result.records_updated} record(s)",
         f"{result.fields_changed} field(s) changed",
     ]
+    if result.records_inserted:
+        parts.append(f"{result.records_inserted} new record(s) added")
     if result.unmatched_rows:
         parts.append(f"{result.unmatched_rows} sheet row(s) had no matching Snowflake record")
     if result.skipped_empty:
