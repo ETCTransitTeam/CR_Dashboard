@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import datetime
+import html
 from pathlib import Path
 from urllib.parse import quote_plus
 import numpy as np
@@ -5165,6 +5166,14 @@ else:
             if len(refusal_work) > 1:
                 refusal_work = refusal_work.iloc[1:].copy()
 
+            if refusal_work.empty:
+                # The tabs below read totals derived from this table, so stop before building them.
+                st.warning("No refusal data available. Please sync data first.")
+                if st.button("Sync Data", key="refusal_sync_empty"):
+                    st.query_params["page"] = "main"
+                    st.rerun()
+                return
+
             if is_client:
                 tab_overview, tab_route, tab_demo = st.tabs([
                     "📋 Refusal Overview",
@@ -7408,6 +7417,215 @@ else:
             )
             selected = project_map[selected_project_name]
 
+            st.markdown(
+                """
+                <style>
+                .project-availability {
+                    border: 1px solid #dbe3ec;
+                    border-left: 6px solid var(--status-color);
+                    border-radius: 12px;
+                    padding: 1rem 1.15rem;
+                    margin: .35rem 0 .75rem 0;
+                    background: #f8fafc;
+                }
+                .project-availability.active { --status-color: #16a34a; }
+                .project-availability.inactive { --status-color: #dc2626; }
+                .project-availability-label {
+                    color: #475569;
+                    font-size: .82rem;
+                    font-weight: 700;
+                    letter-spacing: .04em;
+                    text-transform: uppercase;
+                }
+                .project-availability-name {
+                    color: #0f172a;
+                    font-size: 1.65rem;
+                    font-weight: 800;
+                    line-height: 1.2;
+                    margin-top: .15rem;
+                    word-break: break-word;
+                }
+                .project-availability-status {
+                    display: inline-block;
+                    color: #ffffff;
+                    background: var(--status-color);
+                    border-radius: 999px;
+                    padding: .18rem .7rem;
+                    font-size: .85rem;
+                    font-weight: 700;
+                    margin-top: .45rem;
+                }
+                .project-availability-copy {
+                    color: #475569;
+                    font-size: .9rem;
+                    margin-top: .45rem;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            project_is_active = bool(selected["IS_ACTIVE"])
+            status_class = "active" if project_is_active else "inactive"
+            status_label = (
+                "● Active — visible to users" if project_is_active else "● Inactive — hidden from users"
+            )
+            status_copy = (
+                "This project is available in project lists for users who have access."
+                if project_is_active
+                else "This project is removed from project lists. Its configuration and data are preserved."
+            )
+            st.markdown(
+                f"""
+                <div class="project-availability {status_class}">
+                    <div class="project-availability-label">Selected project</div>
+                    <div class="project-availability-name">{html.escape(selected_project_name)}</div>
+                    <div class="project-availability-status">{status_label}</div>
+                    <div class="project-availability-copy">{status_copy}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            status_message = st.session_state.pop("project_status_message", None)
+            if status_message:
+                st.success(status_message)
+
+            def _set_project_active_status(new_status: bool):
+                status_conn = None
+                status_cur = None
+                try:
+                    status_conn = create_snowflake_connection()
+                    status_cur = status_conn.cursor()
+                    status_cur.execute(
+                        f"""
+                        UPDATE {APP_CONFIG_SCHEMA}.PROJECT_CONFIGS
+                        SET IS_ACTIVE = %s
+                        WHERE UPPER(PROJECT_NAME) = UPPER(%s)
+                        """,
+                        (new_status, selected_project_name),
+                    )
+                    if status_cur.rowcount != 1:
+                        status_conn.rollback()
+                        st.error(
+                            f"Status change aborted: expected one project named "
+                            f"'{selected_project_name}', but updated {status_cur.rowcount}."
+                        )
+                        return
+                    status_conn.commit()
+                    refresh_projects()
+                    clear_projects_cache()
+                    st.session_state["project_status_message"] = (
+                        f"'{selected_project_name}' is now "
+                        f"{'active and available to users' if new_status else 'inactive and hidden from users'}."
+                    )
+                    st.rerun()
+                except Exception as status_error:
+                    try:
+                        if status_conn:
+                            status_conn.rollback()
+                    except Exception:
+                        pass
+                    st.error(f"Failed to change project status: {status_error}")
+                finally:
+                    try:
+                        if status_cur:
+                            status_cur.close()
+                    except Exception:
+                        pass
+                    try:
+                        if status_conn:
+                            status_conn.close()
+                    except Exception:
+                        pass
+
+            @st.dialog("Activate project?")
+            def _confirm_project_activation():
+                st.markdown(f"### Activate `{selected_project_name}`?")
+                st.write(
+                    f"**{selected_project_name}** will become available again in project lists. "
+                    "Users will only see it if their role and project access allow it."
+                )
+                st.info("The existing project configuration and data will be used.")
+                confirm_col, cancel_col = st.columns(2)
+                with confirm_col:
+                    if st.button(
+                        "Yes, activate project",
+                        type="primary",
+                        use_container_width=True,
+                        key="confirm_activate_project",
+                    ):
+                        _set_project_active_status(True)
+                with cancel_col:
+                    if st.button(
+                        "Cancel",
+                        use_container_width=True,
+                        key="cancel_activate_project",
+                    ):
+                        st.rerun()
+
+            @st.dialog("Deactivate project?")
+            def _confirm_project_deactivation():
+                st.markdown(f"### Deactivate `{selected_project_name}`?")
+                st.warning(
+                    f"**{selected_project_name}** will be removed from project lists for everyone, "
+                    "and users will not be able to open it."
+                )
+                st.write(
+                    "No project configuration or survey data will be deleted. "
+                    "You can return here and activate the project again at any time."
+                )
+                confirm_col, cancel_col = st.columns(2)
+                with confirm_col:
+                    if st.button(
+                        "Yes, deactivate project",
+                        type="primary",
+                        use_container_width=True,
+                        key="confirm_deactivate_project",
+                    ):
+                        _set_project_active_status(False)
+                with cancel_col:
+                    if st.button(
+                        "Cancel",
+                        use_container_width=True,
+                        key="cancel_deactivate_project",
+                    ):
+                        st.rerun()
+
+            activate_col, deactivate_col = st.columns(2)
+            with activate_col:
+                if st.button(
+                    f"Activate {selected_project_name}",
+                    icon=":material/check_circle:",
+                    type="primary" if not project_is_active else "secondary",
+                    disabled=project_is_active,
+                    use_container_width=True,
+                    key=f"activate_project_{selected_project_name}",
+                    help=(
+                        f"{selected_project_name} is already active."
+                        if project_is_active
+                        else f"Make {selected_project_name} available to users."
+                    ),
+                ):
+                    _confirm_project_activation()
+            with deactivate_col:
+                if st.button(
+                    f"Deactivate {selected_project_name}",
+                    icon=":material/block:",
+                    type="primary" if project_is_active else "secondary",
+                    disabled=not project_is_active,
+                    use_container_width=True,
+                    key=f"deactivate_project_{selected_project_name}",
+                    help=(
+                        f"Hide {selected_project_name} from every user."
+                        if project_is_active
+                        else f"{selected_project_name} is already inactive."
+                    ),
+                ):
+                    _confirm_project_deactivation()
+
+            st.divider()
+
             # Prefill Time Config / Day Type when project changes (outside form for Load/Clear buttons).
             edit_time_input_key = f"edit_time_period_input_{selected_project_name}"
             if st.session_state.get("edit_cfg_loaded_project") != selected_project_name:
@@ -7475,7 +7693,6 @@ else:
                         "Letters, digits, period, underscore, hyphen only."
                     ),
                 )
-                is_active = st.checkbox("Is Active", value=selected["IS_ACTIVE"])
 
                 st.markdown("---")
                 st.markdown("**Time Period Config**")
@@ -7524,7 +7741,7 @@ else:
                             label_visibility="collapsed",
                         )
 
-                submit_edit = st.form_submit_button("Update Project Config")
+                submit_edit = st.form_submit_button("Save Configuration Changes")
 
             if submit_edit:
                 elvis_db = _normalize_name_without_csv(elvis_db)
@@ -7592,8 +7809,7 @@ else:
                             DETAILS_FILE_NAME = %s,
                             CR_FILE_NAME = %s,
                             KINGELVIS_FILE_NAME = %s,
-                            ELVIS_PROJECT_NAME = %s,
-                            IS_ACTIVE = %s
+                            ELVIS_PROJECT_NAME = %s
                         WHERE UPPER(PROJECT_NAME) = UPPER(%s)
                         """,
                         (
@@ -7605,7 +7821,6 @@ else:
                             cr_file,
                             kingelvis_file,
                             elvis_project_name,
-                            bool(is_active),
                             selected_project_name,
                         ),
                     )
@@ -7965,278 +8180,235 @@ else:
             st.info("This project schema exists but no datasets are loaded yet.")
             st.stop()
 
-            
-        if 'rail' in schema_key:
-        
-            if current_page == "weekday":
-                weekday_page()
-
-            elif current_page == "weekend":
-                weekend_page()
-            elif current_page=='timedetails':
-                time_details(detail_df)
-            elif current_page=='weekday_station':
-                weekday_station_page()
-            elif current_page=='weekend_station':
-                weekend_station_page()
-            elif current_page == "location_maps":  # Add this line
-                location_maps_page()
+        # Admin pages and dashboard pages do not depend on the rail vs bus layout, so they are
+        # routed before that split. Rail projects used to fall through to Home for any page that
+        # only existed in the bus branch (Edit Project Configs, Refusal Analysis, and so on).
+        current_user_email = st.session_state.get("user", {}).get("email", "")
+        MANAGEMENT_PAGE_RENDERERS = {
+            "accounts_management": accounts_management_page,
+            "projects_configuration": projects_configuration_page,
+            "edit_project_configs": edit_project_configs_page,
+            "create_accounts": create_accounts_page,
+            "password_update": password_update_page,
+            "file_management": file_management_page,
+            "view_s3_files": view_s3_files_page,
+            "demographic_setup": demographic_setup_page,
+            "survey_tracker_setup": lambda: survey_tracker_setup_page(private_key_bytes),
+        }
+        if current_page in MANAGEMENT_PAGE_RENDERERS:
+            if not is_super_admin(current_user_email):
+                st.error("❌ Access Denied: This page is only accessible to super administrators.")
             else:
-                # Use dynamic time period columns from config when available
-                frontend_cols = get_frontend_time_period_columns(selected_project)
-                if frontend_cols:
-                    wkday_dir_columns, wkday_time_columns = frontend_cols
-                    wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
-                else:
-                    if 'uta' in selected_project:
-                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
-                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
-                                                '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
-                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
-                    elif 'tucson' in selected_project:
-                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                    elif 'stl' in selected_project:
-                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                    elif 'kcata' in selected_project:
-                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                    else:
-                        # New/unknown projects: derive columns from data dynamically
-                        wkday_dir_columns = get_dynamic_direction_columns(wkday_dir_df)
-                        wkday_time_columns = get_dynamic_time_columns(wkday_time_df)
-                        if not wkday_dir_columns:
-                            wkday_dir_columns = list(wkday_dir_df.columns)
-                        if not wkday_time_columns:
-                            wkday_time_columns = list(wkday_time_df.columns)
-                    wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['uta', 'tucson', 'stl', 'kcata']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
+                MANAGEMENT_PAGE_RENDERERS[current_page]()
+            st.stop()
 
+        requested_page_rendered = True
+        if current_page == "weekday":
+            weekday_page()
+        elif current_page == "weekend":
+            weekend_page()
+        elif current_page=='timedetails':
+            time_details(detail_df)
+        elif current_page == "dailytotals":
+            daily_totals_page()
+        elif current_page == "low_response_questions_tab":
+            low_response_questions_page()
+        elif current_page == "refusal":  # ADD THIS NEW PAGE FOR REFUSAL ANALYSIS
+            show_refusal_analysis(
+                refusal_analysis_df,
+                refusal_race_df,
+                refusal_blanks_totals_df=refusal_blanks_totals_df,
+                refusal_blanks_daily_df=refusal_blanks_daily_df,
+            )
+        elif current_page == "surveyreport":
+            if not surveyor_report_trends_df.empty and not route_report_trends_df.empty:
+                surveyor_last_row = surveyor_report_trends_df.iloc[-1].to_dict()
+                route_last_row = route_report_trends_df.iloc[-1].to_dict()
+                # Pick whichever date column exists for the survey report
+                if "Date_Surveyor" in surveyor_report_date_trends_df.columns:
+                    filter_col = "Date_Surveyor"
+                else:
+                    filter_col = "Date"
+
+                # ==========================
+                # CREATE TABS
+                # ==========================
+                tab_surveyor, tab_route = st.tabs(["Surveyor Report", "Route Report"])
+
+                # ==========================
+                # SURVEYOR TAB
+                # ==========================
+                with tab_surveyor:
+                    render_metrics(
+                        surveyor_last_row,
+                        "TRIP LOGIC & QAQC REPORT – SURVEYOR REPORT"
+                    )
+
+                    display_filtered_or_unfiltered_report(
+                        unfiltered_df=dataframes['surveyor_report_trends_df'],
+                        filtered_df=dataframes['surveyor_report_date_trends_df'],
+                        filter_column_name=filter_col,
+                        display_column_name="INTERV_INIT",
+                        section_title="Surveyor Report",
+                        date_label="Surveyor"
+                    )
+
+                # ==========================
+                # ROUTE TAB
+                # ==========================
+                with tab_route:
+                    render_metrics(
+                        route_last_row,
+                        "TRIP LOGIC & QAQC REPORT – ROUTE REPORT"
+                    )
+
+                    display_filtered_or_unfiltered_report(
+                        unfiltered_df=dataframes['route_report_trends_df'],
+                        filtered_df=dataframes['route_report_date_trends_df'],
+                        filter_column_name="Date_Route",
+                        display_column_name="ROUTE",
+                        section_title="Route Report",
+                        date_label="Route"
+                    )
+
+            else:
+                st.warning("No survey/route report data available.")
+
+        elif current_page == "route_comparison":
+            route_comparison_page()
+        elif current_page == "reverse_routes":
+            reverse_routes_page()
+        elif current_page == "location_maps":  # Add this line
+            location_maps_page()
+        elif current_page == "demographic":
+            bucket_name = os.getenv("bucket_name")
+            proj = st.session_state.get("selected_project")
+            demographic_setup = (
+                load_demographic_setup_from_s3(bucket_name, proj) if bucket_name and proj else None
+            )
+            if demographic_setup is None:
+                st.title("🧭 Demographic Review")
+                st.info(
+                    "**Demographics are not configured for this project yet.**\n\n"
+                    "There is no demographic setup file in storage, so nothing is shown here on purpose. "
+                    "Charts will appear after a super administrator completes **Demographic Setup** and the "
+                    "survey refresh runs. If you need this turned on, contact your administrator "
+                    "— setup is not available to all users."
+                )
+            elif not (demographic_setup.get("question_dict") or {}):
+                st.title("🧭 Demographic Review")
+                st.warning(
+                    "A demographic setup file exists, but no survey fields are selected yet. "
+                    "Ask a super administrator to open **Demographic Setup** and choose fields from the DATA DICTIONARY."
+                )
+            elif (
+                demographic_review_df is not None
+                and not demographic_review_df.empty
+                and "Question" in demographic_review_df.columns
+            ):
+                demographic_review_page(demographic_review_df)
+            else:
+                st.title("🧭 Demographic Review")
+                st.warning(
+                    "No demographic breakdown is in the database yet. "
+                    "After an administrator saves **Demographic Setup** and the pipeline runs, results will appear here."
+                )
+        elif current_page=='weekday_station':
+            weekday_station_page()
+        elif current_page=='weekend_station':
+            weekend_station_page()
+        else:
+            requested_page_rendered = False
+
+        if requested_page_rendered:
+            st.stop()
+
+        if 'rail' in schema_key:
+            # Home dashboard: rail projects use station-level tables.
+            # Use dynamic time period columns from config when available
+            frontend_cols = get_frontend_time_period_columns(selected_project)
+            if frontend_cols:
+                wkday_dir_columns, wkday_time_columns = frontend_cols
+                wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
+            else:
+                if 'uta' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED','STATION_ID',  '(0) Collect', '(0) Remain','(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain','(5) Collect', '(5) Remain',
+                                            '(0) Goal','(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal','(5) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4','5']
+                elif 'tucson' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                elif 'stl' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                elif 'kcata' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                else:
+                    # New/unknown projects: derive columns from data dynamically
+                    wkday_dir_columns = get_dynamic_direction_columns(wkday_dir_df)
+                    wkday_time_columns = get_dynamic_time_columns(wkday_time_df)
+                    if not wkday_dir_columns:
+                        wkday_dir_columns = list(wkday_dir_df.columns)
+                    if not wkday_time_columns:
+                        wkday_time_columns = list(wkday_time_df.columns)
+                wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['uta', 'tucson', 'stl', 'kcata']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
+
+            main_page(
+                wkday_dir_df[cols_with_cr_sort(wkday_dir_df, wkday_dir_columns)],
+                wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
+                wkday_df[cols_with_cr_sort(wkday_df, wkday_df_columns)],
+                route_level_title="Station Level Comparison",
+                route_goal_label="Station Level Goal",
+            )
+        else:
+            # Home dashboard: bus and other projects use route-level tables.
+            # Use dynamic time period columns from config when available
+            frontend_cols = get_frontend_time_period_columns(selected_project)
+            if frontend_cols:
+                wkday_dir_columns, wkday_time_columns = frontend_cols
+                wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
+            else:
+                if 'tucson' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                elif 'lacmta_feeder' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
+                elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
+                    wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
+                                            '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
+                                            '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
+                    wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4', '5']
+                else:
+                    # New/unknown projects: derive columns from data dynamically
+                    wkday_dir_columns = get_dynamic_direction_columns(wkday_dir_df)
+                    wkday_time_columns = get_dynamic_time_columns(wkday_time_df)
+                    if not wkday_dir_columns:
+                        wkday_dir_columns = list(wkday_dir_df.columns)
+                    if not wkday_time_columns:
+                        wkday_time_columns = list(wkday_time_df.columns)
+                wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['tucson', 'lacmta_feeder', 'kcata', 'actransit', 'salem']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
+
+            try:
                 main_page(
                     wkday_dir_df[cols_with_cr_sort(wkday_dir_df, wkday_dir_columns)],
                     wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
                     wkday_df[cols_with_cr_sort(wkday_df, wkday_df_columns)],
-                    route_level_title="Station Level Comparison",
-                    route_goal_label="Station Level Goal",
                 )
-        else:
-            if current_page == "weekday":
-                weekday_page()
-            elif current_page == "weekend":
-                weekend_page()
-            elif current_page=='timedetails':
-                time_details(detail_df)
-            elif current_page == "dailytotals":
-                daily_totals_page()
-            elif current_page == "low_response_questions_tab":
-                low_response_questions_page()
-            elif current_page == "refusal":  # ADD THIS NEW PAGE FOR REFUSAL ANALYSIS
-                show_refusal_analysis(
-                    refusal_analysis_df,
-                    refusal_race_df,
-                    refusal_blanks_totals_df=refusal_blanks_totals_df,
-                    refusal_blanks_daily_df=refusal_blanks_daily_df,
-                )
-            elif current_page == "surveyreport":
-                if not surveyor_report_trends_df.empty and not route_report_trends_df.empty:
-                    surveyor_last_row = surveyor_report_trends_df.iloc[-1].to_dict()
-                    route_last_row = route_report_trends_df.iloc[-1].to_dict()
-                    # Pick whichever date column exists for the survey report
-                    if "Date_Surveyor" in surveyor_report_date_trends_df.columns:
-                        filter_col = "Date_Surveyor"
-                    else:
-                        filter_col = "Date"
-
-                    # ==========================
-                    # CREATE TABS
-                    # ==========================
-                    tab_surveyor, tab_route = st.tabs(["Surveyor Report", "Route Report"])
-
-                    # ==========================
-                    # SURVEYOR TAB
-                    # ==========================
-                    with tab_surveyor:
-                        render_metrics(
-                            surveyor_last_row,
-                            "TRIP LOGIC & QAQC REPORT – SURVEYOR REPORT"
-                        )
-
-                        display_filtered_or_unfiltered_report(
-                            unfiltered_df=dataframes['surveyor_report_trends_df'],
-                            filtered_df=dataframes['surveyor_report_date_trends_df'],
-                            filter_column_name=filter_col,
-                            display_column_name="INTERV_INIT",
-                            section_title="Surveyor Report",
-                            date_label="Surveyor"
-                        )
-
-                    # ==========================
-                    # ROUTE TAB
-                    # ==========================
-                    with tab_route:
-                        render_metrics(
-                            route_last_row,
-                            "TRIP LOGIC & QAQC REPORT – ROUTE REPORT"
-                        )
-
-                        display_filtered_or_unfiltered_report(
-                            unfiltered_df=dataframes['route_report_trends_df'],
-                            filtered_df=dataframes['route_report_date_trends_df'],
-                            filter_column_name="Date_Route",
-                            display_column_name="ROUTE",
-                            section_title="Route Report",
-                            date_label="Route"
-                        )
-
-                else:
-                    st.warning("No survey/route report data available.")
-
-            elif current_page == "route_comparison":
-                route_comparison_page()
-            elif current_page == "reverse_routes":
-                reverse_routes_page()
-            elif current_page == "location_maps":  # Add this line
-                location_maps_page()
-            elif current_page == "demographic":
-                bucket_name = os.getenv("bucket_name")
-                proj = st.session_state.get("selected_project")
-                demographic_setup = (
-                    load_demographic_setup_from_s3(bucket_name, proj) if bucket_name and proj else None
-                )
-                if demographic_setup is None:
-                    st.title("🧭 Demographic Review")
-                    st.info(
-                        "**Demographics are not configured for this project yet.**\n\n"
-                        "There is no demographic setup file in storage, so nothing is shown here on purpose. "
-                        "Charts will appear after a super administrator completes **Demographic Setup** and the "
-                        "survey refresh runs. If you need this turned on, contact your administrator "
-                        "— setup is not available to all users."
-                    )
-                elif not (demographic_setup.get("question_dict") or {}):
-                    st.title("🧭 Demographic Review")
-                    st.warning(
-                        "A demographic setup file exists, but no survey fields are selected yet. "
-                        "Ask a super administrator to open **Demographic Setup** and choose fields from the DATA DICTIONARY."
-                    )
-                elif (
-                    demographic_review_df is not None
-                    and not demographic_review_df.empty
-                    and "Question" in demographic_review_df.columns
-                ):
-                    demographic_review_page(demographic_review_df)
-                else:
-                    st.title("🧭 Demographic Review")
-                    st.warning(
-                        "No demographic breakdown is in the database yet. "
-                        "After an administrator saves **Demographic Setup** and the pipeline runs, results will appear here."
-                    )
-            elif current_page == "accounts_management":
-                # Super admin check in routing
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    accounts_management_page()
-            elif current_page == "projects_configuration":
-                # Super admin check in routing
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    projects_configuration_page()
-            elif current_page == "edit_project_configs":
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    edit_project_configs_page()
-            elif current_page == "create_accounts":
-                # Super admin check in routing
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    create_accounts_page()
-            elif current_page == "password_update":
-                # Super admin check in routing
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    password_update_page()
-            elif current_page == "file_management":
-                # Super admin check in routing
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    file_management_page()
-            elif current_page == "view_s3_files":
-                # Super admin check in routing
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    view_s3_files_page()
-            elif current_page == "demographic_setup":
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    demographic_setup_page()
-            elif current_page == "survey_tracker_setup":
-                current_user_email = st.session_state.get("user", {}).get("email", "")
-                if not is_super_admin(current_user_email):
-                    st.error("❌ Access Denied: This page is only accessible to super administrators.")
-                else:
-                    survey_tracker_setup_page(private_key_bytes)
-
-            else:
-                # Use dynamic time period columns from config when available
-                frontend_cols = get_frontend_time_period_columns(selected_project)
-                if frontend_cols:
-                    wkday_dir_columns, wkday_time_columns = frontend_cols
-                    wkday_df_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
-                else:
-                    if 'tucson' in selected_project:
-                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                    elif 'lacmta_feeder' in selected_project:
-                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain',
-                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal']
-                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4']
-                    elif 'kcata' in selected_project or 'actransit' in selected_project or 'salem' in selected_project:
-                        wkday_dir_columns = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', '(1) Collect', '(1) Remain',
-                                                '(2) Collect', '(2) Remain', '(3) Collect', '(3) Remain', '(4) Collect', '(4) Remain', '(5) Collect', '(5) Remain',
-                                                '(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']
-                        wkday_time_columns=['Display_Text', 'Original Text', 'Time Range', '1', '2', '3', '4', '5']
-                    else:
-                        # New/unknown projects: derive columns from data dynamically
-                        wkday_dir_columns = get_dynamic_direction_columns(wkday_dir_df)
-                        wkday_time_columns = get_dynamic_time_columns(wkday_time_df)
-                        if not wkday_dir_columns:
-                            wkday_dir_columns = list(wkday_dir_df.columns)
-                        if not wkday_time_columns:
-                            wkday_time_columns = list(wkday_time_df.columns)
-                    wkday_df_columns = get_dynamic_route_level_columns(wkday_df) if not any(x in selected_project for x in ['tucson', 'lacmta_feeder', 'kcata', 'actransit', 'salem']) else ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'Route Level Goal', '# of Surveys', 'Remaining']
-
-                try:
-                    main_page(
-                        wkday_dir_df[cols_with_cr_sort(wkday_dir_df, wkday_dir_columns)],
-                        wkday_time_df[[c for c in wkday_time_columns if c in wkday_time_df.columns]],
-                        wkday_df[cols_with_cr_sort(wkday_df, wkday_df_columns)],
-                    )
-                except KeyError as e:
-                    st.error(f"⚠️ Missing columns in data: {e}")
-                    st.error("Available columns in weekday direction data:")
-                    st.write(wkday_dir_df.columns.tolist())
-                    st.stop()  # Prevent further execution
+            except KeyError as e:
+                st.error(f"⚠️ Missing columns in data: {e}")
+                st.error("Available columns in weekday direction data:")
+                st.write(wkday_dir_df.columns.tolist())
+                st.stop()  # Prevent further execution
