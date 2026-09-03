@@ -45,7 +45,7 @@ from utils import (
     build_group_option_column_maps,
     demographic_display_key_for_group_name,
 )
-from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,clear_projects_cache,clear_landing_stats_cache,warm_landing_stats,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
+from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,clear_projects_cache,clear_landing_stats_cache,warm_landing_stats,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_use_client_view_switch,is_client_view,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -671,6 +671,9 @@ else:
             st.stop()
         if current_page == "field_assignments":
             _fa_user = st.session_state.get("user", {})
+            if is_client_view(_fa_user):
+                st.query_params["page"] = "main"
+                st.rerun()
             if not can_access_survey_assignment_manager(
                 _fa_user.get("email", ""),
                 _fa_user.get("role"),
@@ -1413,6 +1416,7 @@ else:
         username = user["username"]
         email = user["email"]
         role = user["role"]
+        client_view_active = is_client_view(user)
 
         if str(role).upper() != "CLIENT":
             # Keep the project-picker cards warm so switching projects shows stats at once.
@@ -1437,6 +1441,25 @@ else:
         padding-top: 1rem !important;
         animation: slideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         backdrop-filter: blur(10px);
+    }
+
+    .od-client-view-chip {
+        margin: 8px 0 4px 0;
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: #e0f2fe;
+        color: #0c4a6e;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid #7dd3fc;
+        text-align: center;
+    }
+
+    .od-view-why {
+        font-size: 11px;
+        color: #4b5563;
+        line-height: 1.35;
+        margin: 6px 0 2px 0;
     }
 
     /* === ANIMATIONS === */
@@ -1941,23 +1964,77 @@ else:
         # --- Sidebar Layout ---
         with st.sidebar:
             # --- Profile Section ---
+            profile_role_label = str(role)
+            if can_use_client_view_switch(email) and client_view_active:
+                profile_role_label = (
+                    "Super Admin (Client view)"
+                    if is_super_admin(email)
+                    else f"{str(role).upper()} (Client view)"
+                )
             st.markdown(f"""
             <div class="profile-card">
                 <div class="profile-initial">{username[0].upper()}</div>
                 <div><strong>{username}</strong></div>
                 <div style="font-size:12px;color:black;">{email}</div>
-                <div style="font-size:12px;color:black;">Role: {role}</div>
+                <div style="font-size:12px;color:black;">Role: {profile_role_label}</div>
                 <div style="font-size: 11px;color: rgb(255, 255, 255);margin-top: 8px;padding: 4px 8px;background: rgb(0 104 148);border-radius: 6px; !important;">
                     Project: <strong>{st.session_state.get("selected_project", "None")}</strong>
                 </div>
             </div>
             """, unsafe_allow_html=True)
+
+            # PM / Super Admin: Client vs Admin dashboard preview (session-only)
+            if can_use_client_view_switch(email):
+                st.markdown("<div class='section-label'>Dashboard view</div>", unsafe_allow_html=True)
+                if "od_view_mode" not in st.session_state:
+                    st.session_state.od_view_mode = "admin"
+                _view_options = ["Admin view", "Client view"]
+                _view_default = (
+                    "Client view"
+                    if str(st.session_state.get("od_view_mode", "admin")).lower() == "client"
+                    else "Admin view"
+                )
+                if "od_dashboard_view_seg" not in st.session_state:
+                    st.session_state.od_dashboard_view_seg = _view_default
+                _selected_view = st.segmented_control(
+                    "Dashboard view",
+                    options=_view_options,
+                    key="od_dashboard_view_seg",
+                    label_visibility="collapsed",
+                    help=(
+                        "Use Client view on client calls so the screen matches what they see "
+                        "(fewer pages, no Sync or Validation). Use Admin view for your own weekly review."
+                    ),
+                )
+                if _selected_view is None:
+                    _selected_view = _view_default
+                _new_mode = (
+                    "client"
+                    if _selected_view == "Client view"
+                    else "admin"
+                )
+                if _new_mode != str(st.session_state.get("od_view_mode", "admin")).lower():
+                    st.session_state.od_view_mode = _new_mode
+                    st.rerun()
+                st.markdown(
+                    '<p class="od-view-why">Use <strong>Client view</strong> on client calls so the '
+                    "screen matches what they see (fewer pages, no Sync or Validation). "
+                    "Use <strong>Admin view</strong> for your own weekly review.</p>",
+                    unsafe_allow_html=True,
+                )
+                client_view_active = is_client_view(user)
+                if client_view_active:
+                    st.markdown(
+                        '<div class="od-client-view-chip">You are seeing the client dashboard</div>',
+                        unsafe_allow_html=True,
+                    )
+
             st.markdown('<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 0;">', unsafe_allow_html=True)
             st.markdown("<div class='section-label'>Filters</div>", unsafe_allow_html=True)
             search_query = st.text_input("Search", placeholder="Search here...", label_visibility="collapsed")
 
             # === ENHANCED PROJECT SWITCHER WITH MODAL ===
-            if role.upper() != "CLIENT":
+            if not client_view_active:
                 st.markdown("---")
                 st.markdown("<div class='section-label'>Admin Controls</div>", unsafe_allow_html=True)
                 
@@ -2036,8 +2113,8 @@ else:
             st.markdown("<div class='section-label'>Dashboard Pages</div>", unsafe_allow_html=True)
 
             # --- Menu Items ---
-            if role.upper() == "CLIENT":
-                # Show only these 4 pages for CLIENT role
+            if client_view_active:
+                # Client role, or staff previewing Client view
                 menu_items = [
                     "🏠︎   Home",
                     "🗓︎   WEEKDAY-OVERALL", 
@@ -2160,11 +2237,14 @@ else:
                     on_change=on_dashboard_change,
                 )
 
-            # --- Survey Assignment Manager (super admins + ADMIN role) ---
+            # --- Survey Assignment Manager (hidden in Client view) ---
             current_user_email = st.session_state.get("user", {}).get("email", "")
             current_user_role = st.session_state.get("user", {}).get("role", "")
             user_portals = allowed_portals(current_user_email, current_user_role)
-            if can_access_survey_assignment_manager(current_user_email, current_user_role):
+            if (
+                not client_view_active
+                and can_access_survey_assignment_manager(current_user_email, current_user_role)
+            ):
                 st.markdown(
                     '<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">',
                     unsafe_allow_html=True,
@@ -2173,20 +2253,20 @@ else:
                     st.query_params["page"] = "field_assignments"
                     st.rerun()
 
-            # --- Management section for super admins ---
-            if is_super_admin(current_user_email):
+            # --- Management section for super admins (hidden in Client view) ---
+            if is_super_admin(current_user_email) and not client_view_active:
                 st.markdown(
                     '<hr style="border: 0.2px solid black; margin-top: 24px; margin-bottom: 12px;">',
                     unsafe_allow_html=True,
                 )
                 st.markdown("<div class='section-label'>Management</div>", unsafe_allow_html=True)
 
-            if len(user_portals) > 1:
+            if len(user_portals) > 1 and not client_view_active:
                 if st.button("Switch Portal", use_container_width=True):
                     st.query_params["page"] = "portal_select"
                     st.rerun()
 
-            if is_super_admin(current_user_email):
+            if is_super_admin(current_user_email) and not client_view_active:
                 if st.button("Accounts Management", use_container_width=True, type="primary"):
                     st.session_state.selected_page = "🏠︎   Home"
                     if "selected_management_page" in st.session_state:
@@ -2490,6 +2570,12 @@ else:
         # Call the function right after your sidebar
         create_professional_header()
         # === END PROFESSIONAL HEADER ===
+
+        if client_view_active and can_use_client_view_switch(email):
+            st.info(
+                "Client view is on — this matches what the client sees. "
+                "Switch back to **Admin view** in the sidebar when you are done."
+            )
 
         # === SUCCESS MESSAGE (Auto-disappearing) ===
         if st.session_state.get("show_switch_success", False):
@@ -5159,7 +5245,7 @@ else:
                 refusal_blanks_daily_df = pd.DataFrame()
 
             st.title("📊 Refusal Analysis Dashboard")
-            is_client = str(role).upper() == "CLIENT"
+            is_client = client_view_active
             refusal_work = refusal_analysis_df.copy() if refusal_analysis_df is not None else pd.DataFrame()
             if not refusal_work.empty and "INTERV_INIT" in refusal_work.columns:
                 refusal_work["INTERV_INIT"] = refusal_work["INTERV_INIT"].astype(str)
@@ -7887,7 +7973,7 @@ else:
             if "sync_running" not in st.session_state:
                 st.session_state.sync_running = False
 
-            if role.upper() != "CLIENT":
+            if not client_view_active:
                 # Initialize sync flags
                 if "sync_running" not in st.session_state:
                     st.session_state.sync_running = False
@@ -8133,12 +8219,12 @@ else:
 
         # Button Section
         with header_col2:
-            if role.upper() != "CLIENT":
+            if not client_view_active:
                 if st.button("Export Elvis Data"):
                     export_elvis_data()
 
         with header_col3:
-            if role.upper() != "CLIENT":
+            if not client_view_active:
                 if current_page == "weekend":
                     csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
                     st.download_button(
@@ -8164,7 +8250,7 @@ else:
         # === End of Unified Button Row ===
         
         # ---- Validation Section Box (staff only; hidden for clients) ----
-        if role.upper() != "CLIENT":
+        if not client_view_active:
             with st.container(key="validation_section"):
                 st.html("""
                 <style>
@@ -8221,6 +8307,13 @@ else:
             "demographic_setup": demographic_setup_page,
             "survey_tracker_setup": lambda: survey_tracker_setup_page(private_key_bytes),
         }
+        if current_page in MANAGEMENT_PAGE_RENDERERS and client_view_active:
+            # Client view preview must not open management tools.
+            st.query_params["page"] = "main"
+            st.session_state.selected_page = "🏠︎   Home"
+            if "selected_management_page" in st.session_state:
+                del st.session_state.selected_management_page
+            st.rerun()
         if current_page in MANAGEMENT_PAGE_RENDERERS:
             if not is_super_admin(current_user_email):
                 st.error("❌ Access Denied: This page is only accessible to super administrators.")

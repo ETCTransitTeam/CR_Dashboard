@@ -1083,6 +1083,40 @@ def is_super_admin(email):
     return email.lower() in [admin_email.lower() for admin_email in SUPER_ADMIN_EMAILS]
 
 
+# PMs who can preview the OD Dashboard as a client without changing their real role.
+# Super admins also get the switch via can_use_client_view_switch().
+PM_VIEW_SWITCH_EMAILS = [
+    "aaron.hekele@etcinstitute.com",
+    "fred.gsell@etcinstitute.com",
+]
+
+
+def can_use_client_view_switch(email: str | None = None) -> bool:
+    """True for allowlisted PMs and Super Admins (OD Client/Admin view toggle)."""
+    email_l = str(email or "").strip().lower()
+    if not email_l:
+        return False
+    if is_super_admin(email_l):
+        return True
+    return email_l in {e.lower() for e in PM_VIEW_SWITCH_EMAILS}
+
+
+def is_client_view(user=None) -> bool:
+    """
+    True when the UI should look like a CLIENT dashboard.
+
+    Real CLIENT accounts always get client UI. Allowlisted staff only get it when
+    session od_view_mode is "client" (Admin view is the default after login).
+    """
+    if user is None:
+        user = st.session_state.get("user") or {}
+    if str(user.get("role", "")).upper() == "CLIENT":
+        return True
+    if not can_use_client_view_switch(user.get("email", "")):
+        return False
+    return str(st.session_state.get("od_view_mode", "admin")).lower() == "client"
+
+
 def can_access_survey_assignment_manager(email: str, role: str | None = None) -> bool:
     """Survey Assignment Manager: super admins and ADMIN role only (not CLIENT or USER)."""
     if is_super_admin(email):
