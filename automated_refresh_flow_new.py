@@ -1024,6 +1024,7 @@ def fetch_and_process_data(project,schema):
     if merged_df is not None:
         merged_df.columns = merged_df.columns.str.strip()
         merged_df = merged_df.rename(columns=KCATA_HEADER_MAPPING)
+        merged_df = collapse_duplicate_columns(merged_df, "merged elvis/baby_elvis data")
         if not merged_df.empty:
             dropped_first_record = merged_df.iloc[0].to_dict()
             print("⚠️ Dropping first record (Index 0):")
@@ -1044,6 +1045,7 @@ def fetch_and_process_data(project,schema):
     if baby_elvis_df is not None:
         baby_elvis_df.columns = baby_elvis_df.columns.str.strip()
         baby_elvis_df = baby_elvis_df.rename(columns=KCATA_HEADER_MAPPING)
+        baby_elvis_df = collapse_duplicate_columns(baby_elvis_df, "baby_elvis refusal data")
         baby_elvis_df = normalize_survey_columns_for_reports(baby_elvis_df)
         # baby_elvis_df = baby_elvis_df.drop(index=0).reset_index(drop=True)
 

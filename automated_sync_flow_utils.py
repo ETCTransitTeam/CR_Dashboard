@@ -44,6 +44,59 @@ def check_all_characters_present(df, columns_to_check):
     return matching_columns
 
 
+def collapse_duplicate_columns(df, context=""):
+    """Keep one column per name, preferring the copy that holds the most values.
+
+    A header rename can point two source columns at the same target name, and pandas
+    keeps both. Every later `df['X'] = ...` or `df[[...]] = ...` then sees more columns
+    than keys and raises "Columns must be same length as key" far from the real cause,
+    so collapse the duplicates as soon as the rename happens.
+    """
+    if not isinstance(df, pd.DataFrame) or df.columns.is_unique:
+        return df
+
+    keep_positions = []
+    seen = set()
+    for name in df.columns:
+        if name in seen:
+            continue
+        seen.add(name)
+        positions = [i for i, column in enumerate(df.columns) if column == name]
+        if len(positions) == 1:
+            keep_positions.append(positions[0])
+            continue
+        keep_positions.append(max(positions, key=lambda i: int(df.iloc[:, i].notna().sum())))
+        where = f" in {context}" if context else ""
+        print(
+            f"⚠️ Duplicate column '{name}'{where}: kept 1 of {len(positions)} copies "
+            "(the one with the most values)."
+        )
+
+    keep_positions.sort()
+    return df.iloc[:, keep_positions].copy()
+
+
+def assign_split_columns(df, source_col, target_cols, sep="_"):
+    """Split `source_col` into `target_cols`, assigning one column at a time.
+
+    `df[[a, b]] = series.str.split(sep, expand=True)` breaks whenever a value carries
+    an unexpected number of separators (a route name or surveyor code containing "_",
+    or a frame that only holds the 'Total' row). Capping the split keeps any extra
+    separators inside the final field.
+    """
+    if not isinstance(df, pd.DataFrame) or not target_cols:
+        return df
+
+    source = df[source_col]
+    if isinstance(source, pd.DataFrame):
+        source = source.iloc[:, 0]
+
+    parts = source.astype(str).str.split(sep, n=len(target_cols) - 1, expand=True)
+    for position, target in enumerate(target_cols):
+        df[target] = parts[position] if position in parts.columns else np.nan
+    return df
+
+
 def _ensure_standard_column(df: pd.DataFrame, standard_name: str, aliases: List[str], default_value="") -> pd.DataFrame:
     """
     Ensure a standardized column exists in df.
@@ -4805,7 +4858,7 @@ def process_surveyor_date_data_transit_ls6(
     
     # Split Date_Surveyor back into Date and Surveyor columns
     # Keep Date_Surveyor for filtering purposes
-    summary_df[['Date', 'INTERV_INIT']] = summary_df['Date_Surveyor'].str.split('_', expand=True)
+    assign_split_columns(summary_df, 'Date_Surveyor', ['Date', 'INTERV_INIT'])
     def safe_date_parse(val):
         try:
             return pd.to_datetime(val).date()
@@ -5151,9 +5204,7 @@ def process_route_date_data_transit_ls6(
     # -------------------------------
     # 9–12 FINAL FORMATTING
     # -------------------------------
-    route_report_df[['Date','ROUTE_ROOT']] = (
-        route_report_df['Date_Route'].str.split('_', expand=True)
-    )
+    assign_split_columns(route_report_df, 'Date_Route', ['Date', 'ROUTE_ROOT'])
 
     route_report_df['Date'] = route_report_df['Date'].apply(
         lambda x: pd.to_datetime(x, errors='coerce').date()

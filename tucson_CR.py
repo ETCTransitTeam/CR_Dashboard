@@ -4,6 +4,7 @@ import re
 import sys
 import datetime
 import html
+import traceback
 from pathlib import Path
 from urllib.parse import quote_plus
 import numpy as np
@@ -7929,9 +7930,21 @@ else:
                 # Only execute if button was clicked AND sync is not already running
                 # We don't continue sync on rerun - it must complete in one execution
                 should_execute_sync = sync_button_clicked and not is_sync_running
-                
+
+                last_sync_error = st.session_state.get("last_sync_error")
+                if last_sync_error and not should_execute_sync and not is_sync_running:
+                    with st.expander(
+                        f"⚠️ Last sync failed: {last_sync_error.get('message', '')}", expanded=False
+                    ):
+                        st.caption(f"Project: {last_sync_error.get('project', '')}")
+                        st.code(last_sync_error.get("traceback", ""), language="text")
+                        if st.button("Dismiss", key="dismiss_sync_error"):
+                            st.session_state.pop("last_sync_error", None)
+                            st.rerun()
+
                 if should_execute_sync:
                     # CRITICAL: Set state immediately to prevent concurrent syncs
+                    st.session_state.pop("last_sync_error", None)
                     st.session_state.sync_running = True
                     st.session_state.sync_completed = False
                     
@@ -8087,6 +8100,19 @@ else:
                         
                         st.error(f"❌ Sync failed: {str(e)}")
                         st.info("Please try again or contact support if the issue persists.")
+                        # Without this the one-line message above is all anyone ever sees,
+                        # and the failing file/line has to be guessed from nearby prints.
+                        sync_traceback = traceback.format_exc()
+                        print(
+                            "❌ Sync failed for project "
+                            f"{st.session_state.get('selected_project', '')}:\n{sync_traceback}"
+                        )
+                        # The rerun below wipes this block, so hand the detail to the next run.
+                        st.session_state["last_sync_error"] = {
+                            "project": st.session_state.get("selected_project", ""),
+                            "message": str(e),
+                            "traceback": sync_traceback,
+                        }
                         # Mark sync as completed (even on error) so UI can reset
                         st.session_state.sync_running = False
                         st.session_state.sync_completed = True
