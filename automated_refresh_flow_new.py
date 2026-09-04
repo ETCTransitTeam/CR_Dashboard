@@ -1313,6 +1313,31 @@ def fetch_and_process_data(project,schema):
         # df = df[df['id'].isin(include_ids)]
     
     print(f"After KingElvis filter (exclude Remove/No Data): {len(df)} records")
+
+    # Per-project route/stop/transfer prefix convert (e.g. Honolulu BUS_2_ -> BUS_1_,
+    # IndyGo IND_2_ -> IND_4_). Loaded from APP_CONFIG.PROJECT_ROUTE_PREFIX_MAP.
+    # Run before filtered copies / stop matching so all downstream joins use remapped IDs.
+    try:
+        from route_prefix_remap import (
+            apply_route_prefix_conversions,
+            load_route_prefix_map_from_db,
+        )
+        _prefix_pairs = load_route_prefix_map_from_db(
+            project,
+            connect_fn=create_snowflake_connection,
+            app_config_schema=APP_CONFIG_SCHEMA,
+        )
+        if _prefix_pairs:
+            df, _ = apply_route_prefix_conversions(
+                df, _prefix_pairs, context=f"OD sync {project}"
+            )
+            if baby_elvis_df is not None:
+                baby_elvis_df, _ = apply_route_prefix_conversions(
+                    baby_elvis_df, _prefix_pairs, context=f"OD baby_elvis {project}"
+                )
+    except Exception as _prefix_exc:
+        print(f"Route prefix convert skipped for {project}: {_prefix_exc}")
+
     baby_elvis_merged_df_filtered = df.copy()
     stop_on_lat_lon_columns_check=['stoponlat','stoponlong']
     stop_off_lat_lon_columns_check=['stopofflat','stopofflong']
@@ -1328,15 +1353,6 @@ def fetch_and_process_data(project,schema):
 
     route_surveyed_column_check=['routesurveyedcode']
     route_surveyed_column=check_all_characters_present(df,route_surveyed_column_check)
-
-    # INDYGO_BUS Pilot uses IND_2_* while CR/details (354993) use IND_4_*.
-    # Remap so stop matching and CR goals join on the same route IDs.
-    if str(project).upper() == "INDYGO_BUS" and "ROUTE_SURVEYEDCode" in df.columns:
-        before = df["ROUTE_SURVEYEDCode"].astype(str)
-        remapped = before.str.replace(r"^IND_2_", "IND_4_", regex=True)
-        n_changed = int((before != remapped).sum())
-        df["ROUTE_SURVEYEDCode"] = remapped
-        print(f"INDYGO_BUS route remap IND_2_ -> IND_4_: {n_changed} rows")
 
     df['ROUTE_SURVEYEDCode_SPLITED']=df['ROUTE_SURVEYEDCode'].apply(lambda x : '_'.join(str(x).split('_')[0:-1]))
     # df[['ROUTE_SURVEYEDCode_SPLITED']]

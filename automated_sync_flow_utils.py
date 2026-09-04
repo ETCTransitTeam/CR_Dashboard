@@ -6336,33 +6336,15 @@ def process_reverse_direction_logic(
     for _, row in wkday_overall_df.iterrows():
         route_code = row['LS_NAME_CODE']
         
-        # Extract time period (1, 2, 3, 4, 5) based on which column has values
+        # Extract time period (1, 2, 3, 4, 5) based on which column has values.
+        # CR Excel often stores period cells as strings ("5", "") — coerce before comparing to 0.
         valid_time_periods = []
         try:
-            # Early AM
-            early_am_val = row.get('1', 0) if '1' in row else 0
-            if pd.notna(early_am_val) and early_am_val > 0:
-                valid_time_periods.append('1')
-            
-            # AM Peak  
-            am_val = row.get('2', 0) if '2' in row else 0
-            if pd.notna(am_val) and am_val > 0:
-                valid_time_periods.append('2')
-            
-            # Midday
-            midday_val = row.get('3', 0) if '3' in row else 0
-            if pd.notna(midday_val) and midday_val > 0:
-                valid_time_periods.append('3')
-            
-            # PM Peak
-            pm_val = row.get('4', 0) if '4' in row else 0
-            if pd.notna(pm_val) and pm_val > 0:
-                valid_time_periods.append('4')
-            
-            # Evening
-            evening_val = row.get('5', 0) if '5' in row else 0
-            if pd.notna(evening_val) and evening_val > 0:
-                valid_time_periods.append('5')
+            for period_key in ('1', '2', '3', '4', '5'):
+                raw_val = row[period_key] if period_key in row.index else 0
+                period_val = pd.to_numeric(raw_val, errors='coerce')
+                if pd.notna(period_val) and float(period_val) > 0:
+                    valid_time_periods.append(period_key)
                 
         except Exception as e:
             print(f"Error processing time periods for route {route_code}: {e}")

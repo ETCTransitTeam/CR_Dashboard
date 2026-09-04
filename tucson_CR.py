@@ -504,6 +504,167 @@ def _save_project_day_assignments(cur, project_name: str, day_assignment: dict):
         )
 
 
+def _load_project_route_prefix_map(project_name: str) -> pd.DataFrame:
+    """Load survey-code -> replace-code rows for Edit Project Configs."""
+    empty = pd.DataFrame(columns=["SURVEY_CODE", "REPLACE_CODE"])
+    conn = None
+    cur = None
+    try:
+        conn = snowflake.connector.connect(
+            user=os.getenv("SNOWFLAKE_USER"),
+            private_key=private_key_bytes,
+            account=os.getenv("SNOWFLAKE_ACCOUNT"),
+            warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+            database=os.getenv("SNOWFLAKE_DATABASE"),
+            authenticator="SNOWFLAKE_JWT",
+            role=os.getenv("SNOWFLAKE_ROLE"),
+            network_timeout=120,
+        )
+        cur = conn.cursor()
+        from route_prefix_remap import ensure_route_prefix_map_table
+
+        ensure_route_prefix_map_table(cur, APP_CONFIG_SCHEMA)
+        cur.execute(
+            f"""
+            SELECT FROM_PREFIX, TO_PREFIX
+            FROM {APP_CONFIG_SCHEMA}.PROJECT_ROUTE_PREFIX_MAP
+            WHERE UPPER(PROJECT_NAME) = UPPER(%s)
+            ORDER BY SORT_ORDER, FROM_PREFIX
+            """,
+            (project_name,),
+        )
+        rows = cur.fetchall() or []
+        if not rows:
+            return empty
+        return pd.DataFrame(
+            [{"SURVEY_CODE": r[0], "REPLACE_CODE": r[1]} for r in rows]
+        )
+    except Exception:
+        return empty
+    finally:
+        try:
+            if cur:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+
+def _save_project_route_prefix_map(cur, project_name: str, mapping_df: pd.DataFrame | None):
+    """Replace convert rows for a project. Empty/None clears the map."""
+    from route_prefix_remap import ensure_route_prefix_map_table, normalize_prefix_pairs
+
+    ensure_route_prefix_map_table(cur, APP_CONFIG_SCHEMA)
+    cur.execute(
+        f"DELETE FROM {APP_CONFIG_SCHEMA}.PROJECT_ROUTE_PREFIX_MAP WHERE PROJECT_NAME = %s",
+        (project_name,),
+    )
+    if mapping_df is None or mapping_df.empty:
+        return
+    cols = {str(c).strip().upper(): c for c in mapping_df.columns}
+    from_col = cols.get("SURVEY_CODE") or cols.get("FROM_PREFIX")
+    to_col = cols.get("REPLACE_CODE") or cols.get("TO_PREFIX")
+    if not from_col or not to_col:
+        raise ValueError(
+            "Route convert table needs SURVEY_CODE and REPLACE_CODE columns "
+            f"(found: {list(mapping_df.columns)})"
+        )
+    pairs = normalize_prefix_pairs(
+        (row[from_col], row[to_col]) for _, row in mapping_df.iterrows()
+    )
+    for order, (frm, to) in enumerate(pairs):
+        cur.execute(
+            f"""
+            INSERT INTO {APP_CONFIG_SCHEMA}.PROJECT_ROUTE_PREFIX_MAP
+            (PROJECT_NAME, FROM_PREFIX, TO_PREFIX, SORT_ORDER)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (project_name, frm, to, order),
+        )
+
+
+def _parse_route_prefix_map_text(text: str) -> tuple[pd.DataFrame | None, str | None]:
+    """Parse pasted SURVEY_CODE / REPLACE_CODE table (tab or comma)."""
+    raw = (text or "").strip()
+    if not raw:
+        return pd.DataFrame(columns=["SURVEY_CODE", "REPLACE_CODE"]), None
+    try:
+        sep = "\t" if "\t" in raw.splitlines()[0] else ","
+        df = pd.read_csv(StringIO(raw), sep=sep)
+        df.columns = [str(c).strip() for c in df.columns]
+        upper = {c.upper(): c for c in df.columns}
+        if "SURVEY_CODE" not in upper and "FROM_PREFIX" in upper:
+            df = df.rename(columns={upper["FROM_PREFIX"]: "SURVEY_CODE"})
+            upper = {c.upper(): c for c in df.columns}
+        if "REPLACE_CODE" not in upper and "TO_PREFIX" in upper:
+            df = df.rename(columns={upper["TO_PREFIX"]: "REPLACE_CODE"})
+            upper = {c.upper(): c for c in df.columns}
+        if "SURVEY_CODE" not in {c.upper() for c in df.columns} or "REPLACE_CODE" not in {
+            c.upper() for c in df.columns
+        }:
+            return None, "Need columns SURVEY_CODE and REPLACE_CODE"
+        out = df.rename(
+            columns={
+                next(c for c in df.columns if c.upper() == "SURVEY_CODE"): "SURVEY_CODE",
+                next(c for c in df.columns if c.upper() == "REPLACE_CODE"): "REPLACE_CODE",
+            }
+        )[["SURVEY_CODE", "REPLACE_CODE"]].copy()
+        out["SURVEY_CODE"] = out["SURVEY_CODE"].astype(str).str.strip()
+        out["REPLACE_CODE"] = out["REPLACE_CODE"].astype(str).str.strip()
+        out = out[(out["SURVEY_CODE"] != "") & (out["REPLACE_CODE"] != "")]
+        return out.reset_index(drop=True), None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _route_prefix_editor_df(mapping_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Build a 3-column editor table: Survey code | → | Replace with."""
+    rows = []
+    if mapping_df is not None and not mapping_df.empty:
+        for _, row in mapping_df.iterrows():
+            survey = str(row.get("SURVEY_CODE", "") or "").strip()
+            replace = str(row.get("REPLACE_CODE", "") or "").strip()
+            if not survey and not replace:
+                continue
+            rows.append(
+                {
+                    "Survey code": survey,
+                    "→": "replace with",
+                    "Replace with": replace,
+                }
+            )
+    # Keep a few blank rows so new rules are easy to add.
+    while len(rows) < 3:
+        rows.append({"Survey code": "", "→": "replace with", "Replace with": ""})
+    return pd.DataFrame(rows)
+
+
+def _route_prefix_map_from_editor(edited_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Normalize data_editor output back to SURVEY_CODE / REPLACE_CODE."""
+    empty = pd.DataFrame(columns=["SURVEY_CODE", "REPLACE_CODE"])
+    if edited_df is None or edited_df.empty:
+        return empty
+    df = edited_df.copy()
+    cols = {str(c).strip().lower(): c for c in df.columns}
+    survey_col = cols.get("survey code") or cols.get("survey_code")
+    replace_col = cols.get("replace with") or cols.get("replace_code")
+    if not survey_col or not replace_col:
+        return empty
+    out = pd.DataFrame(
+        {
+            "SURVEY_CODE": df[survey_col].astype(str).str.strip(),
+            "REPLACE_CODE": df[replace_col].astype(str).str.strip(),
+        }
+    )
+    out = out.replace({"nan": "", "None": "", "<na>": ""})
+    out = out[(out["SURVEY_CODE"] != "") & (out["REPLACE_CODE"] != "")]
+    return out.reset_index(drop=True)
+
+
 with open("path/to/key.p8", "rb") as key:
     private_key = serialization.load_pem_private_key(
         key.read(),
@@ -7726,8 +7887,14 @@ else:
                 st.session_state["edit_day_assignments"] = _load_project_day_assignments(
                     selected_project_name
                 )
+                st.session_state["edit_route_prefix_map"] = _load_project_route_prefix_map(
+                    selected_project_name
+                )
+                # Drop stale widget state so the editor reloads for this project.
+                st.session_state.pop(f"edit_route_prefix_editor_{selected_project_name}", None)
                 st.session_state["edit_cfg_loaded_project"] = selected_project_name
 
+            route_editor_key = f"edit_route_prefix_editor_{selected_project_name}"
             st.markdown("**Time Period Config**")
             st.caption(
                 "Same format as Create Project. Prefills from DB. "
@@ -7752,6 +7919,9 @@ else:
                     st.session_state["edit_day_assignments"] = _load_project_day_assignments(
                         selected_project_name
                     )
+                    loaded_route_df = _load_project_route_prefix_map(selected_project_name)
+                    st.session_state["edit_route_prefix_map"] = loaded_route_df
+                    st.session_state.pop(route_editor_key, None)
                     st.rerun()
             with clear_col:
                 if st.button("Clear Time Config", key="edit_clear_time_period_table"):
@@ -7827,6 +7997,45 @@ else:
                             key=f"edit_{selected_project_name}_{day}_type",
                             label_visibility="collapsed",
                         )
+
+                st.markdown("---")
+                st.markdown("**Route / Stop Code Convert**")
+                st.caption(
+                    "Each row rewrites codes that start with **Survey code** to **Replace with** "
+                    "(e.g. BUS_2_ → BUS_1_). Applied on Sync to ROUTE_SURVEYED, STOP_ON/OFF, "
+                    "and transfer routes. Empty rows are ignored. Clear all rows and save to "
+                    "remove converts for this project."
+                )
+                route_editor_df = _route_prefix_editor_df(
+                    st.session_state.get("edit_route_prefix_map")
+                )
+                route_prefix_edited = st.data_editor(
+                    route_editor_df,
+                    key=route_editor_key,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Survey code": st.column_config.TextColumn(
+                            "Survey code",
+                            help="Prefix found in survey data (e.g. BUS_2_)",
+                            required=False,
+                            width="medium",
+                        ),
+                        "→": st.column_config.TextColumn(
+                            "→",
+                            help="Fixed label — survey code is rewritten to the replace value",
+                            disabled=True,
+                            width="small",
+                        ),
+                        "Replace with": st.column_config.TextColumn(
+                            "Replace with",
+                            help="Prefix to write instead (e.g. BUS_1_)",
+                            required=False,
+                            width="medium",
+                        ),
+                    },
+                )
 
                 submit_edit = st.form_submit_button("Save Configuration Changes")
 
@@ -7933,6 +8142,10 @@ else:
                     _save_project_day_assignments(cur, selected_project_name, day_assignment)
                     notes.append("day type assignment")
 
+                    route_map_df = _route_prefix_map_from_editor(route_prefix_edited)
+                    _save_project_route_prefix_map(cur, selected_project_name, route_map_df)
+                    notes.append("route code convert")
+
                     conn.commit()
                     refresh_projects()
                     clear_projects_cache()
@@ -7942,7 +8155,10 @@ else:
                         f"✅ Project config updated for '{selected_project_name}'"
                         + (f" ({', '.join(notes)})." if notes else ".")
                     )
-                    st.info("Re-sync the project so dashboard tables rebuild with the updated time periods.")
+                    st.info(
+                        "Re-sync the project so dashboard tables rebuild with the updated "
+                        "time periods / route converts. Review Cycle picks up route converts on the next pipeline run."
+                    )
                     st.rerun()
                 except Exception as e:
                     try:

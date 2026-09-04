@@ -14,7 +14,7 @@ from typing import Any
 
 import pandas as pd
 
-from core.config import PIPELINE_DIR, ROOT_DIR, SCRIPTS_DIR, WORKSPACE_DIR, s3_enabled
+from core.config import APP_CONFIG_SCHEMA, PIPELINE_DIR, ROOT_DIR, SCRIPTS_DIR, WORKSPACE_DIR, s3_enabled
 from core.projects import get_project
 from core.s3_utils import _local_kingelvis_path
 from pipeline.header_mapping import MAPPING_FILENAME, write_header_mapping_xlsx
@@ -431,6 +431,48 @@ def stage_inputs(ctx: PipelineContext) -> None:
     local_kingelvis = _local_kingelvis_path(ctx.kingelvis_xlsx)
     if local_kingelvis.exists():
         shutil.copy2(local_kingelvis, ctx.workspace / ctx.kingelvis_xlsx)
+
+    _apply_route_prefix_map_to_staged_csvs(ctx)
+
+
+def _apply_route_prefix_map_to_staged_csvs(ctx: PipelineContext) -> None:
+    """Rewrite BUS_2_/etc prefixes on staged Elvis (and main) CSVs before flags/auto-approval."""
+    try:
+        repo_root = Path(__file__).resolve().parents[2]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from route_prefix_remap import (
+            apply_route_prefix_conversions,
+            load_route_prefix_map_from_db,
+        )
+        from core.snowflake_conn import connect
+    except Exception as exc:
+        print(f"Route prefix convert import skipped: {exc}")
+        return
+
+    pairs = load_route_prefix_map_from_db(
+        ctx.project_name,
+        connect_fn=connect,
+        app_config_schema=APP_CONFIG_SCHEMA,
+    )
+    if not pairs:
+        return
+
+    for csv_name in (ctx.elvis_csv_name, ctx.main_table_csv):
+        if not csv_name:
+            continue
+        path = ctx.workspace / csv_name
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_csv(path, low_memory=False)
+            df, stats = apply_route_prefix_conversions(
+                df, pairs, context=f"RCD {ctx.project_name} {csv_name}"
+            )
+            if stats:
+                df.to_csv(path, index=False)
+        except Exception as exc:
+            print(f"Route prefix convert failed for {csv_name}: {exc}")
 
 
 def _run_improved_auto_approval(
