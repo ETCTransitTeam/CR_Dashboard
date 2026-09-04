@@ -45,7 +45,7 @@ from utils import (
     build_group_option_column_maps,
     demographic_display_key_for_group_name,
 )
-from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,clear_projects_cache,clear_landing_stats_cache,warm_landing_stats,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,is_super_admin,can_use_client_view_switch,is_client_view,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
+from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,clear_projects_cache,clear_landing_stats_cache,warm_landing_stats,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,staff_signup_page,is_super_admin,can_use_client_view_switch,is_client_view,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -776,6 +776,8 @@ if not st.session_state["logged_in"]:
         forgot_password()
     elif current_page=='create_user':
         create_new_user_page()
+    elif current_page == "staff_signup":
+        staff_signup_page()
     else:
         # accounts_management requires login. Old Activate HTML links reloaded the page,
         # dropped session, and landed here — send users to login instead of a dead-end error.

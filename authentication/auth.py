@@ -1,6 +1,7 @@
 import os
 import csv
 import html
+import hmac
 import re
 from io import StringIO
 from urllib.parse import urlencode
@@ -32,12 +33,33 @@ logging.getLogger("streamlit").setLevel(logging.WARNING)
 load_dotenv()
 APP_CONFIG_SCHEMA = os.getenv("APP_CONFIG_SCHEMA", "APP_CONFIG").strip() or "APP_CONFIG"
 
-# Canonical public URL of this Streamlit app (emails, bookmarks). Override via APP_PUBLIC_BASE_URL in .env.
-_APP_PUBLIC_BASE_URL = (os.getenv("APP_PUBLIC_BASE_URL") or "http://odcollection.etc-research.com").rstrip("/")
+# Shared secret for ADMIN self-signup links. Same token is reused until rotated in .env.
+STAFF_ADMIN_SIGNUP_TOKEN = (os.getenv("STAFF_ADMIN_SIGNUP_TOKEN") or "").strip()
+STAFF_SIGNUP_ROLES = ("CLEANING", "USER", "ADMIN")
+_STAFF_SIGNUP_ROLE_LABELS = {
+    "CLEANING": "Cleaning Team",
+    "USER": "User (staff)",
+    "ADMIN": "Admin",
+}
+
+
+def _force_https(url: str) -> str:
+    """Prefer https for public app links (emails, bookmarks, signup URLs)."""
+    if not url:
+        return url
+    if url.startswith("http://"):
+        return "https://" + url[len("http://"):]
+    return url
+
+
+# Canonical public URL of this Streamlit app. Override via APP_PUBLIC_BASE_URL in .env.
+_APP_PUBLIC_BASE_URL = _force_https(
+    (os.getenv("APP_PUBLIC_BASE_URL") or "https://odcollection.etc-research.com").rstrip("/")
+)
 
 
 def app_public_url(path_with_query: str = "/") -> str:
-    """Build an absolute URL to this app for use outside the browser (e.g. activation emails)."""
+    """Build an absolute HTTPS URL to this app for use outside the browser (e.g. activation emails)."""
     if not path_with_query.startswith("/"):
         path_with_query = "/" + path_with_query
     return f"{_APP_PUBLIC_BASE_URL}{path_with_query}"
@@ -46,6 +68,22 @@ def app_public_url(path_with_query: str = "/") -> str:
 def app_public_page_link(page: str, token: str) -> str:
     """Build a magic link with proper query encoding (JWTs in URLs must be encoded or they break)."""
     return f"{_APP_PUBLIC_BASE_URL}/?{urlencode({'page': page, 'token': token})}"
+
+
+def staff_signup_url(role: str, include_admin_token: bool = True) -> str:
+    """Build a role-specific staff signup deep-link. ADMIN links include the shared env token."""
+    role_key = (role or "").strip().upper()
+    params = {"page": "staff_signup", "role": role_key}
+    if role_key == "ADMIN" and include_admin_token and STAFF_ADMIN_SIGNUP_TOKEN:
+        params["token"] = STAFF_ADMIN_SIGNUP_TOKEN
+    return f"{_APP_PUBLIC_BASE_URL}/?{urlencode(params)}"
+
+
+def _admin_signup_token_ok(provided) -> bool:
+    expected = STAFF_ADMIN_SIGNUP_TOKEN
+    if not expected:
+        return False
+    return hmac.compare_digest(str(provided or ""), expected)
 
 
 def _smtp_port() -> int:
@@ -751,14 +789,43 @@ def create_new_user(email, username, password, role):
         cursor.close()
         conn.close()
 
-def create_new_user_page():
-    """Public staff registration (Review Cycle cleaning team); role defaults to CLEANING."""
-    def create_user_content():
+def staff_signup_page(forced_role: str | None = None):
+    """
+    Role-specific staff self-signup.
+
+    URL: /?page=staff_signup&role=CLEANING|USER|ADMIN
+    ADMIN also requires &token=<STAFF_ADMIN_SIGNUP_TOKEN> (shared secret from .env).
+    Legacy /?page=create_user maps to CLEANING via create_new_user_page().
+    """
+    role_raw = forced_role if forced_role is not None else (_query_param_first("role", "") or "")
+    role = str(role_raw).strip().upper()
+    role_label = _STAFF_SIGNUP_ROLE_LABELS.get(role, role or "Staff")
+
+    def signup_content():
+        if role not in STAFF_SIGNUP_ROLES:
+            st.error(
+                "Missing or invalid role in signup URL. "
+                "Use role=CLEANING, role=USER, or role=ADMIN."
+            )
+            return
+
+        if role == "ADMIN":
+            provided_token = _query_param_first("token", "")
+            if not STAFF_ADMIN_SIGNUP_TOKEN:
+                st.error(
+                    "Admin self-signup is not configured. "
+                    "Set STAFF_ADMIN_SIGNUP_TOKEN in the server environment."
+                )
+                return
+            if not _admin_signup_token_ok(provided_token):
+                st.error("Invalid or missing admin signup token. Ask a super admin for the protected link.")
+                return
+
         st.caption(
-            "Create a staff account for the Review Cycle workflow. "
+            f"Create a **{role_label}** staff account. "
             "An activation email is sent before you can sign in."
         )
-        with st.form(key="create_new_user_form"):
+        with st.form(key=f"staff_signup_form_{role}"):
             col1, col2 = st.columns(2)
             with col1:
                 username = st.text_input("Username", placeholder="Enter username")
@@ -768,7 +835,9 @@ def create_new_user_page():
             with col3:
                 password = st.text_input("Password", type="password", placeholder="Enter password")
             with col4:
-                confirm_password = st.text_input("Confirm Password", type="password", placeholder="Re-enter password")
+                confirm_password = st.text_input(
+                    "Confirm Password", type="password", placeholder="Re-enter password"
+                )
 
             if st.form_submit_button("Create staff account", type="primary", use_container_width=True):
                 if not all([username, email, password, confirm_password]):
@@ -777,33 +846,47 @@ def create_new_user_page():
                     st.error("Passwords do not match.")
                 else:
                     try:
-                        if create_new_user(email, username, password, "CLEANING"):
+                        if create_new_user(email, username, password, role):
                             st.success(f"User **{username}** created successfully! Activation email sent.")
                             time.sleep(2)
-                            st.markdown('<meta http-equiv="refresh" content="0;url=/?page=create_user">', unsafe_allow_html=True)
+                            login_href = "/?page=login"
+                            st.markdown(
+                                f'<meta http-equiv="refresh" content="0;url={login_href}">',
+                                unsafe_allow_html=True,
+                            )
                         else:
                             st.error("Could not create the user. Please try again.")
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
 
-        st.markdown("""
+        st.markdown(
+            """
             <style>
-            .auth-link {
-                text-align: center;
-            }
-            .auth-link a:hover {
-                text-decoration: underline;
-            }
+            .auth-link { text-align: center; }
+            .auth-link a:hover { text-decoration: underline; }
             </style>
-            """, unsafe_allow_html=True)
-
-        st.markdown("""
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            """
             <div class="auth-link">
                 Already have an account? <a href="/?page=login">Login here</a>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
 
-    render_auth_layout(create_user_content, "Staff Registration", "Request access to ETC Institute staff tools")
+    render_auth_layout(
+        signup_content,
+        f"{role_label} Registration" if role in STAFF_SIGNUP_ROLES else "Staff Registration",
+        "Request access to ETC Institute staff tools",
+    )
+
+
+def create_new_user_page():
+    """Legacy alias: /?page=create_user → CLEANING staff signup."""
+    staff_signup_page(forced_role="CLEANING")
 
 def register_new_user(email, username, password, role):
     conn = user_connect_to_snowflake()
@@ -4245,6 +4328,25 @@ def accounts_management_page():
         if st.button("Create Account", type="primary", use_container_width=True):
             st.query_params["page"] = "create_accounts"
             st.rerun()
+
+    st.markdown("##### Staff self-signup links")
+    st.caption(
+        "Share the matching role link. Admin signup uses one shared token from "
+        "`STAFF_ADMIN_SIGNUP_TOKEN` (same token every time until you rotate it in `.env`)."
+    )
+    cleaning_url = staff_signup_url("CLEANING")
+    user_url = staff_signup_url("USER")
+    admin_url = staff_signup_url("ADMIN", include_admin_token=True)
+    link_cols = st.columns(3)
+    with link_cols[0]:
+        st.text_input("Cleaning Team", value=cleaning_url, disabled=True, key="staff_signup_url_cleaning")
+    with link_cols[1]:
+        st.text_input("User (staff)", value=user_url, disabled=True, key="staff_signup_url_user")
+    with link_cols[2]:
+        if STAFF_ADMIN_SIGNUP_TOKEN:
+            st.text_input("Admin (token-protected)", value=admin_url, disabled=True, key="staff_signup_url_admin")
+        else:
+            st.warning("Set STAFF_ADMIN_SIGNUP_TOKEN in .env to enable the Admin signup link.")
 
     users = get_all_users()
     if not users:
