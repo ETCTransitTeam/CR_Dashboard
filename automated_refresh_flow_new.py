@@ -1995,7 +1995,7 @@ def fetch_and_process_data(project,schema):
             unfiltered_elvis_df = unfiltered_elvis_df.drop_duplicates(subset="id")
 
         survey_report_df = process_surveyor_data_transit_ls6(ke_df, unfiltered_elvis_df, project, race_label_map)
-        route_report_df = process_route_data_transit_ls6(ke_df, unfiltered_elvis_df, race_label_map)
+        route_report_df = process_route_data_transit_ls6(ke_df, unfiltered_elvis_df, race_label_map, project=project)
         print("Survey and route reports processed successfully.")
         low_response_questions_df = create_low_response_report(df)
         print("Low response questions report created successfully.")
@@ -2187,7 +2187,7 @@ def fetch_and_process_data(project,schema):
         )
 
         # Now process with the merged data
-        survey_report_by_date_df = process_surveyor_date_data_transit_ls6(ke_df, unfiltered_elvis_df, survey_date_surveyor, race_label_map)
+        survey_report_by_date_df = process_surveyor_date_data_transit_ls6(ke_df, unfiltered_elvis_df, survey_date_surveyor, race_label_map, project=project)
         route_report_by_date_df = process_route_date_data_transit_ls6(ke_df, unfiltered_elvis_df, survey_date_route, race_label_map)
 
         # Final DataFrame cleanup

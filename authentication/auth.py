@@ -1171,6 +1171,10 @@ def is_super_admin(email):
 PM_VIEW_SWITCH_EMAILS = [
     "aaron.hekele@etcinstitute.com",
     "fred.gsell@etcinstitute.com",
+    "brad.carlson@etcinstitute.com",
+    "henry.danneberg@etcinstitute.com",
+    "tyler.mather@etcinstitute.com",
+    "kevin.arnold@etcinstitute.com",
 ]
 
 

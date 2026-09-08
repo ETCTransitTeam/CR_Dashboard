@@ -528,7 +528,8 @@ if _col_prev_transfers_code and _col_prev_transfers_code in df.columns:
 if _col_next_transfers_code and _col_next_transfers_code in df.columns:
     df[_col_next_transfers_code] = pd.to_numeric(df[_col_next_transfers_code], errors='coerce').fillna(0).astype(int)
 
-walk=['walk','wheelchair or scooter','other','walked','skateboard','bike, e-bike, skateboard, scooter, e-scooter','wheelchair','walked or used mobility aid']
+# Exact "Other" / code -oth- is walk (M-code). Do not substring-match "other".
+walk=['walk','wheelchair or scooter','walked','skateboard','bike, e-bike, skateboard, scooter, e-scooter','wheelchair','walked or used mobility aid']
 drive=['was dropped off by someone','drove alone and parked','drove or rode with others and parked','taxi','uber, lyft, etc.',
        'get in a parked vehicle & drive alone','be picked up by someone','taxi / shuttle','get in a parked vehicle & drive, alone or w/others',
        'get in a parked vehicle & drive/ride w/others','get in a parked vehicle & drive, alone or w/others','rode with others and was dropped off',
@@ -553,7 +554,7 @@ def _transport_isin(series, values):
     # Fallback: normalized text contains any of the value phrases (e.g. "get in a parked vehicle" in "get in a parked vehicle & drive alone")
     contains = pd.Series(False, index=series.index)
     for v in values_lower:
-        if len(v) < 3:
+        if len(v) < 3 or v == 'other':
             continue
         contains = contains | norm.str.contains(re.escape(v), case=False, na=False)
     return exact | contains
@@ -596,8 +597,9 @@ _sad = pd.to_numeric(df['SURVEYALIGHTING_TO_DESTINATION'], errors='coerce')
 _od = pd.to_numeric(df['ORIGIN_TO_DESTINATION'], errors='coerce')
 _b2a = pd.to_numeric(df['B2A/OD'], errors='coerce')
 
-# Walk/drive by code: 1,2 = walk; 7,8,9,10,11 = drive (per original rule comments)
+# Walk/drive by code: 1, 2, -oth- = walk (original M-code); 7,8,9,10,11 = drive
 _ORIGIN_WALK_CODES = {1, 2}
+_ORIGIN_WALK_CODE_STRINGS = {'-oth-', 'oth'}
 _ORIGIN_DRIVE_CODES = {7, 8, 9, 10, 11}
 
 def _code_in_set(series, allowed):
@@ -605,10 +607,19 @@ def _code_in_set(series, allowed):
     n = pd.to_numeric(series, errors='coerce').fillna(-999).astype(int)
     return n.isin(allowed)
 
+def _code_is_m_other(series):
+    s = series.astype(str).str.strip().str.lower()
+    return s.isin(_ORIGIN_WALK_CODE_STRINGS)
+
+def _text_is_exact_other(series):
+    return _normalize_transport_text(series).eq('other')
+
 def _origin_walk():
     text_ok = _transport_isin(df[_col_origin_transport], walk) if _col_origin_transport else pd.Series(False, index=df.index)
+    other_text = _text_is_exact_other(df[_col_origin_transport]) if _col_origin_transport else pd.Series(False, index=df.index)
     code_ok = _code_in_set(df[_col_origin_transport_code], _ORIGIN_WALK_CODES) if _col_origin_transport_code and _col_origin_transport_code in df.columns else pd.Series(False, index=df.index)
-    return text_ok | code_ok
+    other_code = _code_is_m_other(df[_col_origin_transport_code]) if _col_origin_transport_code and _col_origin_transport_code in df.columns else pd.Series(False, index=df.index)
+    return text_ok | other_text | code_ok | other_code
 
 def _origin_drive():
     text_ok = _transport_isin(df[_col_origin_transport], drive) if _col_origin_transport else pd.Series(False, index=df.index)
@@ -617,8 +628,10 @@ def _origin_drive():
 
 def _destin_walk():
     text_ok = _transport_isin(df[_col_destin_transport], walk) if _col_destin_transport else pd.Series(False, index=df.index)
+    other_text = _text_is_exact_other(df[_col_destin_transport]) if _col_destin_transport else pd.Series(False, index=df.index)
     code_ok = _code_in_set(df[_col_destin_transport_code], _ORIGIN_WALK_CODES) if _col_destin_transport_code and _col_destin_transport_code in df.columns else pd.Series(False, index=df.index)
-    return text_ok | code_ok
+    other_code = _code_is_m_other(df[_col_destin_transport_code]) if _col_destin_transport_code and _col_destin_transport_code in df.columns else pd.Series(False, index=df.index)
+    return text_ok | other_text | code_ok | other_code
 
 def _destin_drive():
     text_ok = _transport_isin(df[_col_destin_transport], drive) if _col_destin_transport else pd.Series(False, index=df.index)

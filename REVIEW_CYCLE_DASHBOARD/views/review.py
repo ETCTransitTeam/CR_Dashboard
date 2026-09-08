@@ -28,6 +28,14 @@ def _default_review_assignee(members: list[str]) -> str:
     return members[0] if members else ""
 
 
+def _rid(value) -> str:
+    """Normalize record ids so '123.0' and '123' match across checks/records."""
+    text = str(value or "").strip()
+    if text.endswith(".0") and text[:-2].replace(".", "", 1).isdigit():
+        return text[:-2]
+    return text
+
+
 def _flagged_records(project: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     checks = load_combined_checks(project)
     records = load_records(project)
@@ -36,8 +44,8 @@ def _flagged_records(project: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     flagged = checks[pd.to_numeric(checks["SUM_ALL_CHECKS"], errors="coerce").fillna(0) > 0]
     if flagged.empty:
         return records.iloc[0:0], flagged
-    ids = flagged["RECORD_ID"].astype(str).tolist()
-    subset = records[records["RECORD_ID"].astype(str).isin(ids)]
+    ids = {_rid(rid) for rid in flagged["RECORD_ID"].tolist()}
+    subset = records[records["RECORD_ID"].map(_rid).isin(ids)]
     return subset, flagged
 
 

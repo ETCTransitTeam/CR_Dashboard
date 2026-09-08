@@ -17,10 +17,23 @@ from st_aggrid.shared import ColumnsAutoSizeMode
 from services import history as history_svc
 
 TIP_PREFIX = "__tip_"
+ROW_INDEX_COL = "#"
 
 # Keep columns readable; horizontal scroll appears when total width > viewport.
 _DEFAULT_COL_WIDTH = 150
 _GRID_HEIGHT = 460
+
+# Live row numbers for the currently filtered/sorted AgGrid view (1…N).
+_ROW_INDEX_VALUE_GETTER = JsCode(
+    """
+    function(params) {
+        if (!params || !params.node || params.node.rowIndex == null) {
+            return '';
+        }
+        return params.node.rowIndex + 1;
+    }
+    """
+)
 
 _AGGRID_CUSTOM_CSS = {
     # streamlit-aggrid 0.3.x reserves 30px for an empty toolbar without
@@ -381,6 +394,7 @@ def _coerce_aggrid_frame(data) -> pd.DataFrame:
 
 def _preferred_column_widths(columns: list[str]) -> dict[str, int]:
     widths = {
+        ROW_INDEX_COL: 70,
         "Elvis_Date": 120,
         "elvis_id": 100,
         "Assigned To": 120,
@@ -434,6 +448,17 @@ def render_history_data_editor(
     checkbox_fields = checkbox_fields or set()
     config = dict(column_config or {})
 
+    # Leading row index for the current (Streamlit-filtered) view.
+    if ROW_INDEX_COL in grid.columns:
+        grid = grid.drop(columns=[ROW_INDEX_COL])
+    grid.insert(0, ROW_INDEX_COL, list(range(1, len(grid) + 1)))
+    config[ROW_INDEX_COL] = st.column_config.NumberColumn(
+        ROW_INDEX_COL,
+        help="Row number in the current filtered view",
+        disabled=True,
+        width="small",
+    )
+
     for field, options in selectbox_options.items():
         if field in grid.columns:
             config[field] = st.column_config.SelectboxColumn(options=options)
@@ -444,11 +469,13 @@ def render_history_data_editor(
 
     disabled = [col for col in grid.columns if col not in editable_fields]
     disabled.extend(extra_disabled or [])
+    if ROW_INDEX_COL not in disabled:
+        disabled.append(ROW_INDEX_COL)
     for col in ("Assigned to me", "Assigned To"):
         if col in grid.columns and col not in disabled:
             disabled.append(col)
 
-    return st.data_editor(
+    edited = st.data_editor(
         grid,
         column_config=config,
         disabled=disabled,
@@ -458,6 +485,9 @@ def render_history_data_editor(
         num_rows="fixed",
         height=_GRID_HEIGHT,
     )
+    if ROW_INDEX_COL in edited.columns:
+        edited = edited.drop(columns=[ROW_INDEX_COL])
+    return edited
 
 
 def _render_aggrid_history_editor(
@@ -478,6 +508,8 @@ def _render_aggrid_history_editor(
     # Tip columns stay in the frame for tooltipField, but never as visible/layout columns.
     prepared = prepared.reset_index(drop=True)
     visible = _strip_tooltip_columns(prepared).copy()
+    if ROW_INDEX_COL in visible.columns:
+        visible = visible.drop(columns=[ROW_INDEX_COL])
     for col in visible.columns:
         if col in selectbox_options:
             visible[col] = visible[col].map(
@@ -490,6 +522,10 @@ def _render_aggrid_history_editor(
         else:
             visible[col] = visible[col].fillna("").astype(str)
             visible[col] = visible[col].replace({"nan": "", "None": "", "<NA>": ""})
+
+    # Placeholder values; AgGrid valueGetter renumbers to the filtered/sorted view.
+    visible.insert(0, ROW_INDEX_COL, list(range(1, len(visible) + 1)))
+
     tip_only = prepared[[c for c in prepared.columns if c.startswith(TIP_PREFIX)]].copy()
     grid_df = pd.concat([visible, tip_only], axis=1)
 
@@ -511,6 +547,23 @@ def _render_aggrid_history_editor(
     for col in grid_df.columns:
         if col.startswith(TIP_PREFIX):
             gb.configure_column(col, hide=True, width=1, maxWidth=1, suppressSizeToFit=True)
+            continue
+
+        if col == ROW_INDEX_COL:
+            gb.configure_column(
+                col,
+                headerName="#",
+                valueGetter=_ROW_INDEX_VALUE_GETTER,
+                editable=False,
+                filter=False,
+                sortable=False,
+                pinned="left",
+                suppressSizeToFit=True,
+                flex=0,
+                minWidth=60,
+                width=70,
+                maxWidth=90,
+            )
             continue
 
         tip_col = tooltip_column_name(col)
@@ -563,7 +616,7 @@ def _render_aggrid_history_editor(
         fit_columns_on_grid_load=False,
         columns_auto_size_mode=ColumnsAutoSizeMode.NO_AUTOSIZE,
         use_container_width=True,
-        key=grid_widget_key(editor_key, visible, rev=tip_rev + 100),
+        key=grid_widget_key(editor_key, visible.drop(columns=[ROW_INDEX_COL], errors="ignore"), rev=tip_rev + 100),
         update_mode=GridUpdateMode.VALUE_CHANGED,
         data_return_mode=DataReturnMode.AS_INPUT,
         reload_data=True,
@@ -571,7 +624,10 @@ def _render_aggrid_history_editor(
         custom_css=_AGGRID_CUSTOM_CSS,
     )
     edited = _strip_tooltip_columns(_coerce_aggrid_frame(response.get("data")))
-    return _reconcile_aggrid_edits(visible, edited, editable_fields)
+    if ROW_INDEX_COL in edited.columns:
+        edited = edited.drop(columns=[ROW_INDEX_COL])
+    visible_core = visible.drop(columns=[ROW_INDEX_COL], errors="ignore")
+    return _reconcile_aggrid_edits(visible_core, edited, editable_fields)
 
 
 def _reconcile_aggrid_edits(

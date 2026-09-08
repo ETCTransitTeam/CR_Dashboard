@@ -27,7 +27,7 @@ def check_all_characters_present(df, columns_to_check):
 today_date = date.today()
 today_date=''.join(str(today_date).split('-'))
 
-project_name='PARK_CITY'
+project_name='OAHU'
 
 # file_name='PALMTRAN_FL_KINGElvis.xlsx'
 # detail_df=pd.read_excel("details_project_od_excel_PALMTRAN.xlsx",sheet_name='STOPS')
@@ -190,15 +190,24 @@ project_name='PARK_CITY'
 # df1=pd.read_csv('elvis_transit_ls6_733524_export_odbc.csv')
 # elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
 
-file_name='PARK_CITY_UT_2026_KINGElvis.xlsx'
-file_path="details_ParkCity_154732_od_excel.xlsx"
-df1=pd.read_csv('elvis_transit_ls6_154732_export_odbc.csv')
-elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
+# file_name='PARK_CITY_UT_2026_KINGElvis.xlsx'
+# file_path="details_ParkCity_154732_od_excel.xlsx"
+# df1=pd.read_csv('elvis_transit_ls6_154732_export_odbc.csv')
+# elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
 
 # file_name='INDYGO_BRT_2026_KINGElvis.xlsx'
 # file_path="details_lndyGO_574774_od_excel.xlsx"
 # df1=pd.read_csv('elvis_transit_ls6_574774_export_odbc.csv')
 # elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
+
+# file_name='HART-TAMPA_2026_KINGElvis.xlsx'
+# file_path="details_TAMPA_od_excel_553191.xlsx"
+# df1=pd.read_csv('elvis_transit_ls6_553191_export_odbc.csv')
+
+file_name='OAHU-HONOLULU-HI_2026_KINGElvis.xlsx'
+file_path="details_oahu-honolulu-hi_od_excel.xlsx"
+df1=pd.read_csv('elvis_transit_ls6_563764_export_odbc.csv')
+elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
 
 df1 = df1.drop(0).reset_index(drop=True)
 
@@ -228,7 +237,7 @@ xfer_rename_map = {
     "stop_lon": "stop_lon",
     "ETC_STOP_ID": "ETC_STOP_ID",
     "ETC_STOP_NAME": "ETC_STOP_NAME",
-    "XFER_ROUTE_ID": "XFER_ROUTE_ID"
+    "XFER_ROUTE_ID": "ETC_ROUTE_ID"
 }
 
 xfer_df = xfer_df.rename(columns=xfer_rename_map)
@@ -241,6 +250,13 @@ for col in stops_df.columns:
 xfer_df = xfer_df[stops_df.columns]
 
 detail_df = pd.concat([stops_df, xfer_df], ignore_index=True)
+
+# STOPS uses ETC_ROUTE_ID; XFER_STOPS uses XFER_ROUTE_ID (renamed above).
+# If both columns exist, fill missing ETC_ROUTE_ID from XFER_ROUTE_ID.
+if 'ETC_ROUTE_ID' in detail_df.columns and 'XFER_ROUTE_ID' in detail_df.columns:
+    detail_df['ETC_ROUTE_ID'] = detail_df['ETC_ROUTE_ID'].where(
+        detail_df['ETC_ROUTE_ID'].notna(), detail_df['XFER_ROUTE_ID']
+    )
 
 print("total stops in details now: ", len(detail_df))
 
@@ -355,11 +371,33 @@ df = df[desired_columns + [col for col in df.columns if col not in desired_colum
 # print('ETC_ROUTE_ID Splitted Successfully')
 # df.drop_duplicates(subset=['ETC_ROUTE_ID_New'],inplace=True)
 
-stops_columns_to_check=['stoplat','stoplon','xferrouteid']
-stops_columns=check_all_characters_present(detail_df,stops_columns_to_check)
+def _clean_col_name(name):
+    return str(name).replace('_', '').replace('[', '').replace(']', '').replace(' ', '').replace('#', '').lower()
 
-stops_df=detail_df.loc[:,stops_columns]
-stops_df_list=stops_df.values.tolist()
+
+def _find_detail_col(df, *candidates):
+    cleaned = {_clean_col_name(c): c for c in df.columns}
+    for cand in candidates:
+        key = _clean_col_name(cand)
+        if key in cleaned:
+            return cleaned[key]
+    return None
+
+
+lat_col = _find_detail_col(detail_df, 'stop_lat')
+lon_col = _find_detail_col(detail_df, 'stop_lon')
+route_col = _find_detail_col(detail_df, 'ETC_ROUTE_ID', 'XFER_ROUTE_ID')
+if lat_col is None or lon_col is None or route_col is None:
+    raise ValueError(
+        f"Need stop_lat, stop_lon, and ETC_ROUTE_ID/XFER_ROUTE_ID in details. "
+        f"Found lat={lat_col}, lon={lon_col}, route={route_col}. Columns: {list(detail_df.columns)}"
+    )
+
+stops_work = detail_df[[lat_col, lon_col, route_col]].copy()
+stops_work.columns = ['stop_lat', 'stop_lon', 'ETC_ROUTE_ID']
+stops_work = stops_work.dropna(subset=['stop_lat', 'stop_lon', 'ETC_ROUTE_ID'])
+print(f"Stops used for good-transfer distances: {len(stops_work)} (route col={route_col})")
+stops_df_list = stops_work.values.tolist()
 
 # Approximate radius of earth in km
 R = 6373.0
@@ -396,12 +434,35 @@ def _haversine_vector_miles(lat0, lon0, lats, lons):
     return R_MILES * c
 
 
+def _strip_route_direction(route_id):
+    """Remove trailing _00/_01 so BUS_1_1_00 matches survey BUS_1_1."""
+    if route_id is None or (isinstance(route_id, float) and pd.isna(route_id)):
+        return route_id
+    parts = str(route_id).strip().split('_')
+    if len(parts) > 1 and parts[-1] in ('00', '01'):
+        return '_'.join(parts[:-1])
+    return str(route_id).strip()
+
+
+def _pairs_look_like_coordinates(text):
+    """True if cached distance file stored longitudes instead of route IDs."""
+    first = next((ln.strip() for ln in str(text).splitlines() if ln.strip()), '')
+    if '>>' not in first:
+        return False
+    left = first.split('>>', 1)[0]
+    try:
+        float(left)
+        return True
+    except ValueError:
+        return False
+
+
 def calculate_and_print_distance(stops_df_list):
     """Optimized: vectorized haversine per row, set for O(1) pair lookup."""
     n = len(stops_df_list)
     lats = np.array([s[0] for s in stops_df_list], dtype=float)
     lons = np.array([s[1] for s in stops_df_list], dtype=float)
-    routes = [s[-1] for s in stops_df_list]
+    routes = [_strip_route_direction(s[2]) for s in stops_df_list]
 
     results = []
     success_set = set()  # O(1) lookup instead of list
@@ -411,7 +472,7 @@ def calculate_and_print_distance(stops_df_list):
         if not route_i:
             continue
         dist_i = _haversine_vector_miles(lats[i], lons[i], lats, lons)
-        for j in range(n):
+        for j in np.flatnonzero(dist_i <= 0.25):
             if i == j:
                 continue
             route_j = routes[j]
@@ -420,9 +481,8 @@ def calculate_and_print_distance(stops_df_list):
             pair_key = f'{route_i} to {route_j}'
             if pair_key in success_set:
                 continue
-            if dist_i[j] <= 0.25:
-                success_set.add(pair_key)
-                results.append(f'{route_i}>>{route_j}\n')
+            success_set.add(pair_key)
+            results.append(f'{route_i}>>{route_j}\n')
     return results
 
 print("Calculating Distances...................")
@@ -433,38 +493,47 @@ print("........................................")
 
 file_name = f'{file_first_name}_distances_success.txt'
 
-# Check if the file exists
+# Reuse a cached file only if it has route IDs, not leftover longitude pairs
+results = None
 if os.path.exists(file_name):
     print(f"File '{file_name}' exists. Reading results from the file...")
-    
-    # Read the file contents
     with open(file_name, 'r') as file:
         results = file.read()
+    if _pairs_look_like_coordinates(results):
+        print(f"Cached '{file_name}' has coordinates instead of route IDs. Recalculating...")
+        results = None
 
-else:
-    print("stops_df_list contains:", stops_df_list)
-
+if results is None:
     results = calculate_and_print_distance(stops_df_list)
 
     print(".....................Distance Calculated")
-    # Now results is an iterator of strings. 
-    # We'll join these strings together with an empty separator to get the final text.
     final_text = ''.join(results)
-    print(f"Results before writing to file: {final_text}")
+    print(f"Sample good-transfer pairs: {''.join(results[:8])}")
 
-    # Write the distances to a text file
-    with open(f'{file_first_name}_distances_success.txt', 'w') as file:
+    with open(file_name, 'w') as file:
         file.write(final_text)
 
-    # print("#####################################################################")
-    print(f'File: {file_first_name}_distances_success.txt Created SuccessFully')
-    # print("#####################################################################")
+    print(f'File: {file_name} Created SuccessFully')
+
+def _normalize_transfer_pair(pair):
+    pair = pair.strip()
+    if '>>' not in pair:
+        return pair
+    left, right = pair.split('>>', 1)
+    left = _strip_route_direction(left)
+    right = _strip_route_direction(right)
+    if not left or not right or left == right:
+        return None
+    return f'{left}>>{right}'
+
 
 # Normalize results to a set for O(1) lookup in the transfer loop
 if isinstance(results, str):
-    good_transfer_set = set(line.strip() for line in results.split('\n') if line.strip())
+    raw_pairs = (line.strip() for line in results.split('\n') if line.strip())
 else:
-    good_transfer_set = set(r.strip() for r in results if r.strip())
+    raw_pairs = (r.strip() for r in results if r.strip())
+
+good_transfer_set = set(p for p in (_normalize_transfer_pair(r) for r in raw_pairs) if p)
 
 # Good Transfer Combo Logic Starts Here
 prev_trip_codes_checks=['tripfirstroutecode','tripsecondroutecode','tripthirdroutecode','tripfourthroutecode']

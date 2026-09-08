@@ -91,6 +91,8 @@ header_df = pd.read_excel(mapping_file, sheet_name=sheet_name)
 header_mapping = dict(zip(header_df["Headers-ls6"], header_df["FormattedHeader-ls2"]))
 df = df1.rename(columns=header_mapping)
 
+df['id'] = df['id'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+elvis_df['id'] = elvis_df['id'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 # Merge 'Final_Usage' and 'FINAL_REVIEWER' from elvis_df
 df = df.merge(
     elvis_df[['id', 'Final_Usage', 'FINAL_REVIEWER']],
@@ -267,20 +269,18 @@ def extract_distance(reason):
         return float(reason.split('is ')[1].split(' miles')[0])
     return None
 
-final_output['DISTANCE_MILES'] = final_output['REASON'].apply(extract_distance)
-
-# Sort by distance (most problematic first)
-final_output = final_output.sort_values('DISTANCE_MILES', ascending=False)
-
-# Save the results
 output_filename = f"{project_name}_flagged_stops_{today_date}.xlsx"
-final_output.to_excel(output_filename, index=False)
-
-print(f"Found {len(final_output)} flagged records")
-print(f"Validation complete. Results saved to {output_filename}")
-
-# Print summary statistics
-print("\nSummary of flagged stops:")
-print(f"Maximum distance: {final_output['DISTANCE_MILES'].max():.2f} miles")
-print(f"Average distance: {final_output['DISTANCE_MILES'].mean():.2f} miles")
-print(f"Number of unique routes with issues: {final_output['ROUTE_SURVEYEDCode'].nunique()}")
+if final_output.empty:
+    final_output.to_excel(output_filename, index=False)
+    print("Found 0 flagged records")
+    print(f"Validation complete. Results saved to {output_filename}")
+else:
+    final_output['DISTANCE_MILES'] = final_output['REASON'].apply(extract_distance)
+    final_output = final_output.sort_values('DISTANCE_MILES', ascending=False)
+    final_output.to_excel(output_filename, index=False)
+    print(f"Found {len(final_output)} flagged records")
+    print(f"Validation complete. Results saved to {output_filename}")
+    print("\nSummary of flagged stops:")
+    print(f"Maximum distance: {final_output['DISTANCE_MILES'].max():.2f} miles")
+    print(f"Average distance: {final_output['DISTANCE_MILES'].mean():.2f} miles")
+    print(f"Number of unique routes with issues: {final_output['ROUTE_SURVEYEDCode'].nunique()}")

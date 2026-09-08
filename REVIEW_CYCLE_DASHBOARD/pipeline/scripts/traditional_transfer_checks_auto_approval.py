@@ -8,21 +8,102 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
+def _clean_col(s):
+    return s.replace('_', '').replace('[', '').replace(']', '').replace(' ', '').replace('#', '').lower()
+
+
 def check_all_characters_present(df, columns_to_check):
-    # Function to clean a string by removing underscores and square brackets and converting to lowercase
-    def clean_string(s):
-        return s.replace('_', '').replace('[', '').replace(']', '').replace(' ','').replace('#','').lower()
+    columns_to_check_lower = [_clean_col(column) for column in columns_to_check]
+    return [column for column in df.columns if _clean_col(column) in columns_to_check_lower]
 
-    # Clean and convert all column names in df to lowercase for case-insensitive comparison
-    df_columns_lower = [clean_string(column) for column in df.columns]
 
-    # Clean and convert the columns_to_check list to lowercase for case-insensitive comparison
-    columns_to_check_lower = [clean_string(column) for column in columns_to_check]
+def _etc_to_xfer_route_id(value):
+    """STOPS ETC_ROUTE_ID (BUS_1_1_00) -> XFER_ROUTE_ID (BUS_1_1)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return None
+    parts = text.split("_")
+    if len(parts) >= 2 and parts[-1].isdigit() and len(parts[-1]) == 2:
+        return "_".join(parts[:-1])
+    return text
 
-    # Use a list comprehension to filter columns
-    matching_columns = [column for column in df.columns if clean_string(column) in columns_to_check_lower]
 
-    return matching_columns
+def _blank_to_none(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return None
+    return text
+
+
+def _order_leading_column(columns, leading_name):
+    """Keep the transfer-count column first so Status compares count vs filled routes."""
+    want = _clean_col(leading_name)
+    lead = [c for c in columns if _clean_col(c) == want]
+    rest = [c for c in columns if c not in lead]
+    return lead + rest
+
+
+def _prepare_detail_stops(stops_df, xfer_df):
+    """Keep XFER_ROUTE_ID when stacking STOPS + XFER_STOPS (STOPS-only align used to drop it)."""
+    stops_df = stops_df.copy()
+    xfer_df = xfer_df.copy()
+    if "XFER_ROUTE_ID" not in stops_df.columns:
+        stops_df["XFER_ROUTE_ID"] = (
+            stops_df["ETC_ROUTE_ID"].map(_etc_to_xfer_route_id)
+            if "ETC_ROUTE_ID" in stops_df.columns
+            else None
+        )
+    elif "ETC_ROUTE_ID" in stops_df.columns:
+        missing = stops_df["XFER_ROUTE_ID"].map(_blank_to_none).isna()
+        stops_df.loc[missing, "XFER_ROUTE_ID"] = stops_df.loc[missing, "ETC_ROUTE_ID"].map(
+            _etc_to_xfer_route_id
+        )
+    all_cols = list(dict.fromkeys(list(stops_df.columns) + list(xfer_df.columns)))
+    for col in all_cols:
+        if col not in stops_df.columns:
+            stops_df[col] = None
+        if col not in xfer_df.columns:
+            xfer_df[col] = None
+    return pd.concat([stops_df[all_cols], xfer_df[all_cols]], ignore_index=True)
+
+
+def _transfer_stop_rows(detail_df):
+    lat_cols = check_all_characters_present(detail_df, ["stoplat"])
+    lon_cols = check_all_characters_present(detail_df, ["stoplon"])
+    route_cols = check_all_characters_present(detail_df, ["xferrouteid"])
+    if not lat_cols or not lon_cols:
+        raise ValueError("Details workbook is missing stop_lat/stop_lon.")
+    if not route_cols:
+        raise ValueError(
+            "Details workbook has no XFER_ROUTE_ID after STOPS/XFER_STOPS merge. "
+            "Traditional transfer cannot build a route whitelist."
+        )
+    lat_col = next((c for c in lat_cols if str(c).lower() == "stop_lat"), lat_cols[0])
+    lon_col = next((c for c in lon_cols if str(c).lower() == "stop_lon"), lon_cols[0])
+    route_col = next((c for c in route_cols if str(c).upper() == "XFER_ROUTE_ID"), route_cols[0])
+    out = detail_df[[lat_col, lon_col, route_col]].copy()
+    out.columns = ["stop_lat", "stop_lon", "XFER_ROUTE_ID"]
+    out["stop_lat"] = pd.to_numeric(out["stop_lat"], errors="coerce")
+    out["stop_lon"] = pd.to_numeric(out["stop_lon"], errors="coerce")
+    out["XFER_ROUTE_ID"] = out["XFER_ROUTE_ID"].map(_blank_to_none)
+    out = out.dropna(subset=["stop_lat", "stop_lon", "XFER_ROUTE_ID"])
+    return out
+
+
+def _success_pairs_look_valid(pairs):
+    sample = [str(p).strip() for p in pairs if str(p).strip()][:20]
+    if not sample:
+        return False
+    route_like = 0
+    for line in sample:
+        left = line.split(">>")[0] if ">>" in line else line
+        if any(ch.isalpha() for ch in left) or "_" in left:
+            route_like += 1
+    return route_like >= max(1, len(sample) // 2)
 
 today_date = date.today()
 today_date=''.join(str(today_date).split('-'))
@@ -77,16 +158,10 @@ xfer_rename_map = {
 
 xfer_df = xfer_df.rename(columns=xfer_rename_map)
 
-for col in stops_df.columns:
-    if col not in xfer_df.columns:
-        xfer_df[col] = None
-
-# Ensure same column order
-xfer_df = xfer_df[stops_df.columns]
-
-detail_df = pd.concat([stops_df, xfer_df], ignore_index=True)
+detail_df = _prepare_detail_stops(stops_df, xfer_df)
 
 print("total stops in details now: ", len(detail_df))
+print("XFER_ROUTE_ID present:", "XFER_ROUTE_ID" in detail_df.columns)
 
 
 
@@ -148,8 +223,12 @@ duplicates = df.drop_duplicates(subset=duplicate_columns)
 # PREV and NEXT transfer should match the route name
 prev_transfer_codes=['prevtransferscode','tripfirstroutecode','tripsecondroutecode','tripthirdroutecode','tripfourthroutecode']
 next_transfer_codes=['nexttransferscode','tripnextroutecode','tripafterroutecode','trip3rdroutecode','triplast4thrtecode']
-prev_transfer_columns=check_all_characters_present(df,prev_transfer_codes)
-next_transfer_columns=check_all_characters_present(df,next_transfer_codes)
+prev_transfer_columns=_order_leading_column(
+    check_all_characters_present(df, prev_transfer_codes), "prevtransferscode"
+)
+next_transfer_columns=_order_leading_column(
+    check_all_characters_present(df, next_transfer_codes), "nexttransferscode"
+)
 prev_transfer_columns,next_transfer_columns
 
 prev_df=df.loc[:,prev_transfer_columns]
@@ -199,11 +278,10 @@ df = df[desired_columns + [col for col in df.columns if col not in desired_colum
 # print('ETC_ROUTE_ID Splitted Successfully')
 # df.drop_duplicates(subset=['ETC_ROUTE_ID_New'],inplace=True)
 
-stops_columns_to_check=['stoplat','stoplon','xferrouteid']
-stops_columns=check_all_characters_present(detail_df,stops_columns_to_check)
-
-stops_df=detail_df.loc[:,stops_columns]
+stops_df=_transfer_stop_rows(detail_df)
 stops_df_list=stops_df.values.tolist()
+print("transfer stop rows with XFER_ROUTE_ID:", len(stops_df_list),
+      "unique routes:", stops_df["XFER_ROUTE_ID"].nunique())
 
 # Approximate radius of earth in km
 R = 6373.0
@@ -251,14 +329,14 @@ def calculate_and_print_distance(stops_df_list):
     success_set = set()  # O(1) lookup instead of list
 
     for i in range(n):
-        route_i = routes[i]
+        route_i = _blank_to_none(routes[i])
         if not route_i:
             continue
         dist_i = _haversine_vector_miles(lats[i], lons[i], lats, lons)
         for j in range(n):
             if i == j:
                 continue
-            route_j = routes[j]
+            route_j = _blank_to_none(routes[j])
             if not route_j or route_i == route_j:
                 continue
             pair_key = f'{route_i} to {route_j}'
@@ -277,38 +355,36 @@ print("........................................")
 
 file_name = f'{file_first_name}_distances_success.txt'
 
-# Check if the file exists
+results = None
 if os.path.exists(file_name):
-    print(f"File '{file_name}' exists. Reading results from the file...")
-    
-    # Read the file contents
+    print(f"File '{file_name}' exists. Validating cached route pairs...")
     with open(file_name, 'r') as file:
-        results = file.read()
+        cached_text = file.read()
+    cached_pairs = [line.strip() for line in cached_text.split('\n') if line.strip()]
+    if _success_pairs_look_valid(cached_pairs):
+        results = cached_text
+    else:
+        print(f"Cached '{file_name}' is not route IDs (likely lat/lon). Recomputing.")
 
-else:
-    print("stops_df_list contains:", stops_df_list)
-
+if results is None:
+    print("Computing good-transfer pairs from XFER_ROUTE_ID (threshold 0.25 mi)...")
     results = calculate_and_print_distance(stops_df_list)
-
-    print(".....................Distance Calculated")
-    # Now results is an iterator of strings. 
-    # We'll join these strings together with an empty separator to get the final text.
     final_text = ''.join(results)
-    print(f"Results before writing to file: {final_text}")
-
-    # Write the distances to a text file
-    with open(f'{file_first_name}_distances_success.txt', 'w') as file:
+    with open(file_name, 'w') as file:
         file.write(final_text)
-
-    # print("#####################################################################")
-    print(f'File: {file_first_name}_distances_success.txt Created SuccessFully')
-    # print("#####################################################################")
+    print(f'File: {file_name} Created SuccessFully ({len(results)} pairs)')
 
 # Normalize results to a set for O(1) lookup in the transfer loop
 if isinstance(results, str):
     good_transfer_set = set(line.strip() for line in results.split('\n') if line.strip())
 else:
     good_transfer_set = set(r.strip() for r in results if r.strip())
+if not _success_pairs_look_valid(good_transfer_set):
+    raise ValueError(
+        f"Good-transfer whitelist is empty or not route IDs. "
+        f"Check XFER_ROUTE_ID on STOPS/XFER_STOPS. Sample: {list(good_transfer_set)[:5]}"
+    )
+print("good-transfer pairs:", len(good_transfer_set))
 
 # Good Transfer Combo Logic Starts Here
 prev_trip_codes_checks=['tripfirstroutecode','tripsecondroutecode','tripthirdroutecode','tripfourthroutecode']

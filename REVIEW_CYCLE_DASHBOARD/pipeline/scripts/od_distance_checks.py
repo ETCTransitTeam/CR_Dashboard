@@ -96,7 +96,7 @@ def find_transport_code_column(df, origin_not_destin):
 today_date = date.today()
 today_date=''.join(str(today_date).split('-'))
 
-project_name='PARK_CITY'
+project_name='OAHU'
 
 # # file_name='PALMTRAN_FL_KINGElvis.xlsx'
 # # detail_df=pd.read_excel("details_project_od_excel_PALMTRAN.xlsx",sheet_name='STOPS')
@@ -248,15 +248,25 @@ project_name='PARK_CITY'
 # df1=pd.read_csv('elvis_transit_ls6_733524_export_odbc.csv')
 # elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
 
-file_name='PARK_CITY_UT_2026_KINGElvis.xlsx'
-file_path="details_ParkCity_154732_od_excel.xlsx"
-df1=pd.read_csv('elvis_transit_ls6_154732_export_odbc.csv')
-elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
+# file_name='PARK_CITY_UT_2026_KINGElvis.xlsx'
+# file_path="details_ParkCity_154732_od_excel.xlsx"
+# df1=pd.read_csv('elvis_transit_ls6_154732_export_odbc.csv')
+# elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
 
 # file_name='INDYGO_BRT_2026_KINGElvis.xlsx'
 # file_path="details_lndyGO_574774_od_excel.xlsx"
 # df1=pd.read_csv('elvis_transit_ls6_574774_export_odbc.csv')
 # elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
+
+# file_name='HART-TAMPA_2026_KINGElvis.xlsx'
+# file_path="details_TAMPA_od_excel_553191.xlsx"
+# df1=pd.read_csv('elvis_transit_ls6_553191_export_odbc.csv')
+
+file_name='OAHU-HONOLULU-HI_2026_KINGElvis.xlsx'
+file_path="details_oahu-honolulu-hi_od_excel.xlsx"
+df1=pd.read_csv('elvis_transit_ls6_563764_export_odbc.csv')
+
+elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
 
 stops_df = pd.read_excel(file_path, sheet_name="STOPS")
 xfer_df  = pd.read_excel(file_path, sheet_name="XFER_STOPS")
@@ -304,6 +314,13 @@ header_mapping = dict(zip(header_df["Headers-ls6"], header_df["FormattedHeader-l
 
 # Step 2: Rename df1 columns to get df2
 df = df1.rename(columns=header_mapping)
+
+# Drop the LS6 label/code row if it survived drop(0) (id is blank, text, or 0)
+df['id'] = pd.to_numeric(df['id'], errors='coerce')
+_label_mask = df['id'].isna() | (df['id'] == 0)
+if _label_mask.any():
+    print(f"Dropping {int(_label_mask.sum())} LS6 label/non-id rows after header rename")
+    df = df.loc[~_label_mask].copy()
 
 # Optional: Check changes
 print("Renamed Columns:")
@@ -448,11 +465,18 @@ blank_column_names=check_all_characters_present(df,blank_columns_checks)
 
 
 
+n_use_before_dropna = len(df)
+_missing_coord_mask = df[blank_column_names].isna().any(axis=1)
+print(f"Use rows before coord dropna: {n_use_before_dropna}")
+print(f"Use rows dropped for missing origin/destin/stop lat+lon: {int(_missing_coord_mask.sum())}")
+if _missing_coord_mask.any() and 'FINAL_REVIEWER' in df.columns:
+    print(df.loc[_missing_coord_mask, 'FINAL_REVIEWER'].value_counts(dropna=False).to_string())
+
 df.dropna(subset=blank_column_names, how='any',inplace=True)
 
 df.to_csv("dropped_new.csv")
 
-print(f"Rows used for distance checks (after Final_Usage='use' and dropna): {len(df)}")
+print(f"Rows used for distance checks (complete-coordinate Use only): {len(df)}")
 
 boarding_columns_checks=['prevtran1onbuslat', 'prevtran1onbuslong',
                          'prevtran2onbuslat', 'prevtran2onbuslong',
@@ -464,12 +488,18 @@ boarding_columns_checks=['prevtran1onbuslat', 'prevtran1onbuslong',
                          'nexttran2offbuslat', 'nexttran2offbuslong', 
                           'nexttran3offbuslat', 'nexttran3offbuslong', 
                           'nexttran4offbuslat', 'nexttran4offbuslong',]
-boarding_columns=check_all_characters_present(df,boarding_columns_checks)
-boarding_columns.sort()
+boarding_map = get_columns_by_cleaned_name(df, boarding_columns_checks)
+boarding_columns = [boarding_map[k] for k in boarding_columns_checks if k in boarding_map]
+_missing_boarding = [k for k in boarding_columns_checks if k not in boarding_map]
+if _missing_boarding:
+    print(f"Warning: missing GPS columns (not index-shifted): {_missing_boarding}")
 
 origin_destin_columns_checks=['originaddresslat','originaddresslong', 'destinaddresslat', 'destinaddresslong']
-origin_destin_columns=check_all_characters_present(df,origin_destin_columns_checks)
-origin_destin_columns.sort()
+origin_destin_map = get_columns_by_cleaned_name(df, origin_destin_columns_checks)
+_missing_od = [k for k in origin_destin_columns_checks if k not in origin_destin_map]
+if _missing_od:
+    raise ValueError(f"Required origin/destin GPS columns not found: {_missing_od}")
+origin_destin_columns = [origin_destin_map[k] for k in origin_destin_columns_checks]
 
 
 df['FIRST_BOARDING_LAT']=None 
@@ -503,64 +533,42 @@ def get_distance_between_coordinates(lat1, lon1, lat2, lon2):
         print(f"Error calculating distance: {e}")  # Change to the desired distance unit
 
 
-for index, row in df.iterrows():
-    if not pd.isna(row[boarding_columns[8]]) and not pd.isna(row[boarding_columns[9]]):
-        #'PREV_TRAN_1_ON_BUS_LAT',
-        #'PREV_TRAN_1_ON_BUS_LONG'
-        df.loc[index, 'FIRST_BOARDING_LAT'] = row[boarding_columns[8]]
-        df.loc[index, 'FIRST_BOARDING_LONG'] = row[boarding_columns[9]]
-    elif not pd.isna(row[boarding_columns[10]]) and not pd.isna(row[boarding_columns[11]]):
-        #  'PREV_TRAN_2_ON_BUS_LAT',
-        # 'PREV_TRAN_2_ON_BUS_LONG'
-        df.loc[index, 'FIRST_BOARDING_LAT'] = row[boarding_columns[10]]
-        df.loc[index, 'FIRST_BOARDING_LONG'] = row[boarding_columns[11]]
-    elif not pd.isna(row[boarding_columns[12]]) and not pd.isna(row[boarding_columns[13]]):
-        #  'PREV_TRAN_3_ON_BUS_LAT',
-        # 'PREV_TRAN_3_ON_BUS_LONG'
-        df.loc[index, 'FIRST_BOARDING_LAT'] = row[boarding_columns[12]]
-        df.loc[index, 'FIRST_BOARDING_LONG'] = row[boarding_columns[13]]
-    elif not pd.isna(row[boarding_columns[14]]) and not pd.isna(row[boarding_columns[15]]):
-        #  'PREV_TRAN_4_ON_BUS_LAT',
-        # 'PREV_TRAN_4_ON_BUS_LONG'
-        df.loc[index, 'FIRST_BOARDING_LAT'] = row[boarding_columns[14]]
-        df.loc[index, 'FIRST_BOARDING_LONG'] = row[boarding_columns[15]]
-    elif not pd.isna(row[boarding_columns[18]]) and not pd.isna(row[boarding_columns[19]]):
-        #  'STOP_ON_LAT',
-        # 'STOP_ON_LONG'
-        df.loc[index, 'FIRST_BOARDING_LAT'] = row[boarding_columns[18]]
-        df.loc[index, 'FIRST_BOARDING_LONG'] = row[boarding_columns[19]]
-    else:
-        df.loc[index, 'FIRST_BOARDING_LAT'] = None
-        df.loc[index, 'FIRST_BOARDING_LONG'] = None
-    #      
-    if not pd.isna(row[boarding_columns[6]]) and not pd.isna(row[boarding_columns[7]]):
-        #  'NEXT_TRAN_4_OFF_BUS_LAT',
-        # 'NEXT_TRAN_4_OFF_BUS_LONG'
-        df.loc[index, 'LAST_ALIGHTING_LAT'] = row[boarding_columns[6]]
-        df.loc[index, 'LAST_ALIGHTING_LONG'] = row[boarding_columns[7]]
-    elif not pd.isna(row[boarding_columns[4]]) and not pd.isna(row[boarding_columns[5]]):
-        #  'NEXT_TRAN_3_OFF_BUS_LAT',
-        # 'NEXT_TRAN_3_OFF_BUS_LONG'
-        df.loc[index, 'LAST_ALIGHTING_LAT'] = row[boarding_columns[4]]
-        df.loc[index, 'LAST_ALIGHTING_LONG'] = row[boarding_columns[5]]
-    elif not pd.isna(row[boarding_columns[2]]) and not pd.isna(row[boarding_columns[3]]):
-        #  'NEXT_TRAN_2_OFF_BUS_LAT',
-        # 'NEXT_TRAN_2_OFF_BUS_LONG'
-        df.loc[index, 'LAST_ALIGHTING_LAT'] = row[boarding_columns[2]]
-        df.loc[index, 'LAST_ALIGHTING_LONG'] = row[boarding_columns[3]]
-    elif not pd.isna(row[boarding_columns[0]]) and not pd.isna(row[boarding_columns[1]]):
-        #  'NEXT_TRAN_1_OFF_BUS_LAT',
-        # 'NEXT_TRAN_1_OFF_BUS_LONG'
-        df.loc[index, 'LAST_ALIGHTING_LAT'] = row[boarding_columns[0]]
-        df.loc[index, 'LAST_ALIGHTING_LONG'] = row[boarding_columns[1]]
-    elif not pd.isna(row[boarding_columns[16]]) and not pd.isna(row[boarding_columns[17]]):
-        #  'STOP_OFF_LAT',
-        # 'STOP_OFF_LONG'
-        df.loc[index, 'LAST_ALIGHTING_LAT'] = row[boarding_columns[16]]
-        df.loc[index, 'LAST_ALIGHTING_LONG'] = row[boarding_columns[17]]
-    else:
-        df.loc[index, 'LAST_ALIGHTING_LAT'] = None
-        df.loc[index, 'LAST_ALIGHTING_LONG'] = None
+def _first_available_latlon(frame, pairs, colmap):
+    """Take the first lat/lon pair that is present and numeric. Missing columns are skipped."""
+    lat_out = pd.Series(np.nan, index=frame.index, dtype=float)
+    lon_out = pd.Series(np.nan, index=frame.index, dtype=float)
+    filled = pd.Series(False, index=frame.index)
+    for lat_key, lon_key in pairs:
+        lat_c = colmap.get(lat_key)
+        lon_c = colmap.get(lon_key)
+        if not lat_c or not lon_c:
+            continue
+        lat = pd.to_numeric(frame[lat_c], errors='coerce')
+        lon = pd.to_numeric(frame[lon_c], errors='coerce')
+        ok = lat.notna() & lon.notna() & ~filled
+        lat_out = lat_out.where(~ok, lat)
+        lon_out = lon_out.where(~ok, lon)
+        filled = filled | ok
+    return lat_out, lon_out
+
+
+FIRST_BOARD_PAIRS = [
+    ('prevtran1onbuslat', 'prevtran1onbuslong'),
+    ('prevtran2onbuslat', 'prevtran2onbuslong'),
+    ('prevtran3onbuslat', 'prevtran3onbuslong'),
+    ('prevtran4onbuslat', 'prevtran4onbuslong'),
+    ('stoponlat', 'stoponlong'),
+]
+LAST_ALIGHT_PAIRS = [
+    ('nexttran4offbuslat', 'nexttran4offbuslong'),
+    ('nexttran3offbuslat', 'nexttran3offbuslong'),
+    ('nexttran2offbuslat', 'nexttran2offbuslong'),
+    ('nexttran1offbuslat', 'nexttran1offbuslong'),
+    ('stopofflat', 'stopofflong'),
+]
+
+df['FIRST_BOARDING_LAT'], df['FIRST_BOARDING_LONG'] = _first_available_latlon(df, FIRST_BOARD_PAIRS, boarding_map)
+df['LAST_ALIGHTING_LAT'], df['LAST_ALIGHTING_LONG'] = _first_available_latlon(df, LAST_ALIGHT_PAIRS, boarding_map)
 
 cleaning_columns = origin_destin_columns + ['FIRST_BOARDING_LAT', 'FIRST_BOARDING_LONG']
 # Function to clean up extra dots in numeric strings
@@ -586,15 +594,27 @@ print(df[cleaning_columns].head())
 
 # print(df.dtypes)  # Verify data types
 
-df[boarding_columns[19]] = pd.to_numeric(df[boarding_columns[19]], errors='coerce').fillna(0.0)
+olat_c = origin_destin_map['originaddresslat']
+olon_c = origin_destin_map['originaddresslong']
+dlat_c = origin_destin_map['destinaddresslat']
+dlon_c = origin_destin_map['destinaddresslong']
+stopon_lat_c = boarding_map.get('stoponlat')
+stopon_lon_c = boarding_map.get('stoponlong')
+stopoff_lat_c = boarding_map.get('stopofflat')
+stopoff_lon_c = boarding_map.get('stopofflong')
+if not stopon_lat_c or not stopon_lon_c or not stopoff_lat_c or not stopoff_lon_c:
+    raise ValueError("STOP_ON / STOP_OFF lat+lon columns were not found by name")
+
+for col in [stopon_lat_c, stopon_lon_c, stopoff_lat_c, stopoff_lon_c]:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
 
 for index, row in df.iterrows():
-    df.loc[index,'ORIGIN_TO_SURVEYBOARD']=get_distance_between_coordinates(row[origin_destin_columns[2]],row[origin_destin_columns[3]], row[boarding_columns[18]],row[boarding_columns[19]])
-    df.loc[index,'ORIGIN_TO_FIRST_BOARD']=get_distance_between_coordinates(row[origin_destin_columns[2]],row[origin_destin_columns[3]],row['FIRST_BOARDING_LAT'],row['FIRST_BOARDING_LONG'])
-    df.loc[index,'SURVEYBOARDING_TO_SURVEYALIGHTING']=get_distance_between_coordinates(row[boarding_columns[18]],row[boarding_columns[19]],row[boarding_columns[16]],row[boarding_columns[17]])
-    df.loc[index,'ORIGIN_TO_DESTINATION']=get_distance_between_coordinates(row[origin_destin_columns[2]],row[origin_destin_columns[3]],row[origin_destin_columns[0]],row[origin_destin_columns[1]])
-    df.loc[index,'SURVEYALIGHTING_TO_DESTINATION']=get_distance_between_coordinates(row[boarding_columns[16]],row[boarding_columns[17]],row[origin_destin_columns[0]],row[origin_destin_columns[1]])
-    df.loc[index,'LAST_ALIGHTING_LOCATION_TO_DESTIN']=get_distance_between_coordinates(row['LAST_ALIGHTING_LAT'],row['LAST_ALIGHTING_LONG'],row[origin_destin_columns[0]],row[origin_destin_columns[1]])
+    df.loc[index,'ORIGIN_TO_SURVEYBOARD']=get_distance_between_coordinates(row[olat_c], row[olon_c], row[stopon_lat_c], row[stopon_lon_c])
+    df.loc[index,'ORIGIN_TO_FIRST_BOARD']=get_distance_between_coordinates(row[olat_c], row[olon_c], row['FIRST_BOARDING_LAT'], row['FIRST_BOARDING_LONG'])
+    df.loc[index,'SURVEYBOARDING_TO_SURVEYALIGHTING']=get_distance_between_coordinates(row[stopon_lat_c], row[stopon_lon_c], row[stopoff_lat_c], row[stopoff_lon_c])
+    df.loc[index,'ORIGIN_TO_DESTINATION']=get_distance_between_coordinates(row[olat_c], row[olon_c], row[dlat_c], row[dlon_c])
+    df.loc[index,'SURVEYALIGHTING_TO_DESTINATION']=get_distance_between_coordinates(row[stopoff_lat_c], row[stopoff_lon_c], row[dlat_c], row[dlon_c])
+    df.loc[index,'LAST_ALIGHTING_LOCATION_TO_DESTIN']=get_distance_between_coordinates(row['LAST_ALIGHTING_LAT'], row['LAST_ALIGHTING_LONG'], row[dlat_c], row[dlon_c])
 
 # ===== DEBUG: Print O → B distance for specific IDs =====
 check_ids = [9998, 9119, 6446]
@@ -673,7 +693,9 @@ if _col_prev_transfers_code and _col_prev_transfers_code in df.columns:
 if _col_next_transfers_code and _col_next_transfers_code in df.columns:
     df[_col_next_transfers_code] = pd.to_numeric(df[_col_next_transfers_code], errors='coerce').fillna(0).astype(int)
 
-walk=['walk','wheelchair or scooter','other','walked','skateboard','bike, e-bike, skateboard, scooter, e-scooter','wheelchair','walked or used mobility aid']
+# Original M-code walk: Text.Contains Walk/Wheelchair/Skateboard OR code in {1, 2, -oth-}.
+# Exact text "Other" counts; substring "other" does not (avoids "drove with others").
+walk=['walk','wheelchair or scooter','walked','skateboard','bike, e-bike, skateboard, scooter, e-scooter','wheelchair','walked or used mobility aid']
 drive=['was dropped off by someone','drove alone and parked','drove or rode with others and parked','taxi','uber, lyft, etc.',
        'get in a parked vehicle & drive alone','be picked up by someone','taxi / shuttle','get in a parked vehicle & drive, alone or w/others',
        'get in a parked vehicle & drive/ride w/others','get in a parked vehicle & drive, alone or w/others','rode with others and was dropped off',
@@ -690,6 +712,10 @@ def _normalize_transport_text(series):
     return s.str.strip()
 
 
+# Never substring-match 'other' even if it is added back to a list.
+_SUBSTRING_SKIP = {'other'}
+
+
 def _transport_isin(series, values):
     """Case-insensitive check: series value (normalized) in values. Handles (1) Walk style. Also matches if normalized text contains any value as substring."""
     norm = _normalize_transport_text(series)
@@ -698,7 +724,7 @@ def _transport_isin(series, values):
     # Fallback: normalized text contains any of the value phrases (e.g. "get in a parked vehicle" in "get in a parked vehicle & drive alone")
     contains = pd.Series(False, index=series.index)
     for v in values_lower:
-        if len(v) < 3:
+        if len(v) < 3 or v in _SUBSTRING_SKIP:
             continue
         contains = contains | norm.str.contains(re.escape(v), case=False, na=False)
     return exact | contains
@@ -741,8 +767,9 @@ _sad = pd.to_numeric(df['SURVEYALIGHTING_TO_DESTINATION'], errors='coerce')
 _od = pd.to_numeric(df['ORIGIN_TO_DESTINATION'], errors='coerce')
 _b2a = pd.to_numeric(df['B2A/OD'], errors='coerce')
 
-# Walk/drive by code: 1,2 = walk; 7,8,9,10,11 = drive (per original rule comments)
+# Walk/drive by code: 1, 2, -oth- = walk (original M-code); 7,8,9,10,11 = drive
 _ORIGIN_WALK_CODES = {1, 2}
+_ORIGIN_WALK_CODE_STRINGS = {'-oth-', 'oth'}
 _ORIGIN_DRIVE_CODES = {7, 8, 9, 10, 11}
 
 def _code_in_set(series, allowed):
@@ -750,10 +777,20 @@ def _code_in_set(series, allowed):
     n = pd.to_numeric(series, errors='coerce').fillna(-999).astype(int)
     return n.isin(allowed)
 
+def _code_is_m_other(series):
+    """True for original M-code Other: '-oth-' (numeric conversion cannot see this)."""
+    s = series.astype(str).str.strip().str.lower()
+    return s.isin(_ORIGIN_WALK_CODE_STRINGS)
+
+def _text_is_exact_other(series):
+    return _normalize_transport_text(series).eq('other')
+
 def _origin_walk():
     text_ok = _transport_isin(df[_col_origin_transport], walk) if _col_origin_transport else pd.Series(False, index=df.index)
+    other_text = _text_is_exact_other(df[_col_origin_transport]) if _col_origin_transport else pd.Series(False, index=df.index)
     code_ok = _code_in_set(df[_col_origin_transport_code], _ORIGIN_WALK_CODES) if _col_origin_transport_code and _col_origin_transport_code in df.columns else pd.Series(False, index=df.index)
-    return text_ok | code_ok
+    other_code = _code_is_m_other(df[_col_origin_transport_code]) if _col_origin_transport_code and _col_origin_transport_code in df.columns else pd.Series(False, index=df.index)
+    return text_ok | other_text | code_ok | other_code
 
 def _origin_drive():
     text_ok = _transport_isin(df[_col_origin_transport], drive) if _col_origin_transport else pd.Series(False, index=df.index)
@@ -762,8 +799,10 @@ def _origin_drive():
 
 def _destin_walk():
     text_ok = _transport_isin(df[_col_destin_transport], walk) if _col_destin_transport else pd.Series(False, index=df.index)
+    other_text = _text_is_exact_other(df[_col_destin_transport]) if _col_destin_transport else pd.Series(False, index=df.index)
     code_ok = _code_in_set(df[_col_destin_transport_code], _ORIGIN_WALK_CODES) if _col_destin_transport_code and _col_destin_transport_code in df.columns else pd.Series(False, index=df.index)
-    return text_ok | code_ok
+    other_code = _code_is_m_other(df[_col_destin_transport_code]) if _col_destin_transport_code and _col_destin_transport_code in df.columns else pd.Series(False, index=df.index)
+    return text_ok | other_text | code_ok | other_code
 
 def _destin_drive():
     text_ok = _transport_isin(df[_col_destin_transport], drive) if _col_destin_transport else pd.Series(False, index=df.index)
@@ -887,7 +926,15 @@ distance_checks_columns=[*powerbi_columns,*boarding_columns,*origin_destin_colum
 
 od_df=df[distance_checks_columns]
 
-od_df = od_df.rename(columns={od_df.columns[1]: 'Final_Direction_Code', od_df.columns[2]: 'Final_Direction'})
+# Rename route-surveyed columns by name. Do not smash whatever is in columns 1 and 2.
+_route_export = get_columns_by_cleaned_name(od_df, ['routesurveyedcode', 'routesurveyed'])
+_export_rename = {}
+if 'routesurveyedcode' in _route_export:
+    _export_rename[_route_export['routesurveyedcode']] = 'Final_Direction_Code'
+if 'routesurveyed' in _route_export:
+    _export_rename[_route_export['routesurveyed']] = 'Final_Direction'
+if _export_rename:
+    od_df = od_df.rename(columns=_export_rename)
 od_df.drop_duplicates(subset='id', keep='first', inplace=True)
 
 

@@ -870,14 +870,42 @@ def _normalize_race_option_column_names(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def income_refused_mask(df, text_candidates=None, code_candidates=None):
+_BLANK_INCOME_AS_REFUSED_PROJECTS = frozenset({
+    "wtp_regional_triangle_nc",
+    "wtp_regional_triangle",
+})
+
+
+def _project_treats_blank_income_as_refused(project) -> bool:
+    """WTP Regional Triangle has no Income 'Refused' choice; blanks are refusals."""
+    key = str(project or "").strip().lower().replace(" ", "_")
+    if not key:
+        return False
+    if key in _BLANK_INCOME_AS_REFUSED_PROJECTS:
+        return True
+    return "wtp_regional_triangle" in key
+
+
+def _is_blankish_income_value(series: pd.Series) -> pd.Series:
+    s = series.astype(str).str.strip()
+    return (
+        series.isna()
+        | s.eq("")
+        | s.str.lower().isin(["nan", "none", "null", "-", "n/a", "na"])
+    )
+
+
+def income_refused_mask(df, text_candidates=None, code_candidates=None, project=None):
     """
-    True where household income answer is a refusal (answer choice), not a blank.
+    True where household income answer is a refusal.
 
     Text-first and project-agnostic: matches labels containing 'Refus' / 'Prefer not',
     or the common Elvis refuse placeholder '-------'. Also treats literal code
     values REFUSED/REFUSE. Does NOT use hardcoded numeric codes (10, 99, etc.),
     which vary by survey design.
+
+    For WTP Regional Triangle (no explicit Income refusal choice), blank income
+    is counted as refused.
     """
     if df is None or len(df) == 0:
         return pd.Series(dtype=bool)
@@ -903,6 +931,14 @@ def income_refused_mask(df, text_candidates=None, code_candidates=None):
     if code_col is not None:
         c = df[code_col].astype(str).str.strip().str.upper()
         mask = mask | c.isin(["REFUSED", "REFUSE"])
+
+    if _project_treats_blank_income_as_refused(project):
+        blank = pd.Series(False, index=df.index)
+        if text_col is not None:
+            blank = _is_blankish_income_value(df[text_col])
+        elif code_col is not None:
+            blank = _is_blankish_income_value(df[code_col])
+        mask = mask | blank
 
     return mask
 
@@ -3409,7 +3445,7 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
                 .isin(['1', '2', '3', '4'])
         ),
 
-        ('Income Refused', income_refused_mask(filtered_elvis)),
+        ('Income Refused', income_refused_mask(filtered_elvis, project=project)),
     ]
     
     # Add race metrics dynamically from race_label_map
@@ -4213,13 +4249,14 @@ def process_route_data(df, elvis_df, race_label_map=None):
     return route_report_df[final_columns]
 
 
-def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
+def process_route_data_transit_ls6(df, elvis_df, race_label_map=None, project=None):
     """Process data for route-level report
     
     Args:
         df: DataFrame with survey data
         elvis_df: DataFrame with elvis data
         race_label_map: Dictionary mapping race column names to labels (e.g., {'RACE_1': 'Asian'})
+        project: Project name (optional; WTP treats blank income as refused)
     """
     print("Processing route-level data...")
 
@@ -4437,7 +4474,7 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
 
         metrics.append((
             'Income Refused',
-            income_refused_mask(filtered_elvis)
+            income_refused_mask(filtered_elvis, project=project)
         ))
 
     
@@ -4580,7 +4617,7 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None):
     return route_report_df[final_columns]
 
 def process_surveyor_date_data_transit_ls6(
-    ke_df, elvis_df, survey_date_surveyor, race_label_map=None
+    ke_df, elvis_df, survey_date_surveyor, race_label_map=None, project=None
 ):
     """
     Date-filtered version of process_surveyor_data_transit_ls6
@@ -4768,7 +4805,7 @@ def process_surveyor_date_data_transit_ls6(
          filtered_elvis['INCOMECode']
             .astype(str).str.replace('.0', '', regex=False)
             .isin(['1', '2', '3', '4'])),
-        ('Income Refused', income_refused_mask(filtered_elvis))
+        ('Income Refused', income_refused_mask(filtered_elvis, project=project))
     ]
 
     add_race_metrics_to_list(metrics, filtered_elvis, race_label_map=race_label_map)

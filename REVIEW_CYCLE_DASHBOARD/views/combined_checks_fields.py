@@ -40,6 +40,12 @@ COMBINED_CHECK_LEADING_COLUMNS = (
     "REASON FOR REMOVAL",
     "REASON FOR REMOVAL [Other]",
     "POSSIBLE ERRORS",
+    "Traditional_Check",
+    "OD_Distance_Check",
+    "Transfer_Distance_Check",
+    "StopListValidation_Check",
+    "2X_REVIEW_CHECK",
+    "SUM_ALL_CHECKS",
 )
 
 
@@ -87,13 +93,22 @@ def persist_combined_changes(
     if not id_col or records.empty:
         return 0
 
-    project_by_id = records.set_index(records["RECORD_ID"].astype(str))["PROJECT_NAME"].to_dict()
+    def _rid(value: Any) -> str:
+        text = _norm(value)
+        if text.endswith(".0") and text[:-2].replace(".", "", 1).isdigit():
+            return text[:-2]
+        return text
+
+    project_by_id = {
+        _rid(rid): project
+        for rid, project in zip(records["RECORD_ID"].tolist(), records["PROJECT_NAME"].tolist())
+    }
     actor = user.get("name") or user.get("EMAIL")
     role = user.get("ROLE") or user.get("role")
     saved = 0
 
     for i in range(len(before)):
-        record_id = _norm(before.iloc[i][id_col])
+        record_id = _rid(before.iloc[i][id_col])
         if not record_id:
             continue
         project = project_by_id.get(record_id)
@@ -188,6 +203,12 @@ def render_combined_checks_table(
                 empty_message=empty_history_msg,
             )
             history_grid_caption(review_only=bool(history_actor_roles))
+
+        st.caption(
+            f"{len(prepared)} record(s) in this grid. "
+            "Column **#** is the row number in the current filtered/sorted view "
+            "(filter OD_Distance_Check = 1 and # runs 1…N for those rows)."
+        )
 
         config = editable_column_config(_strip_for_config(prepared))
         if "ADMIN_APPROVED" in prepared.columns:

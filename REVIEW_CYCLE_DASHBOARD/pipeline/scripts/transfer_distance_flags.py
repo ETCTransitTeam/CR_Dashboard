@@ -269,7 +269,12 @@ detail_df = pd.concat([stops_df, xfer_df], ignore_index=True)
 
 print("total stops in details now: ", len(detail_df))
 
-df1 = df1.drop(0).reset_index(drop=True)
+if "id" in df1.columns:
+    _first_id = str(df1.iloc[0]["id"]).strip().lower()
+    if _first_id in {"id", "elvis_id", "nan", ""}:
+        df1 = df1.drop(0).reset_index(drop=True)
+else:
+    df1 = df1.drop(0).reset_index(drop=True)
 
 ##################### For LS6 headers ###########################
 mapping_file = "request_20250708_ls6tols2-headers.xlsx"
@@ -285,14 +290,23 @@ df = df1.rename(columns=header_mapping)
 # LS6→LS2 mapping can collapse multiple headers onto the same name (e.g. duplicate `id`).
 df = _ensure_single_id(_dedupe_columns(df))
 elvis_df = _ensure_single_id(_dedupe_columns(elvis_df))
+df["id"] = df["id"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+elvis_df["id"] = elvis_df["id"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
 
 # Optional: Check changes
 print("Renamed Columns:")
 print(df.columns.tolist())
 ##################### For LS6 headers ###########################
 
-df['PREV_TRANSFERSCode'] = df['PREV_TRANSFERSCode'].fillna(0).astype(int)
-df['NEXT_TRANSFERSCode'] = df['NEXT_TRANSFERSCode'].fillna(0).astype(int)
+if not df.empty:
+    _sample = " ".join(str(v) for v in df.iloc[0].tolist()[:50])
+    if "[" in _sample or "Acode" in _sample:
+        df = df.drop(df.index[0]).reset_index(drop=True)
+if df.columns.duplicated().any():
+    df = df.loc[:, ~df.columns.duplicated()]
+for _col in ("PREV_TRANSFERSCode", "NEXT_TRANSFERSCode"):
+    if _col in df.columns:
+        df[_col] = pd.to_numeric(df[_col], errors="coerce").fillna(0).astype(int)
 
 if file_name.split('_')[0].isdigit():
     file_first_name=file_name.split('_')[0]+'_'+file_name.split('_')[1]

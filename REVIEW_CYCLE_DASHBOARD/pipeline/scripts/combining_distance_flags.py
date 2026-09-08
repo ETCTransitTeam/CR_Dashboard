@@ -32,21 +32,34 @@ today_date=''.join(str(today_date).split('-'))
 elvis_df=pd.read_excel(file_name,sheet_name='Elvis_Review')
 
 try:
-    traditional_df=pd.read_csv(f'reviewtool_20260401_{project_name}_TraditionalTransferFlags.csv')
+    traditional_df=pd.read_csv(f'reviewtool_{today_date}_{project_name}_TraditionalTransferFlags.csv')
 except:
     traditional_df=pd.DataFrame()
 try:
-    od_df=pd.read_csv(f'reviewtool_20260401_{project_name}_OD_Distance_Checks.csv')
+    od_df=pd.read_csv(f'reviewtool_{today_date}_{project_name}_OD_Distance_Checks.csv')
 except:
     od_df=pd.DataFrame()
 try:
-    transfer_df=pd.read_csv(f'reviewtool_20260401_{project_name}_Distance_Transfer_Flags.csv')
+    transfer_df=pd.read_csv(f'reviewtool_{today_date}_{project_name}_Distance_Transfer_Flags.csv')
 except:
     transfer_df=pd.DataFrame()
 try:
-    stoplist_df = pd.read_excel(f'{project_name}_flagged_stops_20260401.xlsx')
+    stoplist_df = pd.read_excel(f'{project_name}_flagged_stops_{today_date}.xlsx')
 except:
     stoplist_df = pd.DataFrame()
+
+def _norm_join_id(frame):
+    if frame is None or frame.empty or "id" not in frame.columns:
+        return frame
+    frame = frame.copy()
+    frame["id"] = frame["id"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    return frame
+
+elvis_df = _norm_join_id(elvis_df)
+traditional_df = _norm_join_id(traditional_df)
+od_df = _norm_join_id(od_df)
+transfer_df = _norm_join_id(transfer_df)
+stoplist_df = _norm_join_id(stoplist_df)
 
 # recovery_df=pd.read_excel('COTA_survey_recovery_2023-12-06.xlsx', sheet_name='_(F0) SURVEY RECOVERY')
 
@@ -325,7 +338,7 @@ def generate_analysis_report(merged_df, project_name, today_date):
     flagged = merged_df[merged_df['SUM_ALL_CHECKS']==1]
 
     # --- Stop Validation Insights ---
-    stop_csv_file = f'{project_name}_flagged_stops_20260401.xlsx'
+    stop_csv_file = f'{project_name}_flagged_stops_{today_date}.xlsx'
     if os.path.exists(stop_csv_file):
         stop_df = pd.read_excel(stop_csv_file)
         
@@ -396,7 +409,7 @@ def generate_analysis_report(merged_df, project_name, today_date):
         stop_insights_html = "<p>No Stop Validation data available</p>"
 
     # --- OD Distance Insights from separate CSV ---
-    od_csv_file = f'reviewtool_20260401_{project_name}_OD_Distance_Checks.csv'
+    od_csv_file = f'reviewtool_{today_date}_{project_name}_OD_Distance_Checks.csv'
     if os.path.exists(od_csv_file):
         od_df = pd.read_csv(od_csv_file)
         
@@ -436,7 +449,7 @@ def generate_analysis_report(merged_df, project_name, today_date):
         od_insights_html = "<p>No OD Distance data available</p>"
 
      # --- Traditional Transfer Insights ---
-    trad_csv_file = f'reviewtool_20260401_{project_name}_TraditionalTransferFlags.csv'
+    trad_csv_file = f'reviewtool_{today_date}_{project_name}_TraditionalTransferFlags.csv'
     if os.path.exists(trad_csv_file):
         trad_df = pd.read_csv(trad_csv_file)
 
@@ -551,7 +564,7 @@ def generate_analysis_report(merged_df, project_name, today_date):
         trad_html = "<p>No Traditional Transfer data available</p>"
 
         # --- Transfer Distance Insights ---
-    transfer_csv_file = f'reviewtool_20260401_{project_name}_Distance_Transfer_Flags.csv'
+    transfer_csv_file = f'reviewtool_{today_date}_{project_name}_Distance_Transfer_Flags.csv'
     if os.path.exists(transfer_csv_file):
         try:
             transfer_df = pd.read_csv(transfer_csv_file)
@@ -633,7 +646,7 @@ def generate_analysis_report(merged_df, project_name, today_date):
     html_report = f"""
     <html>
     <head>
-        <title>{project_name} Flag Analysis - 20260401</title>
+        <title>{project_name} Flag Analysis - {today_date}</title>
         <style>
             body {{ font-family: Arial; margin: 20px; }}
             .card {{ background: #f9f9f9; border-radius: 10px; padding: 15px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
@@ -644,7 +657,7 @@ def generate_analysis_report(merged_df, project_name, today_date):
     </head>
     <body>
         <h1>🚩 Survey Data Quality Report: {project_name}</h1>
-        <small>Generated on 20260401</small>
+        <small>Generated on {today_date}</small>
 
         <div class="card">
             <h2>📊 Overview</h2>
@@ -666,7 +679,7 @@ def generate_analysis_report(merged_df, project_name, today_date):
     """
 
     # Save HTML
-    report_path = f"reviewtool_20260401_{project_name}_analysis.html"
+    report_path = f"reviewtool_{today_date}_{project_name}_analysis.html"
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(dedent(html_report))
 
@@ -677,7 +690,7 @@ generate_analysis_report(merged_df, project_name, today_date)
 
 
 
-merged_df.to_csv(f'reviewtool_20260401_{project_name}_combinedflags.csv',index=False)
+merged_df.to_csv(f'reviewtool_{today_date}_{project_name}_combinedflags.csv',index=False)
 # merged_df.to_csv('MUNI Merged Checks(v2).csv',index=False)
 
 
