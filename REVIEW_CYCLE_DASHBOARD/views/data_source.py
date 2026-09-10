@@ -6,6 +6,7 @@ from datetime import datetime
 
 import streamlit as st
 
+from core.s3_utils import publish_kingelvis_to_shared_s3, shared_kingelvis_s3_key
 from rc_auth.access import is_super_admin_user
 from services.sheets_sync import (
     DEFAULT_WORKSHEET,
@@ -54,7 +55,8 @@ def render_data_source_control(user: dict, project: str) -> None:
             key=SOURCE_KEY,
             help=(
                 "Snowflake is the live source for these pages. "
-                "Excel upload updates matching rows and adds any new elvis_id / id rows, then the pages reload from Snowflake."
+                "Excel upload updates matching rows, adds any new elvis_id / id rows, "
+                "and writes the workbook to the same S3 KingElvis object the OD File Manager uses."
             ),
         )
         last = st.session_state.get(LAST_IMPORT_KEY) or {}
@@ -65,15 +67,21 @@ def render_data_source_control(user: dict, project: str) -> None:
         if st.session_state.get(SOURCE_KEY) != SOURCE_UPLOAD:
             return
 
+        s3_key = shared_kingelvis_s3_key(project)
         st.caption(
             f"Upload the KingElvis / SharePoint workbook for `{project}`. "
-            "Matching rows are updated; new elvis_id / id rows are added to the queue."
+            "Matching rows are updated; new elvis_id / id rows are added to the queue. "
+            + (
+                f"The file is also saved to the shared OD S3 object `{s3_key}`."
+                if s3_key
+                else "Set KINGELVIS_FILE_NAME on the project to publish to the shared OD S3 bucket."
+            )
         )
         uploaded = st.file_uploader(
             "Excel workbook (.xlsx)",
             type=["xlsx"],
             key=f"rcd_excel_upload_{project}",
-            help="Download the file from SharePoint, then upload it here.",
+            help="Download the file from SharePoint, then upload it here. It is stored in the same S3 bucket/key as OD File Manager.",
         )
         worksheet = st.text_input(
             "Worksheet name",
@@ -95,11 +103,20 @@ def render_data_source_control(user: dict, project: str) -> None:
                     f"Importing workbook into Snowflake for {project}...",
                     complete_label="Workbook import finished",
                 ) as update:
-                    update(1, 2, "Reading the workbook, updating matches, and adding new records...")
+                    update(1, 3, "Reading the workbook, updating matches, and adding new records...")
+                    uploaded.seek(0)
+                    excel_bytes = uploaded.getvalue()
+                    uploaded.seek(0)
                     sheet = read_uploaded_workbook(uploaded, worksheet)
                     result = import_sheet_into_snowflake(project, str(actor), str(role), sheet)
-                    update(2, 2, "Refreshing the dashboard cache...")
-                message = format_import_result(result)
+                    update(2, 3, "Publishing KingElvis to the shared OD S3 bucket...")
+                    try:
+                        s3_location = publish_kingelvis_to_shared_s3(project, excel_bytes)
+                        s3_note = f" Shared S3: `{s3_location}`."
+                    except Exception as s3_exc:
+                        s3_note = f" Snowflake import succeeded, but shared S3 publish failed: {s3_exc}"
+                    update(3, 3, "Refreshing the dashboard cache...")
+                message = f"{format_import_result(result)}{s3_note}"
                 st.session_state[LAST_IMPORT_KEY] = {
                     "project": project,
                     "message": message,

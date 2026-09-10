@@ -46,6 +46,32 @@ def upload_excel_to_s3(bucket: str, key: str, excel_bytes: bytes) -> None:
     )
 
 
+def shared_kingelvis_s3_key(project_name: str) -> str | None:
+    """S3 object name OD File Manager uses for this project's KingElvis file."""
+    from core.projects import get_project
+
+    project = get_project(project_name)
+    name = str((project or {}).get("KINGELVIS_FILE_NAME") or "").strip()
+    return Path(name).name if name else None
+
+
+def publish_kingelvis_to_shared_s3(project_name: str, excel_bytes: bytes) -> str:
+    """Write a KingElvis workbook to the OD Dashboard S3 bucket (same key as File Manager)."""
+    if not s3_enabled() or not BUCKET_NAME:
+        raise RuntimeError(
+            "Shared S3 is not configured. Set bucket_name, aws_access_key_id, "
+            "and aws_secret_access_key (same values as the OD Dashboard)."
+        )
+    key = shared_kingelvis_s3_key(project_name)
+    if not key:
+        raise ValueError(
+            f"No KINGELVIS_FILE_NAME configured for {project_name}. "
+            "Set it in Project Configs so OD and RCD share the same S3 object."
+        )
+    upload_excel_to_s3(BUCKET_NAME, key, excel_bytes)
+    return f"s3://{BUCKET_NAME}/{key}"
+
+
 def download_file_from_s3(bucket: str, key: str, destination: Path) -> None:
     response = _s3_client().get_object(Bucket=bucket, Key=key)
     destination.parent.mkdir(parents=True, exist_ok=True)
