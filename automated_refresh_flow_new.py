@@ -1687,8 +1687,8 @@ def fetch_and_process_data(project,schema):
                 _rail_df["STATION_ID_SPLITTED"] = _rail_df["STATION_ID"].apply(
                     lambda x: str(x).split("_")[-1]
                 )
-        weekday_df = apply_rail_cr_directional_logic(weekday_df)
-        weekend_df = apply_rail_cr_directional_logic(weekend_df)
+        weekday_df = apply_rail_cr_directional_logic(weekday_df, wkday_overall_df)
+        weekend_df = apply_rail_cr_directional_logic(weekend_df, wkend_overall_df)
         print(
             f"Rail CR directional logic applied for {project}: "
             f"weekday={len(weekday_df) if weekday_df is not None else 0}, "

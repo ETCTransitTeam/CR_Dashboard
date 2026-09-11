@@ -1,8 +1,8 @@
 """Sequence / directional logic for Rail CR station rows.
 
 Mirrors the regular CR rule: traveling decreasing stop sequence flips
-_00 <-> _01. Terminals (last stop in a direction) can only count in the
-opposite direction, so I-485 stays inbound and UNC Charlotte stays outbound.
+_00 <-> _01. Terminus ends (last station in a CR direction, e.g. I-485 on
+outbound) can only count on the opposite direction (I-485 inbound).
 """
 from __future__ import annotations
 
@@ -76,7 +76,65 @@ def _max_seq_by_route(df):
     return stacked.groupby("ROUTE_SURVEYEDCode")["_seq"].max().to_dict()
 
 
-def infer_rail_flip(row, max_seq_by_route=None):
+def _normalize_station_key(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return "".join(ch for ch in str(value).strip().lower() if ch.isalnum())
+
+
+def _station_suffix(station_id):
+    if station_id is None or (isinstance(station_id, float) and pd.isna(station_id)):
+        return ""
+    return str(station_id).strip().split("_")[-1]
+
+
+def rail_terminus_ends_from_cr(*cr_dfs):
+    """Last station in each CR direction (by SORT, else row order).
+
+    On CATS, I-485 is first inbound and last outbound. Boardings at that
+    last-of-direction station belong on the other side.
+    """
+    ends = {}
+    for cr in cr_dfs:
+        if cr is None or not isinstance(cr, pd.DataFrame) or cr.empty:
+            continue
+        station_col = next(
+            (c for c in ("STATION_ID", "LS_NAME_CODE") if c in cr.columns),
+            None,
+        )
+        if station_col is None:
+            continue
+        work = cr[[station_col]].copy()
+        if "LS_NAME_CODE" in cr.columns:
+            work["LS_NAME_CODE"] = cr["LS_NAME_CODE"]
+        if "STATION_NAME" in cr.columns:
+            work["STATION_NAME"] = cr["STATION_NAME"]
+        if "SORT" in cr.columns:
+            work["SORT"] = cr["SORT"]
+        work["_dir"] = work[station_col].map(extract_direction_token)
+        if "LS_NAME_CODE" in work.columns:
+            work["_dir"] = work["_dir"].where(
+                work["_dir"].notna(), work["LS_NAME_CODE"].map(extract_direction_token)
+            )
+        work = work[work["_dir"].notna()].copy()
+        if work.empty:
+            continue
+        if "SORT" in work.columns:
+            work["_sort"] = pd.to_numeric(work["SORT"], errors="coerce")
+            work = work.sort_values(["_dir", "_sort"], kind="mergesort", na_position="last")
+        for direction, group in work.groupby("_dir", sort=False):
+            last = group.iloc[-1]
+            keys = ends.setdefault(str(direction), set())
+            keys.add(_station_suffix(last[station_col]))
+            if "STATION_NAME" in last.index:
+                name_key = _normalize_station_key(last.get("STATION_NAME"))
+                if name_key:
+                    keys.add(name_key)
+    ends = {d: {k for k in keys if k} for d, keys in ends.items()}
+    return ends
+
+
+def infer_rail_flip(row, max_seq_by_route=None, terminus_ends=None):
     """True when this boarding is traveling the opposite CR direction."""
     on_seq = pd.to_numeric(row.get("STOP_ON_SEQ"), errors="coerce")
     off_seq = pd.to_numeric(row.get("STOP_OFF_SEQ"), errors="coerce")
@@ -87,15 +145,25 @@ def infer_rail_flip(row, max_seq_by_route=None):
         max_seq = max_seq_by_route.get(route)
         if pd.notna(max_seq) and float(on_seq) == float(max_seq) and float(max_seq) > 1:
             return True
+    if terminus_ends:
+        route_dir = extract_direction_token(row.get("ROUTE_SURVEYEDCode"))
+        ends = terminus_ends.get(route_dir) or set()
+        if ends:
+            suffix = _station_suffix(row.get("STATION_ID"))
+            name_key = _normalize_station_key(row.get("STATION_NAME"))
+            if suffix in ends or (name_key and name_key in ends):
+                return True
     return False
 
 
-def apply_rail_cr_directional_logic(survey_df):
+def apply_rail_cr_directional_logic(survey_df, *cr_dfs):
     """Assign each rail survey to the inbound/outbound implied by stop sequence.
 
     - If alighting sequence < boarding sequence, flip _00 <-> _01 (regular CR).
     - If boarding is the last stop on that directional route and there is no
       alighting sequence, flip (terminal stations).
+    - If boarding is the last station in that CR direction (I-485 outbound,
+      UNC inbound), flip even when sequence looks valid.
     - Keep station identity; only the direction token is rewritten so Collect
       lands on the matching Rail CR row.
     """
@@ -104,6 +172,7 @@ def apply_rail_cr_directional_logic(survey_df):
 
     out = survey_df.copy()
     max_seq_by_route = _max_seq_by_route(out)
+    terminus_ends = rail_terminus_ends_from_cr(*cr_dfs)
     new_routes = []
     new_stations = []
 
@@ -113,7 +182,7 @@ def apply_rail_cr_directional_logic(survey_df):
         route_dir = extract_direction_token(route)
         station_dir = extract_direction_token(station)
 
-        if infer_rail_flip(row, max_seq_by_route) and route_dir:
+        if infer_rail_flip(row, max_seq_by_route, terminus_ends) and route_dir:
             new_dir = flip_direction_token(route_dir)
             route = replace_direction_token(route, new_dir)
             station = replace_direction_token(station, new_dir)
