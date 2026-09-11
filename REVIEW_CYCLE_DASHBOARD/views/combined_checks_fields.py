@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
+from core.s3_utils import dataframe_to_excel_bytes
 from services import history as history_svc
+from views.ui.loading import loading
 from views.record_fields import (
     EDITABLE_FIELD_NAMES,
     USAGE_OPTIONS,
@@ -81,6 +84,35 @@ def _combined_frames_differ(before: pd.DataFrame, after: pd.DataFrame) -> bool:
             elif _norm(old_v) != _norm(new_v):
                 return True
     return False
+
+
+def _combined_checks_excel_bytes(display: pd.DataFrame) -> bytes | None:
+    if display is None or display.empty:
+        return None
+    export = _strip_for_config(prepare_combined_display(display))
+    if export.empty:
+        return None
+    return dataframe_to_excel_bytes({"Combined_Checks": export})
+
+
+def _render_combined_checks_download(
+    display: pd.DataFrame,
+    project_name: str | None,
+    editor_key: str,
+) -> None:
+    with loading("Preparing the Combined Checks Excel download..."):
+        excel_bytes = _combined_checks_excel_bytes(display)
+    if not excel_bytes:
+        return
+    label = (project_name or "combined_checks").replace(" ", "_")
+    filename = f"{label}_combined_checks_{date.today():%Y%m%d}.xlsx"
+    st.download_button(
+        "Download Excel (Combined Checks)",
+        data=excel_bytes,
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"{editor_key}_combined_checks_xlsx",
+    )
 
 
 def persist_combined_changes(
@@ -178,6 +210,8 @@ def render_combined_checks_table(
 
     if display.empty:
         return display
+
+    _render_combined_checks_download(display, project_name, editor_key)
 
     @st.fragment
     def _editor_fragment() -> pd.DataFrame:
