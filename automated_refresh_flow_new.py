@@ -17,6 +17,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
+from rail_cr_direction import apply_rail_cr_directional_logic
 from utils import extract_race_labels_from_header, fetch_data, apply_lacmta_agency_filter, load_demographic_setup_from_s3
 
 warnings.filterwarnings('ignore')
@@ -1686,6 +1687,13 @@ def fetch_and_process_data(project,schema):
                 _rail_df["STATION_ID_SPLITTED"] = _rail_df["STATION_ID"].apply(
                     lambda x: str(x).split("_")[-1]
                 )
+        weekday_df = apply_rail_cr_directional_logic(weekday_df)
+        weekend_df = apply_rail_cr_directional_logic(weekend_df)
+        print(
+            f"Rail CR directional logic applied for {project}: "
+            f"weekday={len(weekday_df) if weekday_df is not None else 0}, "
+            f"weekend={len(weekend_df) if weekend_df is not None else 0}"
+        )
         # Time Range / Collected Totals must count rail surveys only.
         # Generic rail shares Pilot with bus; KCATA RAIL has its own path.
         if project != "KCATA RAIL":

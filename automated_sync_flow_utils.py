@@ -13,6 +13,7 @@ import re
 from typing import List
 
 from utils import extract_multi_labels_from_header, group_multi_select_columns
+from rail_cr_direction import extract_direction_token
 
 
 warnings.filterwarnings('ignore')
@@ -1498,6 +1499,18 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
                             stop_vals.str.split("_").str[-1] == station_suffix
                         )
                     mask = mask & station_mask
+                    # Regular CR uses sequence to pick _00/_01. Rail CR rows
+                    # share a stop suffix across inbound/outbound, so also
+                    # require the survey direction token to match this row.
+                    cr_dir = extract_direction_token(station_id) or extract_direction_token(
+                        route_code
+                    )
+                    if cr_dir:
+                        survey_dir = df["ROUTE_SURVEYEDCode"].map(extract_direction_token)
+                        if "STATION_ID" in df.columns:
+                            station_dir = df["STATION_ID"].map(extract_direction_token)
+                            survey_dir = station_dir.where(station_dir.notna(), survey_dir)
+                        mask = mask & (survey_dir == cr_dir)
                 subset_df = df[mask]
                 return subset_df.drop_duplicates(subset="id").shape[0]
 
@@ -1750,6 +1763,12 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
                 subset_df = df[(df['ROUTE_SURVEYEDCode'] == route_code) & 
                             (df['STATION_ID_SPLITTED'] == station_id) & 
                             (df[time_column[0]].isin(time_values))]
+                cr_dir = extract_direction_token(row.get("STATION_ID")) or extract_direction_token(
+                    route_code
+                )
+                if cr_dir and "STATION_ID" in subset_df.columns:
+                    survey_dir = subset_df["STATION_ID"].map(extract_direction_token)
+                    subset_df = subset_df[survey_dir.isna() | (survey_dir == cr_dir)]
                 subset_df = subset_df.drop_duplicates(subset='id')
                 count = subset_df.shape[0]
                 ids = subset_df['id'].values
