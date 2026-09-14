@@ -70,6 +70,12 @@ _RCD_ROOT = Path(__file__).resolve().parent / "REVIEW_CYCLE_DASHBOARD"
 if str(_RCD_ROOT) not in sys.path:
     sys.path.insert(0, str(_RCD_ROOT))
 from embed import render_review_cycle
+from od_sync_lock import (
+    release_sync_lock,
+    sync_lock_busy,
+    sync_lock_holder,
+    try_acquire_sync_lock,
+)
 
 load_dotenv()
 st.set_page_config(page_title="Completion REPORT DashBoard", layout='wide')
@@ -8197,10 +8203,18 @@ else:
                     st.session_state.sync_running = False
                 if "sync_completed" not in st.session_state:
                     st.session_state.sync_completed = False
+
+                # Sync always finishes inside one script run. If we start a new run
+                # with sync_running still True, the previous run was interrupted
+                # (refresh / disconnect) and the button would stay stuck forever.
+                if st.session_state.get("sync_running", False):
+                    st.session_state.sync_running = False
+                    st.session_state.sync_completed = False
                 
-                # Check if sync is already running
+                # Check if sync is already running (this session or morning/other process)
                 is_sync_running = st.session_state.get("sync_running", False)
                 sync_completed = st.session_state.get("sync_completed", False)
+                other_sync_busy = sync_lock_busy()
                 
                 # If sync was completed in previous run, reset flags and clear status
                 if sync_completed and not is_sync_running:
@@ -8218,22 +8232,36 @@ else:
                 if is_sync_running and not sync_completed:
                     status_placeholder.info("🔄 Sync is already running. Please wait for it to finish.")
                     warning_placeholder.warning("⚠️ Do not refresh the page or click other buttons while sync is in progress.")
+                elif other_sync_busy:
+                    status_placeholder.info(
+                        "🔄 Another OD sync is in progress (morning job or another session). "
+                        "Please wait and try again."
+                    )
+                    warning_placeholder.caption(
+                        f"Lock holder: {sync_lock_holder()}"
+                    )
                 else:
                     # Clear status messages when sync is not running
                     status_placeholder.empty()
                     warning_placeholder.empty()
                 
+                sync_blocked = is_sync_running or other_sync_busy
                 # Render button with disabled state based on sync status
                 sync_button_clicked = st.button(
-                    "Sync" if not is_sync_running else "Sync (running...)",
-                    disabled=is_sync_running,
+                    "Sync" if not sync_blocked else (
+                        "Sync (busy...)" if other_sync_busy else "Sync (running...)"
+                    ),
+                    disabled=sync_blocked,
                     key="sync_button"
                 )
+                if other_sync_busy:
+                    if st.button("Check sync status again", key="sync_status_refresh"):
+                        st.rerun()
                 
                 # Determine if we should execute sync:
                 # Only execute if button was clicked AND sync is not already running
                 # We don't continue sync on rerun - it must complete in one execution
-                should_execute_sync = sync_button_clicked and not is_sync_running
+                should_execute_sync = sync_button_clicked and not sync_blocked
 
                 last_sync_error = st.session_state.get("last_sync_error")
                 if last_sync_error and not should_execute_sync and not is_sync_running:
@@ -8251,6 +8279,18 @@ else:
                     st.session_state.pop("last_sync_error", None)
                     st.session_state.sync_running = True
                     st.session_state.sync_completed = False
+
+                    try:
+                        sync_lock_fd = try_acquire_sync_lock("ui_sync")
+                    except BlockingIOError:
+                        st.session_state.sync_running = False
+                        st.session_state.sync_completed = True
+                        st.warning(
+                            "Another OD sync just started "
+                            f"(holder={sync_lock_holder()!r}). Try again when it finishes."
+                        )
+                        time.sleep(1.5)
+                        st.rerun()
                     
                     # Add session keep-alive mechanism
                     keep_alive_placeholder = st.empty()
@@ -8434,6 +8474,8 @@ else:
                         time.sleep(1.5)
                         # Rerun will clear status messages and fetch fresh data from Snowflake
                         st.rerun()
+                    finally:
+                        release_sync_lock(sync_lock_fd)
 
         # Button Section
         with header_col2:

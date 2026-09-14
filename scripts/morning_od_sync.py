@@ -27,8 +27,6 @@ os.chdir(REPO_ROOT)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-LOG_DIR = REPO_ROOT / "logs"
-LOCK_PATH = LOG_DIR / "morning_od_sync.lock"
 TZ = ZoneInfo("America/Chicago")
 
 # Projects hidden from the main frontend; skipped unless --include-hidden.
@@ -65,36 +63,6 @@ class _HeadlessStreamlit:
 def _log(msg: str) -> None:
     now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
     print(f"[{now}] {msg}", flush=True)
-
-
-def _acquire_lock() -> int | None:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    if os.name != "posix":
-        # Windows local testing: skip flock (systemd/cron run on Linux).
-        return None
-    import fcntl
-
-    fd = os.open(str(LOCK_PATH), os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(fd)
-        raise SystemExit(f"Another morning_od_sync is already running (lock: {LOCK_PATH})")
-    os.ftruncate(fd, 0)
-    os.write(fd, f"{os.getpid()}\n".encode())
-    return fd
-
-
-def _release_lock(fd: int | None) -> None:
-    if fd is None:
-        return
-    try:
-        import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
-    except Exception:
-        pass
 
 
 def _patch_streamlit_for_headless() -> None:
@@ -154,9 +122,6 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    lock_fd = _acquire_lock()
-    atexit.register(_release_lock, lock_fd)
-
     _log("Morning OD sync starting")
     _patch_streamlit_for_headless()
 
@@ -183,6 +148,18 @@ def main() -> int:
     if args.dry_run:
         _log("Dry run only — exiting")
         return 0
+
+    from od_sync_lock import release_sync_lock, sync_lock_holder, try_acquire_sync_lock
+
+    try:
+        lock_fd = try_acquire_sync_lock("morning_od_sync")
+    except BlockingIOError:
+        _log(
+            "SKIP: another OD sync is already running "
+            f"(holder={sync_lock_holder()!r}). Exiting without changes."
+        )
+        return 0
+    atexit.register(release_sync_lock, lock_fd)
 
     ok = 0
     failed: list[tuple[str, str]] = []
