@@ -1,0 +1,17 @@
+[Unit]
+Description=OD Collection Streamlit Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/CR_Dashboard
+Environment=HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/miniconda/envs/crdash/bin:/usr/bin
+ExecStart=/home/ubuntu/miniconda/envs/crdash/bin/streamlit run /home/ubuntu/CR_Dashboard/tucson_CR.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

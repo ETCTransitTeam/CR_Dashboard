@@ -1,0 +1,10 @@
+[Unit]
+Description=Run morning OD Collection sync daily at 5:00 AM America/Chicago
+
+[Timer]
+OnCalendar=*-*-* 05:00:00 America/Chicago
+Persistent=true
+Unit=morning-od-sync.service
+
+[Install]
+WantedBy=timers.target

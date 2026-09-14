@@ -1,0 +1,20 @@
+[Unit]
+Description=Morning OD Collection sync (all projects)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/CR_Dashboard
+Environment=HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/miniconda/envs/crdash/bin:/usr/bin
+# Keep long syncs from being killed early
+TimeoutStartSec=6h
+ExecStart=/home/ubuntu/miniconda/envs/crdash/bin/python /home/ubuntu/CR_Dashboard/scripts/morning_od_sync.py
+StandardOutput=append:/home/ubuntu/CR_Dashboard/logs/morning_od_sync.log
+StandardError=append:/home/ubuntu/CR_Dashboard/logs/morning_od_sync.log
+
+[Install]
+WantedBy=multi-user.target

@@ -170,5 +170,35 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 *.xlsx
-path/
+REVIEW_CYCLE_DASHBOARD/pipeline/workspace/
+REVIEW_CYCLE_DASHBOARD/local_data/
+# Snowflake private key dir — ignore everything under path/, allow only the README
+path/**
+!path/to/
+!path/to/README.md
+path/to/*.p8
+path/to/key.p8
 test_streamlit.py
+
+_client_refs
+Survey_Assignments_Files/*
+REVIEW_CYCLE_DASHBOARD_UI_demographic/*
+
+debug*
+test*
+migrate*
+drop*
+delete*
+fix*
+
+pptx_extract/*
+
+# Local one-off diagnostics / scratch scripts (do not commit)
+local_scratch/
+
+# Machine-local Streamlit settings
+.streamlit/config.toml
+
+# Morning sync / runtime logs
+logs/
+

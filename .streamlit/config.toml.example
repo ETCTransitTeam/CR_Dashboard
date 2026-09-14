@@ -1,0 +1,18 @@
+[theme]
+textColor = "black"
+primaryColor = "#006894"
+
+[server]
+maxUploadSize = 1000
+maxMessageSize = 1000
+enableCORS = false
+enableXsrfProtection = false
+
+[client]
+timeout = 300
+
+[browser]
+gatherUsageStats = false
+
+[logger]
+level = "warning"
