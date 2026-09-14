@@ -1247,8 +1247,8 @@ def fetch_and_process_data(project,schema):
         wkend_route_df['ROUTE_TOTAL'] = pd.to_numeric(wkend_route_df['ROUTE_TOTAL'], errors='coerce')
         wkend_route_df['ROUTE_TOTAL'].fillna(0, inplace=True)
 
-        wkday_route_df['ROUTE_TOTAL'] = np.ceil(wkday_route_df['ROUTE_TOTAL']).astype(int)
-        wkend_route_df['ROUTE_TOTAL'] = np.ceil(wkend_route_df['ROUTE_TOTAL']).astype(int)
+        wkday_route_df['ROUTE_TOTAL'] = wkday_route_df['ROUTE_TOTAL'].apply(round_cr_goal)
+        wkend_route_df['ROUTE_TOTAL'] = wkend_route_df['ROUTE_TOTAL'].apply(round_cr_goal)
 
         wkday_overall_df[[0,1,2,3,4,5]]=wkday_overall_df[[0,1,2,3,4,5]].fillna(0)
         wkend_overall_df[[0,1,2,3,4,5]]=wkend_overall_df[[0,1,2,3,4,5]].fillna(0)

@@ -477,6 +477,21 @@ def compute_period_differences(df, periods):
     return df
 
 
+def round_cr_goal(value):
+    """Round a CR / sample-plan goal half-up (8.2->8, 8.5->9, 3.0->3)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return 0
+    if pd.isna(value):
+        return 0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if number < 0:
+        return 0
+    return int(math.floor(number + 0.5))
+
+
 def empty_route_level_df(periods):
     """Empty route-level frame with all expected period columns for a configured project."""
     periods = deduplicate_periods(periods)
@@ -559,7 +574,7 @@ def create_rail_station_overall_level_df(overall_df, route_df, survey_df, time_c
     goals["CR_Overall_Goal"] = (
         goals["CR_Overall_Goal"]
         .fillna(0)
-        .apply(lambda x: int(math.ceil(float(x))) if pd.notna(x) else 0)
+        .apply(round_cr_goal)
     )
 
     if code_col is not None:
@@ -639,7 +654,7 @@ def create_rail_station_overall_level_df(overall_df, route_df, survey_df, time_c
                 odf["_cr_tmp"] = (
                     pd.to_numeric(odf[cr_src], errors="coerce")
                     .fillna(0)
-                    .apply(lambda x: math.ceil(float(x)) if pd.notna(x) else 0)
+                    .apply(round_cr_goal)
                 )
                 per = odf.groupby(single_key)["_cr_tmp"].sum()
                 goals[p["cr_name"]] = (
@@ -1438,10 +1453,7 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
                     new_df[extra_col] = overalldf[extra_col]
 
         def safe_convert(x):
-            try:
-                return math.ceil(float(x)) if pd.notnull(x) else 0
-            except (ValueError, TypeError):
-                return 0
+            return round_cr_goal(x)
 
         cr_cols = []
         if overalldf is not None and not overalldf.empty:
@@ -1547,10 +1559,7 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
 
         # Convert and clean numeric columns
         def safe_convert(x):
-            try:
-                return math.ceil(float(x)) if pd.notnull(x) else 0
-            except (ValueError, TypeError):
-                return 0
+            return round_cr_goal(x)
 
         # Process each time period column
         for col, col_name in [(early_am_column, 'CR_Early_AM'),
@@ -1613,10 +1622,7 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
 
         # Convert and clean numeric columns
         def safe_convert(x):
-            try:
-                return math.ceil(float(x)) if pd.notnull(x) else 0
-            except (ValueError, TypeError):
-                return 0
+            return round_cr_goal(x)
 
         # Process each time period column
         for col, col_name in [(early_am_column, 'CR_Early_AM'),
@@ -1677,10 +1683,7 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
 
         # Convert and clean numeric columns
         def safe_convert(x):
-            try:
-                return math.ceil(float(x)) if pd.notnull(x) else 0
-            except (ValueError, TypeError):
-                return 0
+            return round_cr_goal(x)
 
         # Process each time period column
         for col, col_name in [(am_peak_column, 'CR_AM_Peak'),
@@ -1748,7 +1751,7 @@ def create_route_direction_level_df(overalldf, df, time_column, project, time_pe
         # Process each time period column
         for col_name, col in time_period_columns.items():
             overalldf[col] = pd.to_numeric(overalldf[col], errors='coerce').fillna(0)
-            new_df[col_name] = overalldf[col].apply(math.ceil)
+            new_df[col_name] = overalldf[col].apply(round_cr_goal)
         
         # Convert all numeric columns and fill NA
         numeric_cols = list(time_period_columns.keys())
@@ -1839,10 +1842,10 @@ def create_tucson_weekend_route_direction_level_df(overalldf,df,time_column,proj
         new_df['Day'] = overalldf['DAY']
 
 
-        new_df['CR_AM_Peak']=overalldf[am_column[0]].apply(math.ceil)
-        new_df['CR_Midday']=overalldf[midday_colum[0]].apply(math.ceil)
-        new_df['CR_PM_Peak']=overalldf[pm_column[0]].apply(math.ceil)
-        new_df['CR_Evening']=overalldf[evening_column[0]].apply(math.ceil)
+        new_df['CR_AM_Peak']=overalldf[am_column[0]].apply(round_cr_goal)
+        new_df['CR_Midday']=overalldf[midday_colum[0]].apply(round_cr_goal)
+        new_df['CR_PM_Peak']=overalldf[pm_column[0]].apply(round_cr_goal)
+        new_df['CR_Evening']=overalldf[evening_column[0]].apply(round_cr_goal)
     
         new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         new_df.fillna(0,inplace=True)
@@ -1911,12 +1914,12 @@ def create_tucson_weekend_route_direction_level_df(overalldf,df,time_column,proj
         new_df['Day'] = overalldf['DAY']
         new_df['STATION_ID']=overalldf['STATION_ID']
         new_df['STATION_ID_SPLITTED']=overalldf['STATION_ID_SPLITTED']
-        # new_df['CR_PRE_Early_AM'] = pd.to_numeric(overalldf[pre_early_am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-        # new_df['CR_Early_AM'] = pd.to_numeric(overalldf[early_am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-        new_df['CR_AM_Peak'] = pd.to_numeric(overalldf[am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-        new_df['CR_Midday'] = pd.to_numeric(overalldf[midday_colum[0]], errors='coerce').fillna(0).apply(math.ceil)
-        new_df['CR_PM_Peak'] = pd.to_numeric(overalldf[pm_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-        new_df['CR_Evening'] = pd.to_numeric(overalldf[evening_column[0]], errors='coerce').fillna(0).apply(math.ceil)
+        # new_df['CR_PRE_Early_AM'] = pd.to_numeric(overalldf[pre_early_am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+        # new_df['CR_Early_AM'] = pd.to_numeric(overalldf[early_am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+        new_df['CR_AM_Peak'] = pd.to_numeric(overalldf[am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+        new_df['CR_Midday'] = pd.to_numeric(overalldf[midday_colum[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+        new_df['CR_PM_Peak'] = pd.to_numeric(overalldf[pm_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+        new_df['CR_Evening'] = pd.to_numeric(overalldf[evening_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
         new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         # new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
         new_df.fillna(0,inplace=True)
@@ -2014,12 +2017,12 @@ def create_uta_station_wise_route_level_df(overall_df,df,time_column,time):
         new_df['Day'] = overall_df['DAY']
     new_df['STATION_ID']=overall_df['STATION_ID']
     new_df['STATION_ID_SPLITTED']=overall_df['STATION_ID_SPLITTED']
-    new_df['CR_PRE_Early_AM'] = pd.to_numeric(overall_df[pre_early_am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_Early_AM'] = pd.to_numeric(overall_df[early_am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_AM_Peak'] = pd.to_numeric(overall_df[am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_Midday'] = pd.to_numeric(overall_df[midday_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_PM_Peak'] = pd.to_numeric(overall_df[pm_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_Evening'] = pd.to_numeric(overall_df[evening_column[0]], errors='coerce').fillna(0).apply(math.ceil)
+    new_df['CR_PRE_Early_AM'] = pd.to_numeric(overall_df[pre_early_am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_Early_AM'] = pd.to_numeric(overall_df[early_am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_AM_Peak'] = pd.to_numeric(overall_df[am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_Midday'] = pd.to_numeric(overall_df[midday_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_PM_Peak'] = pd.to_numeric(overall_df[pm_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_Evening'] = pd.to_numeric(overall_df[evening_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
     new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
     new_df.fillna(0,inplace=True)
     new_df['ROUTE_SURVEYEDCode_Splitted']=new_df['ROUTE_SURVEYEDCode'].apply(edit_ls_code_column)
@@ -2130,12 +2133,12 @@ def create_station_wise_route_level_df(overall_df,df,time_column):
     new_df['ROUTE_SURVEYEDCode']=overall_df['LS_NAME_CODE']
     new_df['STATION_ID']=overall_df['STATION_ID']
     new_df['STATION_ID_SPLITTED']=overall_df['STATION_ID_SPLITTED']
-    # new_df['CR_PRE_Early_AM'] = pd.to_numeric(overall_df[pre_early_am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    # new_df['CR_Early_AM'] = pd.to_numeric(overall_df[early_am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_AM_Peak'] = pd.to_numeric(overall_df[am_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_Midday'] = pd.to_numeric(overall_df[midday_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_PM_Peak'] = pd.to_numeric(overall_df[pm_column[0]], errors='coerce').fillna(0).apply(math.ceil)
-    new_df['CR_Evening'] = pd.to_numeric(overall_df[evening_column[0]], errors='coerce').fillna(0).apply(math.ceil)
+    # new_df['CR_PRE_Early_AM'] = pd.to_numeric(overall_df[pre_early_am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    # new_df['CR_Early_AM'] = pd.to_numeric(overall_df[early_am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_AM_Peak'] = pd.to_numeric(overall_df[am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_Midday'] = pd.to_numeric(overall_df[midday_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_PM_Peak'] = pd.to_numeric(overall_df[pm_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_Evening'] = pd.to_numeric(overall_df[evening_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
     new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
     # new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']]=new_df[['CR_PRE_Early_AM','CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
     new_df.fillna(0,inplace=True)
@@ -2253,7 +2256,7 @@ def create_station_wise_route_level_df_kcata(overall_df, df, time_column):
     
     # Process each time period column using the numeric column references
     for col_name, col_num in time_period_columns.items():
-        new_df[col_name] = pd.to_numeric(overall_df[col_num], errors='coerce').fillna(0).apply(math.ceil)
+        new_df[col_name] = pd.to_numeric(overall_df[col_num], errors='coerce').fillna(0).apply(round_cr_goal)
     
     # Convert all numeric columns and fill NA
     numeric_cols = list(time_period_columns.keys())
@@ -2402,7 +2405,7 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
                     return 0
 
             def safe_ceil(series):
-                return pd.to_numeric(series, errors="coerce").fillna(0).apply(lambda x: math.ceil(x))
+                return pd.to_numeric(series, errors="coerce").fillna(0).apply(round_cr_goal)
 
             def normalize_route_code(route_code):
                 if pd.isna(route_code):
@@ -2574,11 +2577,11 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             # Create new dataframe with completion report data
             new_df = pd.DataFrame()
             new_df['ROUTE_SURVEYEDCode'] = overall_df['LS_NAME_CODE']
-            new_df['CR_Early_AM'] = overall_df[early_am_column[0]].apply(math.ceil)
-            new_df['CR_AM_Peak'] = overall_df[am_column[0]].apply(math.ceil)
-            new_df['CR_Midday'] = overall_df[midday_colum[0]].apply(math.ceil)
-            new_df['CR_PM_Peak'] = overall_df[pm_peak_column[0]].apply(math.ceil)
-            new_df['CR_Evening'] = overall_df[evening_column[0]].apply(math.ceil)
+            new_df['CR_Early_AM'] = overall_df[early_am_column[0]].apply(round_cr_goal)
+            new_df['CR_AM_Peak'] = overall_df[am_column[0]].apply(round_cr_goal)
+            new_df['CR_Midday'] = overall_df[midday_colum[0]].apply(round_cr_goal)
+            new_df['CR_PM_Peak'] = overall_df[pm_peak_column[0]].apply(round_cr_goal)
+            new_df['CR_Evening'] = overall_df[evening_column[0]].apply(round_cr_goal)
             
             # Convert all values to numeric
             new_df[['CR_Early_AM','CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']] = \
@@ -2707,7 +2710,7 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
                     return 0
 
             def safe_ceil(series):
-                return pd.to_numeric(series, errors='coerce').fillna(0).apply(lambda x: math.ceil(x))
+                return pd.to_numeric(series, errors='coerce').fillna(0).apply(round_cr_goal)
 
             new_df=pd.DataFrame()
             new_df['ROUTE_SURVEYEDCode']=overall_df['LS_NAME_CODE']
@@ -2816,7 +2819,7 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
                     return 0
 
             def safe_ceil(series):
-                return pd.to_numeric(series, errors='coerce').fillna(0).apply(lambda x: math.ceil(x))
+                return pd.to_numeric(series, errors='coerce').fillna(0).apply(round_cr_goal)
 
             new_df=pd.DataFrame()
             new_df['ROUTE_SURVEYEDCode']=overall_df['LS_NAME_CODE']
@@ -2934,7 +2937,7 @@ def create_route_level_df(overall_df, route_df, df, time_column, project, time_p
             
             # Process each time period column using the numeric column references
             for col_name, col_num in time_period_columns.items():
-                new_df[col_name] = pd.to_numeric(overall_df[col_num], errors='coerce').fillna(0).apply(math.ceil)
+                new_df[col_name] = pd.to_numeric(overall_df[col_num], errors='coerce').fillna(0).apply(round_cr_goal)
             
             # Convert all numeric columns and fill NA
             numeric_cols = list(time_period_columns.keys())
@@ -3082,10 +3085,10 @@ def create_wkend_route_level_df(overall_df, route_df, df,time_column,project):
     new_df = pd.DataFrame()
     new_df['ROUTE_SURVEYEDCode'] = overall_df['LS_NAME_CODE']
     new_df['Day'] = overall_df['DAY']
-    new_df['CR_AM_Peak'] = overall_df[am_column[0]].apply(math.ceil)
-    new_df['CR_Midday'] = overall_df[midday_colum[0]].apply(math.ceil)
-    new_df['CR_PM_Peak'] = overall_df[pm_column[0]].apply(math.ceil)
-    new_df['CR_Evening'] = overall_df[evening_column[0]].apply(math.ceil)
+    new_df['CR_AM_Peak'] = overall_df[am_column[0]].apply(round_cr_goal)
+    new_df['CR_Midday'] = overall_df[midday_colum[0]].apply(round_cr_goal)
+    new_df['CR_PM_Peak'] = overall_df[pm_column[0]].apply(round_cr_goal)
+    new_df['CR_Evening'] = overall_df[evening_column[0]].apply(round_cr_goal)
 
     new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']] = new_df[['CR_AM_Peak','CR_Midday','CR_PM_Peak','CR_Evening']].applymap(convert_string_to_integer)
     new_df.fillna(0, inplace=True)
@@ -6059,7 +6062,7 @@ def process_route_comparison_data(cr_df, df, ke_df, project, time_period_config=
             for p in periods:
                 cr_col = resolve_overall_df_col(cr_df, p["cr_col"])
                 cr_name = p["cr_name"]
-                new_df[cr_name] = pd.to_numeric(cr_df[cr_col], errors='coerce').fillna(0)
+                new_df[cr_name] = pd.to_numeric(cr_df[cr_col], errors='coerce').fillna(0).apply(round_cr_goal)
         else:
             ensure_period_columns(new_df, periods)
         
@@ -6152,14 +6155,14 @@ def process_route_comparison_data(cr_df, df, ke_df, project, time_period_config=
     new_df['ROUTE_SURVEYEDCode'] = cr_df['LS_NAME_CODE']
 
     if has_early_am:
-        new_df['CR_Early_AM'] = pd.to_numeric(cr_df[early_am_column[0]], errors='coerce').fillna(0)
+        new_df['CR_Early_AM'] = pd.to_numeric(cr_df[early_am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
     else:
         new_df['CR_Early_AM'] = 0
 
-    new_df['CR_AM_Peak'] = pd.to_numeric(cr_df[am_column[0]], errors='coerce').fillna(0)
-    new_df['CR_Midday'] = pd.to_numeric(cr_df[midday_column[0]], errors='coerce').fillna(0)
-    new_df['CR_PM_Peak'] = pd.to_numeric(cr_df[pm_column[0]], errors='coerce').fillna(0)
-    new_df['CR_Evening'] = pd.to_numeric(cr_df[evening_column[0]], errors='coerce').fillna(0)
+    new_df['CR_AM_Peak'] = pd.to_numeric(cr_df[am_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_Midday'] = pd.to_numeric(cr_df[midday_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_PM_Peak'] = pd.to_numeric(cr_df[pm_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
+    new_df['CR_Evening'] = pd.to_numeric(cr_df[evening_column[0]], errors='coerce').fillna(0).apply(round_cr_goal)
 
     # ---------------- DB COUNTS ----------------
     for index, row in new_df.iterrows():
