@@ -46,6 +46,7 @@ from utils import (
     demographic_display_key_for_group_name,
 )
 from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,clear_projects_cache,clear_landing_stats_cache,warm_landing_stats,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,staff_signup_page,is_super_admin,can_use_client_view_switch,is_client_view,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
+from authentication.sync_history_page import sync_history_page
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -2351,6 +2352,7 @@ else:
                 "demographic_setup",
                 "survey_tracker_setup",
                 "edit_project_configs",
+                "sync_history",
             ]
             is_management_page = current_page in management_page_keys
             
@@ -2365,6 +2367,7 @@ else:
                 "view_s3_files": "📦  View S3 Files",
                 "demographic_setup": "📊  Demographic Setup",
                 "survey_tracker_setup": "📋  Survey Tracker Setup",
+                "sync_history": "🔄  Sync History",
             }
             
             # --- Sync state from URL/current_page BEFORE rendering widgets ---
@@ -2441,6 +2444,12 @@ else:
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = "accounts_management"
+                    st.rerun()
+                if st.button("Sync History", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "sync_history"
                     st.rerun()
                 if st.button("Projects Configuration", use_container_width=True, type="primary"):
                     st.session_state.selected_page = "🏠︎   Home"
@@ -8310,6 +8319,28 @@ else:
                         time.sleep(0.5)
 
                     start_time = time.time()
+                    sync_hist_run_id = None
+                    sync_hist_schema = st.session_state.get("schema") or ""
+                    sync_hist_project = st.session_state.get("selected_project") or ""
+                    try:
+                        from od_sync_history import (
+                            finish_project_row as _sync_hist_finish_project,
+                            finish_run as _sync_hist_finish_run,
+                            send_run_alert_digest as _sync_hist_alert,
+                            start_project_row as _sync_hist_start_project,
+                            start_run as _sync_hist_start_run,
+                        )
+
+                        sync_hist_run_id = _sync_hist_start_run(
+                            trigger="ui",
+                            project_total=1,
+                            actor=(st.session_state.get("user") or {}).get("email") or "",
+                        )
+                        _sync_hist_start_project(
+                            sync_hist_run_id, sync_hist_project, str(sync_hist_schema)
+                        )
+                    except Exception as _hist_boot_exc:
+                        print(f"Sync history bootstrap skipped: {_hist_boot_exc}")
 
                     try:
                         update_progress(1, 12, "Starting sync process...", start_time)
@@ -8327,6 +8358,7 @@ else:
                                 update_progress(3, 12, f"Syncing to agency schema: {agency_schema_name}...", start_time)
                                 # Store current schema
                                 current_schema = st.session_state.get("schema")
+                                sync_hist_schema = agency_schema_name
                                 
                                 try:
                                     # Temporarily switch to agency schema
@@ -8457,6 +8489,32 @@ else:
                             "message": str(e),
                             "traceback": sync_traceback,
                         }
+                        if sync_hist_run_id:
+                            try:
+                                meta = _sync_hist_finish_project(
+                                    sync_hist_run_id,
+                                    sync_hist_project,
+                                    status="failed",
+                                    started_monotonic=start_time,
+                                    error_message=str(e),
+                                    error_detail=sync_traceback,
+                                    schema_name=str(sync_hist_schema),
+                                    collect_counts=False,
+                                )
+                                _sync_hist_finish_run(
+                                    sync_hist_run_id,
+                                    status="failed",
+                                    project_ok=0,
+                                    project_failed=1,
+                                )
+                                _sync_hist_alert(
+                                    run_id=sync_hist_run_id,
+                                    trigger="ui",
+                                    failures=[meta],
+                                    drops=[],
+                                )
+                            except Exception as _hist_fail_exc:
+                                print(f"Sync history failure write skipped: {_hist_fail_exc}")
                         # Mark sync as completed (even on error) so UI can reset
                         st.session_state.sync_running = False
                         st.session_state.sync_completed = True
@@ -8464,6 +8522,33 @@ else:
                         time.sleep(2)
                         st.rerun()
                     else:
+                        if sync_hist_run_id:
+                            try:
+                                label = result if isinstance(result, str) else "OK"
+                                meta = _sync_hist_finish_project(
+                                    sync_hist_run_id,
+                                    sync_hist_project,
+                                    status="success",
+                                    started_monotonic=start_time,
+                                    result_label=label,
+                                    schema_name=str(sync_hist_schema),
+                                )
+                                _sync_hist_finish_run(
+                                    sync_hist_run_id,
+                                    status="success",
+                                    project_ok=1,
+                                    project_failed=0,
+                                )
+                                drops = [meta] if meta.get("alert_drop") else []
+                                if drops:
+                                    _sync_hist_alert(
+                                        run_id=sync_hist_run_id,
+                                        trigger="ui",
+                                        failures=[],
+                                        drops=drops,
+                                    )
+                            except Exception as _hist_ok_exc:
+                                print(f"Sync history success write skipped: {_hist_ok_exc}")
                         # Mark sync as completed successfully BEFORE rerun
                         st.session_state.sync_running = False
                         st.session_state.sync_completed = True
@@ -8546,6 +8631,7 @@ else:
             "password_update", "file_management", "view_s3_files", "demographic_setup",
             "survey_tracker_setup", "edit_project_configs", "field_assignments",
             "admin_portal_select", "portal_select", "od_project_select",
+            "sync_history",
         }
         if current_page not in PAGES_NOT_REQUIRING_DATA and not has_project_data:
             st.warning("⚠️ No project data available yet.")
@@ -8566,6 +8652,7 @@ else:
             "view_s3_files": view_s3_files_page,
             "demographic_setup": demographic_setup_page,
             "survey_tracker_setup": lambda: survey_tracker_setup_page(private_key_bytes),
+            "sync_history": sync_history_page,
         }
         if current_page in MANAGEMENT_PAGE_RENDERERS and client_view_active:
             # Client view preview must not open management tools.

@@ -33,6 +33,9 @@ sudo systemctl enable streamlit
 sudo systemctl restart streamlit
 sudo systemctl enable --now morning-od-sync.timer
 
+echo "==> Installing logrotate for morning sync log"
+sudo cp deploy/logrotate-morning-od-sync.conf /etc/logrotate.d/morning-od-sync
+
 echo "==> Installing nginx site (HTTP; run certbot separately for HTTPS)"
 if command -v nginx >/dev/null 2>&1; then
   sudo cp deploy/nginx-odcollection.conf /etc/nginx/sites-available/odcollection

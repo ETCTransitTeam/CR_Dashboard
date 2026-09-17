@@ -105,6 +105,14 @@ sudo systemctl start morning-od-sync.service
 tail -f logs/morning_od_sync.log
 ```
 
+Log rotation (14 days) — already on server if you installed earlier; from repo:
+```bash
+sudo cp deploy/logrotate-morning-od-sync.conf /etc/logrotate.d/morning-od-sync
+```
+
+**Sync History** (super admins): dashboard → Management → Sync History (`/?page=sync_history`).
+Stores runs in Snowflake `APP_CONFIG.OD_SYNC_*`, morning On/Off toggle, and email alerts for failures / configurable record-drop threshold.
+
 ---
 
 ## After `git pull` only (existing server)
