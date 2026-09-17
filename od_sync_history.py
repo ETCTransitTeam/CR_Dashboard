@@ -36,19 +36,60 @@ KEY_DROP_ALERT_PCT = "drop_alert_pct"
 
 DEFAULT_DROP_ALERT_PCT = "2"  # example default; editable in Sync History
 
+_tables_ready = False
+_private_key_bytes = None
+
 
 def _now_chicago() -> datetime:
     return datetime.now(TZ).replace(tzinfo=None)
 
 
-def _connect():
-    from automated_refresh_flow_new import create_snowflake_connection
+def _load_private_key_bytes():
+    global _private_key_bytes
+    if _private_key_bytes is not None:
+        return _private_key_bytes
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
 
-    return create_snowflake_connection(schema=APP_CONFIG_SCHEMA)
+    key_path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH", "path/to/key.p8")
+    with open(key_path, "rb") as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=os.environ["SNOWFLAKE_PASSPHRASE"].encode(),
+            backend=default_backend(),
+        )
+    _private_key_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    return _private_key_bytes
+
+
+def _connect():
+    """Lightweight Snowflake connect — avoids importing automated_refresh_flow_new."""
+    import snowflake.connector
+
+    conn = snowflake.connector.connect(
+        user=os.getenv("SNOWFLAKE_USER"),
+        private_key=_load_private_key_bytes(),
+        account=os.getenv("SNOWFLAKE_ACCOUNT"),
+        warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
+        database=os.getenv("SNOWFLAKE_DATABASE"),
+        authenticator="SNOWFLAKE_JWT",
+        role=os.getenv("SNOWFLAKE_ROLE"),
+        schema=APP_CONFIG_SCHEMA,
+        network_timeout=60,
+        login_timeout=60,
+    )
+    return conn
 
 
 def ensure_od_sync_history_tables() -> None:
-    """Idempotent CREATE for history + settings tables."""
+    """Idempotent CREATE for history + settings tables (once per process)."""
+    global _tables_ready
+    if _tables_ready:
+        return
     conn = _connect()
     cur = conn.cursor()
     try:
@@ -108,6 +149,7 @@ def ensure_od_sync_history_tables() -> None:
         )
         _bootstrap_settings(cur)
         conn.commit()
+        _tables_ready = True
     finally:
         cur.close()
         conn.close()
