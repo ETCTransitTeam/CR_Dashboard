@@ -819,23 +819,24 @@ def get_distance_between_coordinates_using_haversine(lat1, lon1, lat2, lon2):
         return None
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    # Convert all inputs to float
+    """Great-circle distance in km. Scalars or arrays; arrays broadcast."""
     try:
-        lat1, lon1, lat2, lon2 = map(float, [lat1, lon1, lat2, lon2])
+        lat1 = np.asarray(lat1, dtype=float)
+        lon1 = np.asarray(lon1, dtype=float)
+        lat2 = np.asarray(lat2, dtype=float)
+        lon2 = np.asarray(lon2, dtype=float)
     except (TypeError, ValueError):
-        # Return None or np.nan if conversion fails
         return None
 
-    # Convert degrees to radians
-    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
-
+    lat1, lon1, lat2, lon2 = map(np.radians, (lat1, lon1, lat2, lon2))
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-
     a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
-    c = 2 * np.arcsin(np.sqrt(a))
-    R = 6371  # Earth radius in km
-    return R * c
+    c = 2 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+    distances = 6371.0 * c
+    if distances.shape == ():
+        return float(distances)
+    return distances
 
 
 def _find_column_ci(df, *candidates):

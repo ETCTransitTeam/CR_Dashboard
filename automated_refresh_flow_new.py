@@ -1383,6 +1383,16 @@ def fetch_and_process_data(project,schema):
     ):
         if _stop_col not in df.columns:
             df[_stop_col] = np.nan
+
+    def nearest_stop_row(distances, frame):
+        """Positional nearest row. None when distance could not be computed."""
+        if distances is None or frame is None or frame.empty:
+            return None
+        arr = np.asarray(distances, dtype=float)
+        if arr.size == 0 or np.all(np.isnan(arr)):
+            return None
+        return frame.iloc[int(np.nanargmin(arr))]
+
     # -------------------------------------------------------------
     # ✅ STOP_ON: Assign nearest stop for each survey point (MATCHING OLD CODE)
     # -------------------------------------------------------------
@@ -1405,16 +1415,17 @@ def fetch_and_process_data(project,schema):
             continue
 
         # Vectorized distance calculation for speed
-        distances = haversine_distance(
-            stop_on_lat,
-            stop_on_long,
-            filtered_df['stop_lat6'].values,
-            filtered_df['stop_lon6'].values,
+        nearest = nearest_stop_row(
+            haversine_distance(
+                stop_on_lat,
+                stop_on_long,
+                filtered_df['stop_lat6'].values,
+                filtered_df['stop_lon6'].values,
+            ),
+            filtered_df,
         )
-
-        # Find nearest stop
-        idx_min = np.nanargmin(distances)
-        nearest = filtered_df.iloc[idx_min]
+        if nearest is None:
+            continue
 
         # Use EXACT same column names as old code
         df.loc[i, 'STOP_ON_ADDR_NEW'] = nearest['ETC_STOP_NAME']
@@ -1453,15 +1464,17 @@ def fetch_and_process_data(project,schema):
             continue
 
         # Vectorized distance calculation
-        distances = haversine_distance(
-            stop_off_lat,
-            stop_off_long,
-            filtered_df['stop_lat6'].values,
-            filtered_df['stop_lon6'].values,
+        nearest = nearest_stop_row(
+            haversine_distance(
+                stop_off_lat,
+                stop_off_long,
+                filtered_df['stop_lat6'].values,
+                filtered_df['stop_lon6'].values,
+            ),
+            filtered_df,
         )
-
-        idx_min = np.nanargmin(distances)
-        nearest = filtered_df.iloc[idx_min]
+        if nearest is None:
+            continue
 
         # Use EXACT same column names as old code
         df.loc[i, 'STOP_OFF_ADDRESS_NEW'] = nearest['ETC_STOP_NAME']
@@ -1511,6 +1524,8 @@ def fetch_and_process_data(project,schema):
         stop_off_direction = str(row['STOP_OFF_CLINTID_NEW']).split('_')[-2] if len(str(row['STOP_OFF_CLINTID_NEW']).split('_')) >= 2 else None
         
         if stop_on_direction is None or stop_off_direction is None:
+            df.loc[i, 'ROUTE_SURVEYEDCode_New'] = route_code
+            df.loc[i, 'ROUTE_SURVEYED_NEW'] = row['ROUTE_SURVEYED']
             continue
 
         # Same route code transformation logic as old code
@@ -1539,20 +1554,22 @@ def fetch_and_process_data(project,schema):
 
             if not filtered_stop_on_df.empty:
                 # Vectorized distance calculation
-                stop_on_dist = haversine_distance(
-                    stop_on_lat,
-                    stop_on_long,
-                    filtered_stop_on_df['stop_lat6'].values,
-                    filtered_stop_on_df['stop_lon6'].values,
+                nearest_on = nearest_stop_row(
+                    haversine_distance(
+                        stop_on_lat,
+                        stop_on_long,
+                        filtered_stop_on_df['stop_lat6'].values,
+                        filtered_stop_on_df['stop_lon6'].values,
+                    ),
+                    filtered_stop_on_df,
                 )
-                nearest_on = filtered_stop_on_df.iloc[np.nanargmin(stop_on_dist)]
-                
-                # Update STOP_ON with EXACT same column names as old code
-                df.loc[i, 'STOP_ON_ADDR_NEW'] = nearest_on['ETC_STOP_NAME']  # Note: ADDR not ADDRESS
-                df.loc[i, 'STOP_ON_SEQ'] = nearest_on['seq_fixed']
-                df.loc[i, 'STOP_ON_CLINTID_NEW'] = nearest_on['ETC_STOP_ID']
-                df.loc[i, 'STOP_ON_LAT_NEW'] = nearest_on['stop_lat6']
-                df.loc[i, 'STOP_ON_LONG_NEW'] = nearest_on['stop_lon6']
+                if nearest_on is not None:
+                    # Update STOP_ON with EXACT same column names as old code
+                    df.loc[i, 'STOP_ON_ADDR_NEW'] = nearest_on['ETC_STOP_NAME']  # Note: ADDR not ADDRESS
+                    df.loc[i, 'STOP_ON_SEQ'] = nearest_on['seq_fixed']
+                    df.loc[i, 'STOP_ON_CLINTID_NEW'] = nearest_on['ETC_STOP_ID']
+                    df.loc[i, 'STOP_ON_LAT_NEW'] = nearest_on['stop_lat6']
+                    df.loc[i, 'STOP_ON_LONG_NEW'] = nearest_on['stop_lon6']
 
             # SAME FILTERING LOGIC AS OLD CODE - using ETC_ROUTE_ID_SPLITED and opposite direction  
             filtered_stop_off_df = detail_df_stops[
@@ -1562,20 +1579,22 @@ def fetch_and_process_data(project,schema):
 
             if not filtered_stop_off_df.empty:
                 # Vectorized distance calculation
-                stop_off_dist = haversine_distance(
-                    stop_off_lat,
-                    stop_off_long,
-                    filtered_stop_off_df['stop_lat6'].values,
-                    filtered_stop_off_df['stop_lon6'].values,
+                nearest_off = nearest_stop_row(
+                    haversine_distance(
+                        stop_off_lat,
+                        stop_off_long,
+                        filtered_stop_off_df['stop_lat6'].values,
+                        filtered_stop_off_df['stop_lon6'].values,
+                    ),
+                    filtered_stop_off_df,
                 )
-                nearest_off = filtered_stop_off_df.iloc[np.nanargmin(stop_off_dist)]
-                
-                # Update STOP_OFF with EXACT same column names as old code
-                df.loc[i, 'STOP_OFF_ADDRESS_NEW'] = nearest_off['ETC_STOP_NAME']
-                df.loc[i, 'STOP_OFF_SEQ'] = nearest_off['seq_fixed']
-                df.loc[i, 'STOP_OFF_CLINTID_NEW'] = nearest_off['ETC_STOP_ID']
-                df.loc[i, 'STOP_OFF_LAT_NEW'] = nearest_off['stop_lat6']
-                df.loc[i, 'STOP_OFF_LONG_NEW'] = nearest_off['stop_lon6']
+                if nearest_off is not None:
+                    # Update STOP_OFF with EXACT same column names as old code
+                    df.loc[i, 'STOP_OFF_ADDRESS_NEW'] = nearest_off['ETC_STOP_NAME']
+                    df.loc[i, 'STOP_OFF_SEQ'] = nearest_off['seq_fixed']
+                    df.loc[i, 'STOP_OFF_CLINTID_NEW'] = nearest_off['ETC_STOP_ID']
+                    df.loc[i, 'STOP_OFF_LAT_NEW'] = nearest_off['stop_lat6']
+                    df.loc[i, 'STOP_OFF_LONG_NEW'] = nearest_off['stop_lon6']
 
     # -------------------------------------------------------------
     # ✅ FINAL CLEANUP
