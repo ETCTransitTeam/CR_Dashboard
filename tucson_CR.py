@@ -4650,8 +4650,18 @@ else:
                     # Display the merged table
                     st.subheader("Reverse Routes View")
                     
-                    # Create filters - removed DAY_TYPE, TIME_PERIOD, and REVERSE_TRIPS_STATUS filters, adjusted to 3 columns
-                    col1, col2, col3 = st.columns(3)
+                    # Time period is already stored: reverse uses opposite-direction time,
+                    # next/previous uses the original time on.
+                    if 'TIME_PERIOD' in merged_df.columns:
+                        merged_df['TIME_PERIOD'] = (
+                            merged_df['TIME_PERIOD']
+                            .astype(str)
+                            .str.strip()
+                            .str.replace(r'\.0$', '', regex=True)
+                            .replace({'nan': '', 'None': '', 'NaT': ''})
+                        )
+
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
                         type_options = ['All'] + sorted(merged_df['Type'].dropna().unique().tolist())
@@ -4678,6 +4688,17 @@ else:
                                 selected_route_name = 'All'
                         else:
                             selected_route_name = 'All'
+
+                    with col4:
+                        if 'TIME_PERIOD' in merged_df.columns:
+                            period_values = sorted(
+                                {p for p in merged_df['TIME_PERIOD'].tolist() if p},
+                                key=lambda p: (not str(p).isdigit(), int(p) if str(p).isdigit() else str(p)),
+                            )
+                            period_options = ['All'] + period_values
+                            selected_time_period = st.selectbox("Filter by Time Period:", period_options)
+                        else:
+                            selected_time_period = 'All'
                     
                     # Apply filters
                     filtered_df = merged_df.copy()
@@ -4692,6 +4713,9 @@ else:
                     # Filter by Final Direction Route Name (FINAL_DIRECTION_NAME)
                     if selected_route_name != 'All' and 'FINAL_DIRECTION_NAME' in filtered_df.columns:
                         filtered_df = filtered_df[filtered_df['FINAL_DIRECTION_NAME'].astype(str) == selected_route_name]
+
+                    if selected_time_period != 'All' and 'TIME_PERIOD' in filtered_df.columns:
+                        filtered_df = filtered_df[filtered_df['TIME_PERIOD'] == selected_time_period]
                     
                     # Additional search filter
                     search_term = st.text_input("Search across all columns:", "")
@@ -4707,7 +4731,7 @@ else:
                     display_df.index = display_df.index + 1
                     
                     # Drop columns that should not be displayed
-                    columns_to_hide = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'REVERSE_TRIPS_STATUS']
+                    columns_to_hide = ['ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'DAY_TYPE', 'REVERSE_TRIPS_STATUS']
                     # Also hide the index column name if it exists
                     if display_df.index.name:
                         display_df.index.name = None
@@ -4716,6 +4740,8 @@ else:
                     for col in columns_to_hide:
                         if col in display_df.columns:
                             display_df = display_df.drop(columns=[col])
+                    if 'TIME_PERIOD' in display_df.columns:
+                        display_df = display_df.rename(columns={'TIME_PERIOD': 'Time Period'})
                     
                     st.dataframe(display_df, use_container_width=True, height=400)
                     
