@@ -1972,6 +1972,7 @@ def fetch_and_process_data(project,schema):
             project,
             stops_df,
             elvis_project_name=elvis_slug,
+            time_period_config=time_period_config,
         )
         print("Route comparison data processed successfully.")
         # Create a lowercase mapping of columns

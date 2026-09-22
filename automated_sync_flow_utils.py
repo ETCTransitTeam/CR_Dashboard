@@ -6348,8 +6348,41 @@ def create_route_level_comparison(new_df, time_period_config=None):
     
     return route_level_df
 
+def time_period_number_for_code(time_code, time_period_config=None):
+    """Map a survey time code (AM2, MID5) to the project's completion-report period number.
+
+    Period 1 is the first configured period, matching the Clone Records and CR labels.
+    Falls back to the older AM/MID/PM buckets when a project has no period list.
+    """
+    if time_code is None or (isinstance(time_code, float) and pd.isna(time_code)) or pd.isna(time_code):
+        return ''
+    code = str(time_code).strip().upper()
+    if code.endswith('.0'):
+        code = code[:-2]
+    if not code or code in {'NAN', 'NONE', 'NAT'}:
+        return ''
+
+    periods = []
+    if time_period_config and time_period_config.get("periods"):
+        periods = deduplicate_periods(time_period_config["periods"])
+    for index, period in enumerate(periods, start=1):
+        codes = {str(c).strip().upper() for c in (period.get("codes") or []) if str(c).strip()}
+        if code in codes:
+            return str(index)
+
+    if code.startswith('AM'):
+        return '1' if code == 'AM1' else '2'
+    if code.startswith('MID'):
+        return '3'
+    if code.startswith('PM'):
+        return '4'
+    if code.startswith('OFF') or code.startswith('EVE'):
+        return '5'
+    return ''
+
+
 def process_reverse_direction_logic(
-    wkday_overall_df, df, route_level_df, project_name, stops_df=None, elvis_project_name=None
+    wkday_overall_df, df, route_level_df, project_name, stops_df=None, elvis_project_name=None, time_period_config=None
 ):
     """
     Process reverse direction logic for the routes with custom fallback logic per Jason's requirements.
@@ -7050,29 +7083,8 @@ def process_reverse_direction_logic(
         return valid_routes
     
     def get_time_period_from_time_code(time_code):
-        """Convert time codes like AM1, PM3, MID6 to time periods"""
-        if not time_code or pd.isna(time_code):
-            return ''
-        
-        time_code_str = str(time_code).upper()
-        
-        # AM time periods
-        if time_code_str.startswith('AM'):
-            return '1' if time_code_str in ['AM1'] else '2'
-        # MID time periods  
-        elif time_code_str.startswith('MID'):
-            return '3'
-        # PM time periods
-        elif time_code_str.startswith('PM'):
-            return '4'
-        # OFF time periods
-        elif time_code_str.startswith('OFF'):
-            return '5'
-        # EVE time periods
-        elif time_code_str.startswith('EVE'):
-            return '5'
-        else:
-            return ''
+        """Convert a time code to this project's completion-report period number."""
+        return time_period_number_for_code(time_code, time_period_config)
     
     def update_route_surveyed_info(target_index, route_code, route_name, assigned_type, original_row):
         """Update the ROUTE_SURVEYEDCode and ROUTE_SURVEYED columns for the reverse record with custom fallback logic"""
