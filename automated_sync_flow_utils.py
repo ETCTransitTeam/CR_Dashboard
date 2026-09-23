@@ -6381,6 +6381,32 @@ def time_period_number_for_code(time_code, time_period_config=None):
     return ''
 
 
+def opposite_surveyed_direction_code(route_code, route_ids=None):
+    """Return the opposite _00/_01 route id when that route is in route_ids.
+
+    This is the same swap the completion report applies when a trip is flipped:
+    _00 becomes _01 and _01 becomes _00. Returns '' when the code has no
+    inbound/outbound suffix or the opposite route does not exist.
+    """
+    if route_code is None or (isinstance(route_code, float) and pd.isna(route_code)):
+        return ''
+    route_code = str(route_code).strip()
+    if not route_code or '_' not in route_code:
+        return ''
+    parts = route_code.split('_')
+    suffix = parts[-1]
+    if suffix == '00':
+        opposite_suffix = '01'
+    elif suffix == '01':
+        opposite_suffix = '00'
+    else:
+        return ''
+    opposite = f"{'_'.join(parts[:-1])}_{opposite_suffix}"
+    if not route_ids or opposite not in route_ids:
+        return ''
+    return opposite
+
+
 def process_reverse_direction_logic(
     wkday_overall_df, df, route_level_df, project_name, stops_df=None, elvis_project_name=None, time_period_config=None
 ):
@@ -6812,18 +6838,30 @@ def process_reverse_direction_logic(
         all_type_fixed = fix_single_dataframe(all_type_df, "all_type_df")
 
     # ADD THIS FUNCTION
+    known_route_ids = set()
+    if stops_df is not None and not stops_df.empty and 'ETC_ROUTE_ID' in stops_df.columns:
+        known_route_ids = set(stops_df['ETC_ROUTE_ID'].dropna().astype(str).str.strip())
+
     def resolve_final_direction_code(route_code, record_id=None, route_type=None):
         """
         Centralized resolver for FINAL_DIRECTION_CODE
         Priority:
-        1) Transfer-based stop logic
-        2) CR mapping
-        3) Already-directioned route
-        4) Fallback to route_code
+        1) Type Reverse: opposite direction, the direction the new record lands in
+        2) Transfer-based stop logic (p/n and Rev-p/Rev-n)
+        3) CR mapping
+        4) Already-directioned route
+        5) Fallback to route_code
         """
 
+        # A plain Reverse is the parent trip run the other way. Label it with the
+        # flipped route, matching the completion report. Transfers keep their own logic.
+        if route_type == 'Reverse':
+            flipped = opposite_surveyed_direction_code(route_code, known_route_ids)
+            if flipped:
+                return flipped
+
         # 1. Transfer-based direction
-        if route_type and record_id:
+        if route_type and record_id and route_type != 'Reverse':
             dir_code = determine_direction_from_transfers(route_code, record_id, route_type)
             if dir_code:
                 return f"{route_code}_{dir_code}"
