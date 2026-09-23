@@ -6035,8 +6035,10 @@ def process_route_comparison_data(cr_df, df, ke_df, project, time_period_config=
     """
 
     # ---------------- FILTER KINGELVIS DATA ----------------
+    # Interviewer 999 and Final_Usage decide which records count.
+    # 1st Cleaner is not on every King Elvis file (CATS), and it did not
+    # remove any record that these two filters already keep.
     ke_df = ke_df[ke_df['INTERV_INIT'].astype(str) != '999']
-    ke_df = ke_df[ke_df['1st Cleaner'].astype(str) != 'Test/No 5 MIN']
     ke_df = ke_df[ke_df['Final_Usage'].astype(str).str.lower() == 'use']
 
     df = pd.merge(df, ke_df['id'], on='id', how='inner')
