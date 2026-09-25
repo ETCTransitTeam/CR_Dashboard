@@ -3649,6 +3649,136 @@ def evaluate_and_send_refusal_blanks_alerts(
     return breaches if sent else []
 
 
+def send_route_code_alert_email(to_emails, project_name, unknown_codes, is_mock_test=False):
+    """
+    Email when survey route codes are not in the details route system (after remaps).
+    unknown_codes: list of dicts with keys code, n (survey count).
+    """
+    if not unknown_codes or not to_emails:
+        return False
+    subject_prefix = "[TEST] " if is_mock_test else ""
+    code_preview = ", ".join(str(u.get("code", "")) for u in unknown_codes[:3])
+    if len(unknown_codes) > 3:
+        code_preview += ", …"
+    subject = f"{subject_prefix}Route Code Alert — {project_name}"
+    if code_preview:
+        subject = f"{subject_prefix}Route Code Alert — {project_name}: {code_preview}"
+
+    rows_html = ""
+    for u in unknown_codes:
+        rows_html += (
+            f"<tr><td>{u.get('code', '')}</td>"
+            f"<td>{u.get('n', '')}</td></tr>"
+        )
+    test_banner = ""
+    if is_mock_test:
+        test_banner = (
+            '<div style="background:#fff3cd;border:1px solid #ffc107;padding:14px;margin-bottom:16px;">'
+            "<strong>For testing the alert</strong> — mock email; no live survey data was changed."
+            "</div>"
+        )
+    body = f"""
+    <html><body>
+    {test_banner}
+    <h2>Route Code Alert</h2>
+    <p>Project: <strong>{project_name}</strong></p>
+    <p>Checked after route/stop code remaps on sync.</p>
+    <p>These survey route codes are <strong>not</strong> in the project details route system
+    (<code>ETC_ROUTE_ID</code> in STOPS/XFERS):</p>
+    <table border="1" cellpadding="6" cellspacing="0">
+    <tr><th>Route code</th><th>Surveys (approx)</th></tr>
+    {rows_html}
+    </table>
+    <p>What this means: after applying remaps (e.g. NCS_2 → NCS_1), these codes still do not match details.</p>
+    <p>Next steps: add a remap under Edit Project → Route / Stop Code Convert, or update the details file if the code is valid.</p>
+    <p>Sync itself was <strong>not</strong> blocked — this is notification only.</p>
+    </body></html>
+    """
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_ADDRESS
+        msg["To"] = ", ".join(to_emails)
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP(EMAIL_HOST, _smtp_port()) as server:
+            server.starttls()
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_ADDRESS, to_emails, msg.as_string())
+        return True
+    except Exception as e:
+        logger.exception("Failed to send route code alert: %s", e)
+        return False
+
+
+def evaluate_and_send_route_code_alerts(
+    bucket_name,
+    project_name,
+    survey_route_codes,
+    known_route_ids,
+):
+    """
+    After remaps: email super admins for survey route codes not in details inventory.
+    Dedupes per route code via S3 so the same code is not emailed every sync.
+    Returns list of unknown code dicts that were emailed (may be empty).
+    """
+    from utils import load_route_code_alerts_from_s3, save_route_code_alerts_to_s3
+
+    if not bucket_name or survey_route_codes is None:
+        return []
+
+    import pandas as pd
+
+    series = pd.Series(survey_route_codes).dropna().astype(str).str.strip()
+    series = series[(series != "") & (series.str.lower() != "nan") & (series.str.lower() != "none")]
+    if series.empty:
+        return []
+
+    known = {
+        str(x).strip()
+        for x in (known_route_ids or [])
+        if x is not None and str(x).strip() and str(x).strip().lower() not in ("nan", "none")
+    }
+    if not known:
+        return []
+
+    counts = series.value_counts()
+    unknown = [
+        {"code": code, "n": int(n)}
+        for code, n in counts.items()
+        if code not in known
+    ]
+    if not unknown:
+        return []
+
+    notified = load_route_code_alerts_from_s3(bucket_name, project_name)
+    new_unknown = [u for u in unknown if u["code"] not in notified]
+    if not new_unknown:
+        print(
+            f"Route code alert: {len(unknown)} unknown code(s) for {project_name}, "
+            "all already emailed — skip."
+        )
+        return []
+
+    from datetime import datetime, timezone
+
+    sent = send_route_code_alert_email(
+        get_refusal_blanks_alert_recipients(),
+        project_name,
+        new_unknown,
+    )
+    if sent:
+        now = datetime.now(timezone.utc).isoformat()
+        for u in new_unknown:
+            notified[u["code"]] = {"n": u["n"], "emailed_at": now}
+        save_route_code_alerts_to_s3(bucket_name, project_name, notified)
+        print(
+            f"Route code alert emailed for {project_name}: "
+            f"{[u['code'] for u in new_unknown]}"
+        )
+        return new_unknown
+    return []
+
+
 def run_mock_refusal_blanks_alert_test(project_name):
     """
     Send a mock alert email to all super admins (no live data or S3 dedupe changes).

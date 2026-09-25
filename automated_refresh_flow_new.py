@@ -1339,6 +1339,29 @@ def fetch_and_process_data(project,schema):
     except Exception as _prefix_exc:
         print(f"Route prefix convert skipped for {project}: {_prefix_exc}")
 
+    # Alert when survey route codes are still unknown after remaps (notification only).
+    try:
+        if bucket_name and df is not None and "ROUTE_SURVEYEDCode" in df.columns:
+            from authentication.auth import evaluate_and_send_route_code_alerts
+
+            _known_ids = []
+            if detail_df_stops is not None and "ETC_ROUTE_ID" in detail_df_stops.columns:
+                _known_ids.extend(detail_df_stops["ETC_ROUTE_ID"].tolist())
+            if (
+                "detail_df_xfers" in locals()
+                and detail_df_xfers is not None
+                and "ETC_ROUTE_ID" in detail_df_xfers.columns
+            ):
+                _known_ids.extend(detail_df_xfers["ETC_ROUTE_ID"].tolist())
+            evaluate_and_send_route_code_alerts(
+                bucket_name,
+                project_name,
+                df["ROUTE_SURVEYEDCode"],
+                _known_ids,
+            )
+    except Exception as _route_alert_exc:
+        print(f"Route code alert skipped (non-fatal): {_route_alert_exc}")
+
     baby_elvis_merged_df_filtered = df.copy()
     stop_on_lat_lon_columns_check=['stoponlat','stoponlong']
     stop_off_lat_lon_columns_check=['stopofflat','stopofflong']

@@ -836,6 +836,53 @@ def save_refusal_blanks_alerts_to_s3(bucket_name, project_key, notified_map):
         return False
 
 
+ROUTE_CODE_ALERTS_SUFFIX = "_route_code_alerts.json"
+
+
+def _route_code_alerts_key(project_key):
+    safe_key = str(project_key).replace(" ", "_").upper()
+    return f"{DEMOGRAPHIC_CONFIG_PREFIX}{safe_key}{ROUTE_CODE_ALERTS_SUFFIX}"
+
+
+def load_route_code_alerts_from_s3(bucket_name, project_key):
+    """Load route-code keys already emailed for unknown-route alerts."""
+    import json
+
+    key = _route_code_alerts_key(project_key)
+    try:
+        response = s3_client.get_object(Bucket=bucket_name, Key=key)
+        body = response["Body"].read().decode("utf-8")
+        data = json.loads(body)
+        if isinstance(data, dict):
+            return {str(k): data[k] for k in data.keys()}
+        return {}
+    except Exception as e:
+        from botocore.exceptions import ClientError
+
+        if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "NoSuchKey":
+            return {}
+        print(f"Error loading route code alerts from S3: {e}")
+        return {}
+
+
+def save_route_code_alerts_to_s3(bucket_name, project_key, notified_map):
+    import json
+
+    key = _route_code_alerts_key(project_key)
+    body = json.dumps(notified_map or {}, indent=2)
+    try:
+        s3_client.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=body.encode("utf-8"),
+            ContentType="application/json",
+        )
+        return True
+    except Exception as e:
+        print(f"Error saving route code alerts to S3: {e}")
+        return False
+
+
 def list_s3_files(bucket_name, prefix=None):
     """
     List all files in an S3 bucket with their metadata.
