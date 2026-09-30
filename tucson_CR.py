@@ -59,6 +59,47 @@ def cols_with_cr_sort(df, wanted_cols):
     if hasattr(df, "columns") and "SORT" in df.columns and "SORT" not in cols:
         cols.append("SORT")
     return cols
+
+
+_DIRECTION_EXPORT_ID_COLUMNS = (
+    "ROUTE_SURVEYEDCode",
+    "ROUTE_SURVEYED",
+    "STATION_ID",
+    "STATION_NAME",
+    "Day",
+    "DAY",
+)
+_DIRECTION_EXPORT_METRICS = ("Goal", "Collect", "Remain")
+_DIRECTION_EXPORT_PERIOD = re.compile(r"^\((\d+)\) (Goal|Collect|Remain)$")
+
+
+def direction_comparison_export_frame(df):
+    """Reorder a direction or station comparison for the CR download.
+
+    Identity columns stay first. Time periods are then grouped as Goal, Collected,
+    Remaining. SORT sets the row order and is left out of the file. The on-screen
+    table order is unchanged.
+    """
+    if not isinstance(df, pd.DataFrame):
+        return pd.DataFrame()
+    work = df.copy()
+    if "SORT" in work.columns:
+        work["SORT"] = pd.to_numeric(work["SORT"], errors="coerce")
+        work = work.sort_values(["SORT"], kind="mergesort", na_position="last")
+        work = work.drop(columns=["SORT"])
+    id_cols = [c for c in _DIRECTION_EXPORT_ID_COLUMNS if c in work.columns]
+    grouped = {metric: [] for metric in _DIRECTION_EXPORT_METRICS}
+    for col in work.columns:
+        match = _DIRECTION_EXPORT_PERIOD.match(str(col))
+        if match:
+            grouped[match.group(2)].append((int(match.group(1)), col))
+    metric_cols = []
+    for metric in _DIRECTION_EXPORT_METRICS:
+        metric_cols.extend(col for _, col in sorted(grouped[metric], key=lambda item: item[0]))
+    ordered = id_cols + metric_cols
+    if not ordered:
+        ordered = list(work.columns)
+    return work.loc[:, ordered].reset_index(drop=True)
 import plotly.graph_objects as go
 import time
 from utils import apply_lacmta_agency_filter
@@ -8595,6 +8636,23 @@ else:
                     export_elvis_data()
 
         with header_col3:
+            cr_direction_exports = {
+                "main": (wkday_dir_df, "Download Weekday Direction CR", "weekday_direction_cr"),
+                "weekday": (wkday_dir_df, "Download Weekday Direction CR", "weekday_direction_cr"),
+                "weekend": (wkend_dir_df, "Download Weekend Direction CR", "weekend_direction_cr"),
+                "weekday_station": (wkday_stationwise_df, "Download Weekday Station CR", "weekday_station_cr"),
+                "weekend_station": (wkend_stationwise_df, "Download Weekend Station CR", "weekend_station_cr"),
+            }
+            if current_page in cr_direction_exports:
+                export_source, export_label, export_stem = cr_direction_exports[current_page]
+                export_df = direction_comparison_export_frame(export_source)
+                st.download_button(
+                    export_label,
+                    data=export_df.to_csv(index=False),
+                    file_name=f"{export_stem}.csv",
+                    mime="text/csv",
+                    key=f"download_{export_stem}",
+                )
             if not client_view_active:
                 if current_page == "weekend":
                     csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
