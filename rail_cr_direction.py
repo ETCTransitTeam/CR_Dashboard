@@ -88,13 +88,37 @@ def _station_suffix(station_id):
     return str(station_id).strip().split("_")[-1]
 
 
-def rail_terminus_ends_from_cr(*cr_dfs):
-    """Last station in each CR direction (by SORT, else row order).
+def _stop_sequence_by_id(stops_df):
+    """Highest travel sequence for each stop id. Empty when stops are unavailable."""
+    if stops_df is None or not isinstance(stops_df, pd.DataFrame) or stops_df.empty:
+        return {}
+    if "ETC_STOP_ID" not in stops_df.columns or "seq_fixed" not in stops_df.columns:
+        return {}
+    sequences = pd.to_numeric(stops_df["seq_fixed"], errors="coerce")
+    by_id = {}
+    for stop_id, stop_seq in zip(stops_df["ETC_STOP_ID"], sequences):
+        if pd.isna(stop_id) or pd.isna(stop_seq):
+            continue
+        stop_id = str(stop_id).strip()
+        if not stop_id:
+            continue
+        stop_seq = float(stop_seq)
+        previous = by_id.get(stop_id)
+        if previous is None or stop_seq > previous:
+            by_id[stop_id] = stop_seq
+    return by_id
 
-    On CATS, I-485 is first inbound and last outbound. Boardings at that
-    last-of-direction station belong on the other side.
+
+def rail_terminus_ends_from_cr(*cr_dfs, stops_df=None):
+    """Travel end of each CR direction.
+
+    The end is the stop with the highest sequence on that direction. On CATS,
+    inbound ends at UNC Charlotte and outbound ends at I-485. The CR sheet lists
+    both directions in the same geographic order, so the last SORT row is not
+    the outbound end. Without stop sequences, the last SORT row is used.
     """
     ends = {}
+    stop_sequences = _stop_sequence_by_id(stops_df)
     for cr in cr_dfs:
         if cr is None or not isinstance(cr, pd.DataFrame) or cr.empty:
             continue
@@ -123,11 +147,20 @@ def rail_terminus_ends_from_cr(*cr_dfs):
             work["_sort"] = pd.to_numeric(work["SORT"], errors="coerce")
             work = work.sort_values(["_dir", "_sort"], kind="mergesort", na_position="last")
         for direction, group in work.groupby("_dir", sort=False):
-            last = group.iloc[-1]
+            chosen = group.iloc[-1]
+            if stop_sequences:
+                best_seq = None
+                for _, station_row in group.iterrows():
+                    stop_seq = stop_sequences.get(str(station_row[station_col]).strip())
+                    if stop_seq is None:
+                        continue
+                    if best_seq is None or stop_seq > best_seq:
+                        best_seq = stop_seq
+                        chosen = station_row
             keys = ends.setdefault(str(direction), set())
-            keys.add(_station_suffix(last[station_col]))
-            if "STATION_NAME" in last.index:
-                name_key = _normalize_station_key(last.get("STATION_NAME"))
+            keys.add(_station_suffix(chosen[station_col]))
+            if "STATION_NAME" in chosen.index:
+                name_key = _normalize_station_key(chosen.get("STATION_NAME"))
                 if name_key:
                     keys.add(name_key)
     ends = {d: {k for k in keys if k} for d, keys in ends.items()}
@@ -156,14 +189,15 @@ def infer_rail_flip(row, max_seq_by_route=None, terminus_ends=None):
     return False
 
 
-def apply_rail_cr_directional_logic(survey_df, *cr_dfs):
+def apply_rail_cr_directional_logic(survey_df, *cr_dfs, stops_df=None):
     """Assign each rail survey to the inbound/outbound implied by stop sequence.
 
     - If alighting sequence < boarding sequence, flip _00 <-> _01 (regular CR).
     - If boarding is the last stop on that directional route and there is no
       alighting sequence, flip (terminal stations).
-    - If boarding is the last station in that CR direction (I-485 outbound,
-      UNC inbound), flip even when sequence looks valid.
+    - If boarding is the travel end of that direction (I-485 outbound,
+      UNC Charlotte inbound), flip even when sequence looks valid.
+      Outbound boardings at UNC Charlotte stay outbound.
     - Keep station identity; only the direction token is rewritten so Collect
       lands on the matching Rail CR row.
     """
@@ -172,7 +206,7 @@ def apply_rail_cr_directional_logic(survey_df, *cr_dfs):
 
     out = survey_df.copy()
     max_seq_by_route = _max_seq_by_route(out)
-    terminus_ends = rail_terminus_ends_from_cr(*cr_dfs)
+    terminus_ends = rail_terminus_ends_from_cr(*cr_dfs, stops_df=stops_df)
     new_routes = []
     new_stations = []
 
