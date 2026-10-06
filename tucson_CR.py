@@ -54,9 +54,24 @@ import plotly.express as px
 
 
 def cols_with_cr_sort(df, wanted_cols):
-    """Keep display columns plus CR SORT (used for order, hidden in the grid)."""
+    """Keep display columns plus CR SORT (used for order, hidden in the grid).
+
+    Station id and name stay on the direction table when the project has them,
+    so rail rows can be paired with the station total.
+    """
     cols = [c for c in wanted_cols if c in getattr(df, "columns", [])]
-    if hasattr(df, "columns") and "SORT" in df.columns and "SORT" not in cols:
+    if not hasattr(df, "columns"):
+        return cols
+    for extra in ("STATION_ID", "STATION_NAME"):
+        if extra not in getattr(df, "columns", []) or extra in cols:
+            continue
+        if extra == "STATION_NAME" and "STATION_ID" in cols:
+            cols.insert(cols.index("STATION_ID") + 1, extra)
+        elif "ROUTE_SURVEYED" in cols:
+            cols.insert(cols.index("ROUTE_SURVEYED") + 1, extra)
+        else:
+            cols.append(extra)
+    if "SORT" in df.columns and "SORT" not in cols:
         cols.append("SORT")
     return cols
 
@@ -100,6 +115,261 @@ def direction_comparison_export_frame(df):
     if not ordered:
         ordered = list(work.columns)
     return work.loc[:, ordered].reset_index(drop=True)
+
+
+_CR_PERIOD_COLUMN = re.compile(r"^\((\d+)\) (Goal|Collect|Remain)$")
+_CR_DIRECTION_CODE_SUFFIXES = {"00", "01", "02", "03"}
+_CR_DIRECTION_LABEL = re.compile(
+    r"\s*[-–]\s*(INBOUND|OUTBOUND|EAST|WEST|NORTH|SOUTH|CLOCKWISE|COUNTERCLOCKWISE)\s*$",
+    re.IGNORECASE,
+)
+_CR_TOTAL_COLUMNS = ("(Total) Goal", "(Total) Collected", "(Total) Remaining")
+_CR_IDENTITY_COLUMNS = (
+    "ROUTE_SURVEYEDCode",
+    "ROUTE_SURVEYED",
+    "STATION_ID",
+    "STATION_NAME",
+    "Day",
+    "DAY",
+)
+
+
+def _cr_base_route_code(code):
+    """Drop a directional suffix so inbound and outbound share one route total."""
+    text = "" if pd.isna(code) else str(code).strip()
+    parts = text.split("_")
+    if len(parts) > 1 and parts[-1] in _CR_DIRECTION_CODE_SUFFIXES:
+        return "_".join(parts[:-1])
+    return text
+
+
+def _cr_label_key(value):
+    return re.sub(r"[^a-z0-9]+", "", "" if pd.isna(value) else str(value).lower())
+
+
+def _cr_route_name_without_direction(name):
+    return _CR_DIRECTION_LABEL.sub("", "" if pd.isna(name) else str(name)).strip()
+
+
+def _cr_split_station_label(label):
+    """Split 'Route Name: Station Name' into the route and the station."""
+    text = "" if pd.isna(label) else str(label).strip()
+    if ":" in text:
+        route_name, station_name = text.rsplit(":", 1)
+        return route_name.strip(), station_name.strip()
+    return "", text
+
+
+def _cr_day_column(df):
+    if not isinstance(df, pd.DataFrame):
+        return None
+    for name in ("Day", "DAY"):
+        if name in df.columns:
+            return name
+    return None
+
+
+def _cr_period_numbers(columns):
+    numbers = set()
+    for column in columns:
+        match = _CR_PERIOD_COLUMN.match(str(column))
+        if match:
+            numbers.add(int(match.group(1)))
+    return sorted(numbers)
+
+
+def _order_combined_cr_columns(df, total_identity):
+    id_cols = [column for column in _CR_IDENTITY_COLUMNS if column in df.columns]
+    extra = [
+        column
+        for column in df.columns
+        if column not in id_cols
+        and column not in total_identity
+        and column not in _CR_TOTAL_COLUMNS
+        and not _CR_PERIOD_COLUMN.match(str(column))
+        and column != "SORT"
+    ]
+    metric_cols = []
+    for metric in ("Goal", "Collect", "Remain"):
+        for number in _cr_period_numbers(df.columns):
+            name = f"({number}) {metric}"
+            if name in df.columns:
+                metric_cols.append(name)
+    totals = [column for column in list(total_identity) + list(_CR_TOTAL_COLUMNS) if column in df.columns]
+    ordered = id_cols + extra + metric_cols + totals
+    leftover = [column for column in df.columns if column not in ordered and column != "SORT"]
+    return df.loc[:, ordered + leftover]
+
+
+def _route_total_frame(route_df):
+    """Rename the existing route-level totals. Do not recompute them."""
+    if not isinstance(route_df, pd.DataFrame) or route_df.empty:
+        return pd.DataFrame()
+    work = route_df.copy()
+    if "SORT" in work.columns:
+        work = work.drop(columns=["SORT"])
+    rename = {
+        "ROUTE_SURVEYEDCode": "SINGLE_ROUTE_SURVEYEDCode",
+        "ROUTE_SURVEYED": "_route_level_name",
+        "Route Level Goal": "(Total) Goal",
+        "Station Level Goal": "(Total) Goal",
+        "# of Surveys": "(Total) Collected",
+        "Remaining": "(Total) Remaining",
+    }
+    work = work.rename(columns={old: new for old, new in rename.items() if old in work.columns})
+    if "SINGLE_ROUTE_SURVEYEDCode" in work.columns:
+        work["_join_code"] = work["SINGLE_ROUTE_SURVEYEDCode"].map(_cr_base_route_code)
+    else:
+        work["_join_code"] = ""
+    day_col = _cr_day_column(work)
+    if day_col:
+        work["_join_day"] = work[day_col].map(lambda value: "" if pd.isna(value) else str(value).strip())
+    else:
+        work["_join_day"] = ""
+    keep = [
+        column
+        for column in (
+            "_join_code",
+            "_join_day",
+            "_route_level_name",
+            "SINGLE_ROUTE_SURVEYEDCode",
+            "(Total) Goal",
+            "(Total) Collected",
+            "(Total) Remaining",
+        )
+        if column in work.columns
+    ]
+    return work.loc[:, keep].reset_index(drop=True)
+
+
+def _station_total_records(route_df):
+    frame = _route_total_frame(route_df)
+    records = []
+    for row in frame.to_dict(orient="records"):
+        route_name, station_name = _cr_split_station_label(row.get("_route_level_name", ""))
+        row["_station_key"] = _cr_label_key(station_name)
+        row["_whole_key"] = _cr_label_key(row.get("_route_level_name", ""))
+        row["_route_key"] = _cr_label_key(route_name)
+        records.append(row)
+    return records
+
+
+def _use_station_level_totals(direction_df, route_df):
+    """Rail totals are one row per station. Bus totals are one row per route."""
+    if not isinstance(direction_df, pd.DataFrame) or "STATION_NAME" not in direction_df.columns:
+        return False
+    records = _station_total_records(route_df)
+    station_keys = {
+        _cr_label_key(value)
+        for value in direction_df["STATION_NAME"].tolist()
+        if _cr_label_key(value)
+    }
+    if not records or not station_keys:
+        return False
+    for record in records:
+        target = record["_station_key"] or record["_whole_key"]
+        if target in station_keys:
+            return True
+    return False
+
+
+def _match_station_record(direction_row, records):
+    station_key = _cr_label_key(direction_row.get("STATION_NAME"))
+    route_key = _cr_label_key(_cr_route_name_without_direction(direction_row.get("ROUTE_SURVEYED")))
+    day = direction_row.get("_join_day", "")
+    if not station_key:
+        return None
+
+    def station_ok(record):
+        record_day = record.get("_join_day", "")
+        if record_day and day and record_day != day:
+            return False
+        target = record["_station_key"] or record["_whole_key"]
+        return bool(target) and station_key == target
+
+    candidates = [record for record in records if station_ok(record)]
+    if not candidates:
+        return None
+    if route_key:
+        routed = [
+            record
+            for record in candidates
+            if not record["_route_key"] or record["_route_key"] == route_key
+        ]
+        if routed:
+            candidates = routed
+    if len(candidates) == 1:
+        return candidates[0]
+    exact = [record for record in candidates if record["_route_key"] == route_key]
+    if len(exact) == 1:
+        return exact[0]
+    return None
+
+
+def combine_direction_and_route_level(direction_df, route_df):
+    """Place route or station totals on each direction row.
+
+    The totals are the numbers already stored on the route-level table. They are
+    repeated on inbound and outbound so the pair can be read together. They are
+    not a sum of the period columns.
+    """
+    if not isinstance(direction_df, pd.DataFrame):
+        return pd.DataFrame()
+    work = direction_df.copy()
+    if "SORT" in work.columns:
+        work["SORT"] = pd.to_numeric(work["SORT"], errors="coerce")
+        work = work.sort_values(["SORT"], kind="mergesort", na_position="last")
+        work = work.drop(columns=["SORT"])
+    work = work.reset_index(drop=True)
+    day_col = _cr_day_column(work)
+    route_has_day = _cr_day_column(route_df) is not None
+    if day_col and route_has_day:
+        work["_join_day"] = work[day_col].map(lambda value: "" if pd.isna(value) else str(value).strip())
+    else:
+        work["_join_day"] = ""
+
+    if _use_station_level_totals(work, route_df):
+        records = _station_total_records(route_df)
+        matched = []
+        for row in work.to_dict(orient="records"):
+            record = _match_station_record(row, records) or {}
+            matched.append(
+                {
+                    "SINGLE_ROUTE_STATION": record.get("_route_level_name", pd.NA),
+                    "(Total) Goal": record.get("(Total) Goal", pd.NA),
+                    "(Total) Collected": record.get("(Total) Collected", pd.NA),
+                    "(Total) Remaining": record.get("(Total) Remaining", pd.NA),
+                }
+            )
+        combined = pd.concat([work, pd.DataFrame(matched)], axis=1)
+        total_identity = ("SINGLE_ROUTE_STATION",)
+    else:
+        lookup = _route_total_frame(route_df)
+        work["_join_code"] = (
+            work["ROUTE_SURVEYEDCode"].map(_cr_base_route_code)
+            if "ROUTE_SURVEYEDCode" in work.columns
+            else ""
+        )
+        if not route_has_day:
+            lookup = lookup.copy()
+            if "_join_day" in lookup.columns:
+                lookup["_join_day"] = ""
+        if lookup.empty:
+            for column in ("SINGLE_ROUTE_SURVEYEDCode", "SINGLE_ROUTE_SURVEYED", *_CR_TOTAL_COLUMNS):
+                work[column] = pd.NA
+            combined = work
+        else:
+            lookup = lookup.drop_duplicates(subset=["_join_code", "_join_day"], keep="first")
+            lookup = lookup.rename(columns={"_route_level_name": "SINGLE_ROUTE_SURVEYED"})
+            combined = work.merge(lookup, on=["_join_code", "_join_day"], how="left")
+        total_identity = ("SINGLE_ROUTE_SURVEYEDCode", "SINGLE_ROUTE_SURVEYED")
+
+    drop_cols = [column for column in ("_join_code", "_join_day") if column in combined.columns]
+    if drop_cols:
+        combined = combined.drop(columns=drop_cols)
+    return _order_combined_cr_columns(combined, total_identity).reset_index(drop=True)
+
+
 import plotly.graph_objects as go
 import time
 from utils import apply_lacmta_agency_filter
@@ -2959,174 +3229,74 @@ else:
                     - **Remain** → Surveys still needed to meet the goal (Goal - Collect, minimum 0)  
                     """)
 
-            # -------------------------------
-            # Columns Layout
-            # -------------------------------
-            col1, col2 = st.columns([2, 1])  # Left column is wider
+            tab_cr, tab_time = st.tabs(["CR", "Time of Day Details"])
 
-            # Display the first dataframe on the left full screen (col1)
-            def _apply_cr_sort_for_display(df_in):
-                """Sort by CR SORT when present; drop SORT so it is not shown in the grid."""
-                if not isinstance(df_in, pd.DataFrame) or df_in.empty or "SORT" not in df_in.columns:
-                    return df_in
-                out = df_in.copy()
-                out["SORT"] = pd.to_numeric(out["SORT"], errors="coerce")
-                out = out.sort_values(["SORT"], kind="mergesort", na_position="last").reset_index(drop=True)
-                return out.drop(columns=["SORT"])
-
-            with col1:
-                if current_page=='main':
-                    st.subheader('Route Direction Level Comparison (WeekDAY)')
-                else:
-                    st.subheader("Route Direction Level Comparison")
-                filtered_df1 = _apply_cr_sort_for_display(filter_dataframe(data1, search_query))
-                # render_aggrid(filtered_df1, height=500, pinned_column='ROUTE_SURVEYEDCode', key='grid1')
-                render_styled_dataframe(filtered_df1, height=500, key='grid1')
-
-
-                # st.dataframe(filtered_df1, use_container_width=True, hide_index=True)
-                def append_total_row(df):
-                    if 'Remaining' not in df.columns:
-                        return df
-
-                    total_remaining = int(df['Remaining'].fillna(0).sum())
-
-                    total_row = {}
-
-                    for col in df.columns:
-                        if col == 'Remaining':
-                            total_row[col] = total_remaining
-                        elif df[col].dtype.kind in 'if':  # int or float columns
-                            total_row[col] = 0
-                        else:
-                            total_row[col] = ''
-
-                    # Put label in first column
-                    total_row[df.columns[0]] = 'TOTAL'
-
-                    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
-
-
-                
-                filtered_df3 = _apply_cr_sort_for_display(filter_dataframe(data3, search_query))
-
-                # Append TOTAL row
-                filtered_df3 = append_total_row(filtered_df3)
-                if route_goal_label and "Route Level Goal" in filtered_df3.columns:
-                    filtered_df3 = filtered_df3.rename(
-                        columns={"Route Level Goal": route_goal_label}
+            with tab_cr:
+                combined = combine_direction_and_route_level(data1, data3)
+                if "SINGLE_ROUTE_STATION" in combined.columns:
+                    st.caption(
+                        "Inbound and outbound stay side by side. "
+                        "The station total is repeated on both directions."
                     )
-                st.subheader(route_level_title)
-                render_styled_dataframe(filtered_df3, height=400, key='grid3')
-                # 🔒 Locked summary (TOP)
-                # total_remaining = get_total_remaining(filtered_df3)
-                # st.metric(
-                #     label="Total Remaining Surveys (All Routes)",
-                #     value=f"{total_remaining:,}"
-                # )
-                # st.dataframe(filtered_df3, use_container_width=True, hide_index=True)
+                else:
+                    st.caption(
+                        "Inbound and outbound stay side by side. "
+                        "The route total is repeated on both directions."
+                    )
+                filtered_combined = filter_dataframe(combined, search_query)
+                render_styled_dataframe(filtered_combined, height=720, key="grid_cr")
 
+            with tab_time:
+                time_goals = data1.copy() if isinstance(data1, pd.DataFrame) else pd.DataFrame()
+                time_collected = data2.copy() if isinstance(data2, pd.DataFrame) else pd.DataFrame()
+                col_time, col_overall = st.columns([1.4, 1])
 
-            # Display buttons and dataframes in the second column (col2)
-            # with col2:
+                with col_time:
+                    st.subheader("Time Range Data")
+                    filtered_df2 = filter_dataframe(time_collected, search_query)
+                    render_styled_dataframe(filtered_df2, height=500, key="grid2")
 
-            #     st.subheader("Time Range Data")
-            #     # Convert relevant columns in both dataframes to numeric values, handling errors
-            #     data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].apply(pd.to_numeric, errors='coerce')
-            #     data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].apply(pd.to_numeric, errors='coerce')
+                with col_overall:
+                    st.subheader("Time Period OverAll Data")
+                    expected_cols = [
+                        col for col in time_goals.columns if _CR_PERIOD_COLUMN.match(str(col)) and str(col).endswith("Goal")
+                    ]
+                    collected_cols = [col for col in time_collected.columns if str(col).isdigit()]
+                    expected_cols = sorted(
+                        expected_cols,
+                        key=lambda x: int(_CR_PERIOD_COLUMN.match(str(x)).group(1)),
+                    )
+                    collected_cols = sorted(collected_cols, key=lambda x: int(x))
 
-            #     # Fill any NaN values with 0 (or handle them differently if needed)
-            #     data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']] = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].fillna(0)
-            #     data2[['1', '2', '3', '4', '5']] = data2[['1', '2', '3', '4', '5']].fillna(0)
+                    if expected_cols:
+                        time_goals[expected_cols] = time_goals[expected_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+                    if collected_cols:
+                        time_collected[collected_cols] = time_collected[collected_cols].apply(
+                            pd.to_numeric, errors="coerce"
+                        ).fillna(0)
 
-            #     # Calculate the sums for expected and collected totals
-            #     expected_totals = data1[['(1) Goal', '(2) Goal', '(3) Goal', '(4) Goal', '(5) Goal']].sum()
-            #     collected_totals = data2[['1', '2', '3', '4', '5']].sum()
-
-            #     # Calculate the difference, ensuring no negative values
-            #     difference = np.maximum(expected_totals.values - collected_totals.values, 0)
-            #     result_df = pd.DataFrame({
-            #         'Time Period':  [ '1', '2', '3', '4', '5'],
-            #         'Collected Totals': collected_totals.values.astype(int),
-            #         'Expected Totals': expected_totals.values.astype(int),
-            #         'Remaining': difference.astype(int),
-            #     })
-
-
-
-            #     filtered_df2 = filter_dataframe(data2, search_query)
-            #     # render_aggrid(filtered_df2, height=500, pinned_column='Display_Text', key='grid2')
-            #     render_styled_dataframe(filtered_df2, height=500, key='grid2')
-            #     # st.dataframe(filtered_df2, use_container_width=True, hide_index=True)
-
-            #     filtered_df4 = filter_dataframe(result_df, search_query)
-            
-            #     # Render AgGrid
-            #     st.subheader("Time Period OverAll Data")
-            #     render_styled_dataframe(filtered_df4, height=400, key='grid4')
-            with col2:
-                st.subheader("Time Range Data")
-
-                # -------------------------------
-                # Dynamically detect time-period columns
-                # -------------------------------
-                expected_cols = [col for col in data1.columns if col.endswith("Goal")]
-                collected_cols = [col for col in data2.columns if col.isdigit()]
-
-                # Sort columns numerically to keep correct order
-                expected_cols = sorted(
-                    expected_cols,
-                    key=lambda x: int(x.split("(")[1].split(")")[0])
-                )
-                collected_cols = sorted(collected_cols, key=lambda x: int(x))
-
-                # -------------------------------
-                # Convert to numeric safely
-                # -------------------------------
-                data1[expected_cols] = data1[expected_cols].apply(
-                    pd.to_numeric, errors='coerce'
-                )
-                data2[collected_cols] = data2[collected_cols].apply(
-                    pd.to_numeric, errors='coerce'
-                )
-
-                # Fill NaNs
-                data1[expected_cols] = data1[expected_cols].fillna(0)
-                data2[collected_cols] = data2[collected_cols].fillna(0)
-
-                # -------------------------------
-                # Calculate totals
-                # -------------------------------
-                expected_totals = data1[expected_cols].sum()
-                collected_totals = data2[collected_cols].sum()
-
-                # Ensure no negative remaining values
-                difference = np.maximum(
-                    expected_totals.values - collected_totals.values, 0
-                )
-
-                # -------------------------------
-                # Build result dataframe dynamically
-                # -------------------------------
-                time_periods = [str(i + 1) for i in range(len(expected_cols))]
-
-                result_df = pd.DataFrame({
-                    'Time Period': time_periods,
-                    'Collected Totals': collected_totals.values.astype(int),
-                    'Expected Totals': expected_totals.values.astype(int),
-                    'Remaining': difference.astype(int),
-                })
-
-                # -------------------------------
-                # Render dataframes (unchanged behavior)
-                # -------------------------------
-                filtered_df2 = filter_dataframe(data2, search_query)
-                render_styled_dataframe(filtered_df2, height=500, key='grid2')
-
-                filtered_df4 = filter_dataframe(result_df, search_query)
-
-                st.subheader("Time Period OverAll Data")
-                render_styled_dataframe(filtered_df4, height=400, key='grid4')
+                    period_count = max(len(expected_cols), len(collected_cols))
+                    expected_values = (
+                        time_goals[expected_cols].sum().values if expected_cols else np.zeros(period_count)
+                    )
+                    collected_values = (
+                        time_collected[collected_cols].sum().values if collected_cols else np.zeros(period_count)
+                    )
+                    if len(expected_values) != len(collected_values):
+                        width = max(len(expected_values), len(collected_values))
+                        expected_values = np.pad(expected_values, (0, width - len(expected_values)))
+                        collected_values = np.pad(collected_values, (0, width - len(collected_values)))
+                    difference = np.maximum(expected_values - collected_values, 0)
+                    result_df = pd.DataFrame(
+                        {
+                            "Time Period": [str(i + 1) for i in range(len(difference))],
+                            "Collected Totals": collected_values.astype(int),
+                            "Expected Totals": expected_values.astype(int),
+                            "Remaining": difference.astype(int),
+                        }
+                    )
+                    filtered_df4 = filter_dataframe(result_df, search_query)
+                    render_styled_dataframe(filtered_df4, height=400, key="grid4")
 
 
         def weekday_page():
