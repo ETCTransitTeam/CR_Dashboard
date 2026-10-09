@@ -102,6 +102,19 @@ def _query_param_first(key: str, default=None):
         return str(v[0]) if v else default
     return str(v)
 
+
+_AUTH_RETURN_PAGES = {"login", "client_login"}
+
+
+def _safe_auth_page(page: str) -> str:
+    """Only allow known in-app login pages as a post-auth redirect."""
+    page = str(page or "").strip().lower()
+    return page if page in _AUTH_RETURN_PAGES else "login"
+
+
+def _login_page_for_role(role: str) -> str:
+    return "client_login" if str(role or "").upper() == "CLIENT" else "login"
+
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
 EMAIL_HOST = os.getenv("EMAIL_HOST")
@@ -978,12 +991,29 @@ def _resolve_signup_project_name():
 
 def client_signup_page():
     """Project-scoped signup: creates CLIENT user and assigns that project access."""
-    resolved_project = _resolve_signup_project_name()
     requested_project = (_query_param_first("project", "") or "").strip()
 
     def register_content():
+        # Existing clients are often sent back to this setup link. Give them a
+        # direct way onto the client login page before the create-account form.
+        st.link_button(
+            "Already have a username/password?",
+            "/?page=client_login",
+            use_container_width=True,
+        )
+        st.caption("Opens the client login page. Sign in with your email or username.")
+
         if not requested_project:
             st.error("Missing project in signup URL.")
+            return
+        try:
+            resolved_project = _resolve_signup_project_name()
+        except Exception:
+            logger.exception("Could not resolve client signup project")
+            st.error(
+                "Could not load this project right now. "
+                "Use the button above if you already have a username and password."
+            )
             return
         if not resolved_project:
             st.error("Invalid or inactive project in signup URL.")
@@ -1024,8 +1054,9 @@ def client_signup_page():
 
                         if not existing_user.get("is_active", False):
                             st.warning(
-                                "This account is not active yet. Please activate it from the email "
-                                "or use forgot password to get a fresh link."
+                                "This account already exists but is not active yet, so login will be refused. "
+                                "Ask your administrator to activate it. "
+                                "If you can receive email, Forgot password on the client login page can also turn it on."
                             )
                         else:
                             time.sleep(1)
@@ -1047,8 +1078,9 @@ def client_signup_page():
 
         st.markdown(
             """
-            <div class="auth-link">
-                Already have an account? <a href="/?page=client_login">Login here</a>
+            <div class="auth-link" style="text-align: center; margin-top: 1rem;">
+                Already have a username/password?
+                <a href="/?page=client_login">Sign in</a>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1074,7 +1106,10 @@ def activate_account():
         conn = user_connect_to_snowflake()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT email, is_active FROM user.user_table WHERE activation_token = %s", (token,))
+        cursor.execute(
+            "SELECT email, is_active, role FROM user.user_table WHERE activation_token = %s",
+            (token,),
+        )
         user_record = cursor.fetchone()
 
         if not user_record:
@@ -1085,12 +1120,16 @@ def activate_account():
 
         email = user_record[0]
         is_active = bool(user_record[1]) if len(user_record) > 1 else False
+        dest = _login_page_for_role(user_record[2] if len(user_record) > 2 else "")
 
         if is_active:
             cursor.close()
             conn.close()
             st.success("Your account is already activated. Please log in.")
-            st.markdown(f'<meta http-equiv="refresh" content="1;url=/?page=login">', unsafe_allow_html=True)
+            st.markdown(
+                f'<meta http-equiv="refresh" content="1;url=/?page={dest}">',
+                unsafe_allow_html=True,
+            )
             return
 
         st.info("Click Activate to complete your account activation.")
@@ -1103,17 +1142,21 @@ def activate_account():
                 """,
                 (True, email, token),
             )
+            updated = cursor.rowcount
             conn.commit()
             cursor.close()
             conn.close()
 
-            if cursor.rowcount == 0:
+            if updated == 0:
                 st.error("This activation link was already used or is no longer valid.")
                 return
 
-            st.success("🎉 Your account has been activated! You can now log in.")
+            st.success("Your account has been activated. You can now log in.")
             st.info("Redirecting to login page...")
-            st.markdown(f'<meta http-equiv="refresh" content="2;url=/?page=login">', unsafe_allow_html=True)
+            st.markdown(
+                f'<meta http-equiv="refresh" content="2;url=/?page={dest}">',
+                unsafe_allow_html=True,
+            )
             return
 
         cursor.close()
@@ -1136,30 +1179,48 @@ def store_user_in_session(user_data):
     st.session_state["token"] = generate_jwt(user_data["email"], user_data["username"], user_data["role"])
 
 def check_user_login(email, password):
+    """Match email first, then a unique username. Comparison is case-insensitive."""
+    ident = (email or "").strip()
+    if not ident or password is None:
+        return None
+
     conn = user_connect_to_snowflake()
     cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT email, username, password, role, is_active
+            FROM user.user_table
+            WHERE LOWER(email) = LOWER(%s)
+            """,
+            (ident,),
+        )
+        user = cursor.fetchone()
+        if not user:
+            cursor.execute(
+                """
+                SELECT email, username, password, role, is_active
+                FROM user.user_table
+                WHERE LOWER(username) = LOWER(%s)
+                """,
+                (ident,),
+            )
+            matches = cursor.fetchall()
+            user = matches[0] if len(matches) == 1 else None
 
-    query = """
-    SELECT email, username, password, role, is_active
-    FROM user.user_table
-    WHERE email = %s
-    """
-    cursor.execute(query, (email,))
-    user = cursor.fetchone()
-    
-    if user:
+        if not user:
+            return None
+
         stored_hashed_password = base64.b64decode(user[2])
         is_active = user[4]
-
-        if is_active:
-            if bcrypt.checkpw(password.encode('utf-8'), stored_hashed_password):
-                return {"email": user[0], "username": user[1], "role": user[3]}
-            else:
-                return None
-        else:
+        if not is_active:
             return "inactive"
-    else:
+        if bcrypt.checkpw(password.encode("utf-8"), stored_hashed_password):
+            return {"email": user[0], "username": user[1], "role": user[3]}
         return None
+    finally:
+        cursor.close()
+        conn.close()
 
 def is_super_admin(email):
     """Check if the email belongs to a super admin."""
@@ -1273,11 +1334,17 @@ def login(client_mode: bool = False):
         schema_value = get_frontend_projects()
         project_names = list(schema_value.keys())
         with st.form(key="login_form"):
-            email = st.text_input("Email", placeholder="Enter your email address")
+            email_label = "Email or username" if client_mode else "Email"
+            email_placeholder = (
+                "Enter your email or username" if client_mode else "Enter your email address"
+            )
+            email = st.text_input(email_label, placeholder=email_placeholder)
             password = st.text_input("Password", type="password", placeholder="Enter your password")
+            forgot_next = "client_login" if client_mode else "login"
             st.markdown(
                 '<div style="text-align: right; margin-bottom: 8px;">'
-                '<a href="/?page=forgot_password" style="color: red; text-decoration: underline;">Forgot Password?</a>'
+                f'<a href="/?page=forgot_password&next={forgot_next}" '
+                'style="color: red; text-decoration: underline;">Forgot Password?</a>'
                 '</div>',
                 unsafe_allow_html=True
             )
@@ -1286,7 +1353,11 @@ def login(client_mode: bool = False):
             if login_submit:
                 user = check_user_login(email, password)
                 if user == "inactive":
-                    st.error("Your account is not active. Please verify your email before logging in.")
+                    st.error(
+                        "Your account is not active yet, so this password cannot sign in. "
+                        "Ask your administrator to activate it. "
+                        "If you can receive email, Forgot password will also activate the account."
+                    )
                 elif user:
                     user_role = str(user.get("role", "")).upper()
                     if client_mode and user_role != "CLIENT":
@@ -1389,7 +1460,12 @@ def login(client_mode: bool = False):
 
     page_title = "Client Login" if client_mode else "Login"
     subtitle = "Login to your assigned project account" if client_mode else ""
-    render_auth_layout(login_content, page_title, subtitle)
+    render_auth_layout(
+        login_content,
+        page_title,
+        subtitle,
+        dashboard_type="client" if client_mode else "supervisor",
+    )
 
 def logout():
     redirect_page = st.session_state.get("login_redirect_page", "login")
@@ -3047,29 +3123,44 @@ def send_reset_email(user_email, reset_token):
 
 def forgot_password():
     """Displays the forgot password page."""
+    next_page = _safe_auth_page(_query_param_first("next", "login"))
+
     def forgot_password_content():
         
-        email = st.text_input("Email Address", placeholder="Enter your registered email")
+        email = st.text_input("Email or username", placeholder="Enter your email or username")
         
         if st.button("Send Reset Link", type='primary', use_container_width=True):
-            if not email:
-                st.error("Email Field is Required")
-                return
-            
-            conn = user_connect_to_snowflake()
-            cursor = conn.cursor()
-            cursor.execute("SELECT email FROM user.user_table WHERE email = %s", (email,))
-            user = cursor.fetchone()
-
-            if user:
-                reset_token = generate_reset_token(email)
-                if send_reset_email(email, reset_token):
-                    st.success("Password reset link has been sent to your email!")
+            if not email or not email.strip():
+                st.error("Email or username is required")
             else:
-                st.error("Email not found in the system.")
-            
-            cursor.close()
-            conn.close()
+                conn = user_connect_to_snowflake()
+                cursor = conn.cursor()
+                try:
+                    typed = email.strip()
+                    cursor.execute(
+                        "SELECT email FROM user.user_table WHERE LOWER(email) = LOWER(%s)",
+                        (typed,),
+                    )
+                    user = cursor.fetchone()
+                    if not user:
+                        cursor.execute(
+                            "SELECT email FROM user.user_table WHERE LOWER(username) = LOWER(%s)",
+                            (typed,),
+                        )
+                        matches = cursor.fetchall()
+                        if len(matches) == 1:
+                            user = matches[0]
+
+                    if user:
+                        account_email = user[0]
+                        reset_token = generate_reset_token(account_email)
+                        if send_reset_email(account_email, reset_token):
+                            st.success("Password reset link has been sent to your email!")
+                    else:
+                        st.error("No account found for that email or username.")
+                finally:
+                    cursor.close()
+                    conn.close()
         
         st.markdown("""
             <style>
@@ -3088,13 +3179,23 @@ def forgot_password():
             </style>
         """, unsafe_allow_html=True)
 
-        st.markdown("""
+        back_label = (
+            "Already have a username/password? Sign in"
+            if next_page == "client_login"
+            else "Already have an account? Login here"
+        )
+        st.markdown(f"""
             <div class="auth-link">
-                Already have an account? <a href="/?page=login">Login here</a>
+                <a href="/?page={next_page}">{back_label}</a>
             </div>
         """, unsafe_allow_html=True)
     
-    render_auth_layout(forgot_password_content, "Reset Password", "We'll help you get back into your account. Enter your email address and we'll send you a link to reset your password.")
+    render_auth_layout(
+        forgot_password_content,
+        "Reset Password",
+        "We'll help you get back into your account. Enter your email or username and we'll send a reset link.",
+        dashboard_type="client" if next_page == "client_login" else "supervisor",
+    )
 
 def decode_reset_token(reset_token):
     try:
@@ -3114,7 +3215,9 @@ def update_user_password(email, new_password):
     conn = user_connect_to_snowflake()
     cursor = conn.cursor()
     cursor.execute("""
-        UPDATE user.user_table SET password = %s WHERE email = %s
+        UPDATE user.user_table
+        SET password = %s, is_active = TRUE, activation_token = NULL
+        WHERE email = %s
     """, (encoded_hashed_password, email))
     conn.commit()
     cursor.close()
@@ -3146,8 +3249,14 @@ def reset_password():
                 email = decode_reset_token(reset_token)
                 if email:
                     update_user_password(email, new_password)
+                    dest = _login_page_for_role(
+                        (get_user_basic_by_email(email) or {}).get("role", "")
+                    )
                     st.success("Password reset successful! Redirecting to login...")
-                    st.markdown(f'<meta http-equiv="refresh" content="2;url=/?page=login">', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<meta http-equiv="refresh" content="2;url=/?page={dest}">',
+                        unsafe_allow_html=True,
+                    )
                 else:
                     st.error("Invalid reset token.")
         
@@ -3917,23 +4026,27 @@ def admin_update_password(email, new_password):
     
     try:
         # Check if user exists
-        cursor.execute("SELECT email FROM user.user_table WHERE email = %s", (email,))
-        if not cursor.fetchone():
+        cursor.execute("SELECT email, role FROM user.user_table WHERE email = %s", (email,))
+        row = cursor.fetchone()
+        if not row:
             return False, "User not found!"
         
-        # Hash new password
+        # Hash new password and turn the account on. An admin-set password
+        # has to be usable even when the activation email never arrived.
         hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
         encoded_password = base64.b64encode(hashed_password).decode('utf-8')
         
-        # Update password
         cursor.execute("""
-            UPDATE user.user_table 
-            SET password = %s 
+            UPDATE user.user_table
+            SET password = %s, is_active = TRUE, activation_token = NULL
             WHERE email = %s
         """, (encoded_password, email))
         
         conn.commit()
-        return True, f"Password updated successfully for {email}!"
+        message = f"Password updated for {email}. The account is now active."
+        if str(row[1] or "").upper() == "CLIENT":
+            message += f" Client login: {app_public_url('/?page=client_login')}"
+        return True, message
     except Exception as e:
         return False, f"Error updating password: {str(e)}"
     finally:
@@ -4852,6 +4965,12 @@ def password_update_page():
         f"**Updating password for:** {selected_user['username']} ({email_to_update}) | "
         f"**Role:** {selected_user['role']}"
     )
+    if str(selected_user.get("role", "")).upper() == "CLIENT":
+        st.caption(
+            "Saving a password also activates this client. "
+            f"Send them to {app_public_url('/?page=client_login')} "
+            "and have them sign in with their email or username."
+        )
     
     with st.form(f"update_password_form_{email_to_update}"):
         st.text_input("Account email (locked)", value=email_to_update, disabled=True)
