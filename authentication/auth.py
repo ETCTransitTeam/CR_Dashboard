@@ -1332,7 +1332,6 @@ def login(client_mode: bool = False):
     def login_content():
 
         schema_value = get_frontend_projects()
-        project_names = list(schema_value.keys())
         with st.form(key="login_form"):
             email_label = "Email or username" if client_mode else "Email"
             email_placeholder = (
@@ -1372,51 +1371,44 @@ def login(client_mode: bool = False):
 
                     if user_role == "CLIENT":
                         allowed_projects = get_client_allowed_projects(user["email"])
-                        if allowed_projects:
-                            valid_allowed = [p for p in allowed_projects if p in schema_value]
-                            if not valid_allowed:
-                                st.error(
-                                    "Your assigned projects are no longer available in the client portal. "
-                                    "Please contact your administrator."
-                                )
-                                return
-                            if len(valid_allowed) == 1:
-                                selected_project = valid_allowed[0]
-                                store_user_in_session(user)
-                                st.session_state["logged_in"] = True
-                                st.session_state["jwt_token"] = generate_jwt(
-                                    user["email"], user["username"], user["role"]
-                                )
-                                st.session_state["login_redirect_page"] = "client_login"
-                                st.session_state["selected_project"] = selected_project
-                                st.session_state["schema"] = schema_value[selected_project]
-                                st.query_params["logged_in"] = "true"
-                                st.query_params["page"] = "main"
-                                st.rerun()
-                                return
+                        valid_allowed = [p for p in allowed_projects if p in schema_value]
+                        if not allowed_projects:
+                            st.error(
+                                "No projects are assigned to this account. "
+                                "Contact your administrator."
+                            )
+                            return
+                        if not valid_allowed:
+                            st.error(
+                                "Your assigned projects are no longer available in the client portal. "
+                                "Please contact your administrator."
+                            )
+                            return
+                        if len(valid_allowed) == 1:
+                            selected_project = valid_allowed[0]
                             store_user_in_session(user)
                             st.session_state["logged_in"] = True
                             st.session_state["jwt_token"] = generate_jwt(
                                 user["email"], user["username"], user["role"]
                             )
                             st.session_state["login_redirect_page"] = "client_login"
-                            st.session_state["client_candidate_projects"] = valid_allowed
+                            st.session_state["selected_project"] = selected_project
+                            st.session_state["schema"] = schema_value[selected_project]
                             st.query_params["logged_in"] = "true"
-                            st.query_params["page"] = "client_project_select"
+                            st.query_params["page"] = "main"
                             st.rerun()
                             return
-                        if client_mode:
-                            store_user_in_session(user)
-                            st.session_state["logged_in"] = True
-                            st.session_state["jwt_token"] = generate_jwt(
-                                user["email"], user["username"], user["role"]
-                            )
-                            st.session_state["login_redirect_page"] = "client_login"
-                            st.session_state["client_candidate_projects"] = project_names
-                            st.query_params["logged_in"] = "true"
-                            st.query_params["page"] = "client_project_select"
-                            st.rerun()
-                            return
+                        store_user_in_session(user)
+                        st.session_state["logged_in"] = True
+                        st.session_state["jwt_token"] = generate_jwt(
+                            user["email"], user["username"], user["role"]
+                        )
+                        st.session_state["login_redirect_page"] = "client_login"
+                        st.session_state["client_candidate_projects"] = valid_allowed
+                        st.query_params["logged_in"] = "true"
+                        st.query_params["page"] = "client_project_select"
+                        st.rerun()
+                        return
 
                     store_user_in_session(user)
                     st.success(f"Welcome {user['username']}!")
@@ -2137,15 +2129,9 @@ def enforce_client_project_session():
         return
 
     email = user.get("email", "")
-    allowed = get_client_allowed_projects(email)
     visible = get_frontend_projects()
-
-    session_ok = False
-    if is_frontend_visible_project(selected):
-        if allowed:
-            session_ok = selected in allowed
-        else:
-            session_ok = selected in visible
+    allowed = [p for p in get_client_allowed_projects(email) if p in visible]
+    session_ok = selected in allowed
 
     if session_ok:
         return
@@ -2589,11 +2575,12 @@ def client_project_select_page():
         st.query_params["page"] = "login"
         return
 
-    projects = st.session_state.get("client_candidate_projects") or []
     schema_value = get_frontend_projects()
-    projects = list(dict.fromkeys(p for p in projects if p in schema_value))
+    assigned = get_client_allowed_projects(user.get("email", ""))
+    projects = [p for p in assigned if p in schema_value]
+    st.session_state["client_candidate_projects"] = projects
     if not projects:
-        st.error("No active projects found for your account. Contact administrator.")
+        st.error("No projects are assigned to this account. Contact your administrator.")
         if st.button(
             "Sign out",
             key="client_no_project_sign_out",
