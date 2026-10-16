@@ -1852,7 +1852,7 @@ else:
             "🕒  Time Of Day Details": "timedetails",
             "🗺️  Location Maps": "location_maps",
             "⤓    LOW RESPONSE QUESTIONS": "low_response_questions_tab",
-            "↺   Clone Records": "reverse_routes",
+            "↺   All Possible Records": "reverse_routes",
             "⌗  DAILY TOTALS": "dailytotals",
             "∆   Surveyor/Route/Trend Reports": "surveyreport",
             "◉  WEEKDAY StationWise Comparison": "weekday_station",
@@ -2618,7 +2618,7 @@ else:
                     "🗺️  Location Maps","👥  Demographic Review"])
 
                 if 'kcata' in selected_project or ('actransit' in selected_project or 'salem' in selected_project or 'lacmta_feeder' in selected_project and 'rail' not in schema_key):
-                    menu_items.append("↺   Clone Records")
+                    menu_items.append("↺   All Possible Records")
 
                 if any(p in selected_project for p in ['lacmta_feeder', 'kcata', 'actransit', 'salem']):
                     menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
@@ -2631,7 +2631,7 @@ else:
                     menu_items.extend(["🚫  Refusal Analysis",
                         "🗺️  Location Maps", "👥  Demographic Review"])
                     if 'rail' not in schema_key:
-                        menu_items.append("↺   Clone Records")
+                        menu_items.append("↺   All Possible Records")
                     menu_items.extend(["⌗  DAILY TOTALS", "∆   Surveyor/Route/Trend Reports"])
                     if 'rail' in schema_key:
                         menu_items.extend(["◉  WEEKDAY StationWise Comparison", "⦾  WEEKEND StationWise Comparison"])
@@ -7306,7 +7306,7 @@ else:
                 cr_file = st.text_input("CR File * (name only; .xlsx auto-added)")
                 kingelvis_file = st.text_input("KingElvis File * (name only; .xlsx auto-added)")
                 elvis_project_name = st.text_input(
-                    "Elvis project name (Clone Records URL segment) *",
+                    "Elvis project name (All Possible Records URL segment) *",
                     help=(
                         "The path segment in the Elvis heremap URL after the record id, e.g. "
                         "`ac-transit25` in .../elvisheremap/{id}/ac-transit25/lime. "
@@ -7417,7 +7417,7 @@ else:
                 if not kingelvis_file:
                     missing.append("KingElvis File")
                 if not elvis_project_name:
-                    missing.append("Elvis project name (Clone Records URL segment)")
+                    missing.append("Elvis project name (All Possible Records URL segment)")
 
                 if missing:
                     st.error(
@@ -8196,7 +8196,7 @@ else:
                 cr_file = st.text_input("CR File * (name only; .xlsx auto-added)", value=selected["CR_FILE_NAME"])
                 kingelvis_file = st.text_input("KingElvis File * (name only; .xlsx auto-added)", value=selected["KINGELVIS_FILE_NAME"])
                 elvis_project_name = st.text_input(
-                    "Elvis project name (Clone Records URL segment) *",
+                    "Elvis project name (All Possible Records URL segment) *",
                     value=selected["ELVIS_PROJECT_NAME"],
                     help=(
                         "The path segment in the Elvis heremap URL after the record id, e.g. "
@@ -8319,7 +8319,7 @@ else:
                 if not kingelvis_file:
                     missing.append("KingElvis File")
                 if not elvis_project_name:
-                    missing.append("Elvis project name (Clone Records URL segment)")
+                    missing.append("Elvis project name (All Possible Records URL segment)")
 
                 if missing:
                     st.error(
