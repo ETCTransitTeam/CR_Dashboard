@@ -376,7 +376,7 @@ from utils import apply_lacmta_agency_filter
 import boto3
 from io import BytesIO, StringIO
 from public_survey_tracker import render_public_survey_tracker_page, survey_tracker_setup_page
-from field_assignments.page import render_field_assignments_page
+from sam.page import render_field_assignments_page
 
 _RCD_ROOT = Path(__file__).resolve().parent / "REVIEW_CYCLE_DASHBOARD"
 if str(_RCD_ROOT) not in sys.path:
