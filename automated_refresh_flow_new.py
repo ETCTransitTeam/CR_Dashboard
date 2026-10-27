@@ -4,6 +4,7 @@ from datetime import date
 import warnings
 import copy
 import os
+import re
 from dotenv import load_dotenv
 import math
 import streamlit as st
@@ -18,7 +19,7 @@ from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
 from rail_cr_direction import apply_rail_cr_directional_logic
-from utils import extract_race_labels_from_header, fetch_data, apply_lacmta_agency_filter, load_demographic_setup_from_s3
+from utils import extract_race_labels_from_header, fetch_data, fetch_mysql_tables, apply_lacmta_agency_filter, load_demographic_setup_from_s3
 
 warnings.filterwarnings('ignore')
 
@@ -605,7 +606,29 @@ def apply_cr_sort(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["SORT"], kind="mergesort", na_position="last").reset_index(drop=True)
 
 
-def sync_cr_goals_only(project, schema):
+CATS_RAIL_TABLE_PREFIX = "rail_"
+
+
+def cats_rail_partner(project_name):
+    """CATS bus project name -> its rail project, so one sync writes both."""
+    bus_norm = re.sub(r"[\s_]+", " ", str(project_name or "")).strip().upper()
+    if not bus_norm or "CATS" not in bus_norm or bus_norm.endswith(" RAIL"):
+        return None
+    target = f"{bus_norm} RAIL"
+    for candidate in PROJECTS:
+        cand = re.sub(r"[\s_]+", " ", str(candidate)).strip().upper()
+        if cand == target:
+            return candidate
+    return None
+
+
+def _prefix_table_info(table_info, table_prefix):
+    if not table_prefix:
+        return table_info
+    return {sheet: f"{table_prefix}{name}" for sheet, name in table_info.items()}
+
+
+def sync_cr_goals_only(project, schema, table_prefix=None):
     """
     Load CR goals into Snowflake when Pilot has no usable survey records.
     Does not change cleaning filters; only runs when the normal survey path
@@ -888,6 +911,7 @@ def sync_cr_goals_only(project, schema):
             cur.execute(f'USE SCHEMA "{schema}"')
         except Exception:
             cur.execute(f"USE SCHEMA {schema}")
+        table_info = _prefix_table_info(table_info, table_prefix)
         for sheet_name, table_name in table_info.items():
             df_out = dataframes.get(sheet_name)
             if df_out is None or len(df_out.columns) == 0:
@@ -913,7 +937,7 @@ def sync_cr_goals_only(project, schema):
     return "CR_GOALS_ONLY"
 
 
-def fetch_and_process_data(project,schema):
+def fetch_and_process_data(project, schema, table_prefix=None, source_frames=None):
     agency = st.session_state.get("selected_agency", None)
     # in some Compeletion Report LSNAMECODE is splited in some it is not so have to check that
     def edit_ls_code_column(x):
@@ -974,22 +998,47 @@ def fetch_and_process_data(project,schema):
     main_database_name = main_config["database"] if main_config else None
     
     # -----------------------
-    # Fetch fresh data every run (do NOT store raw data in session)
+    # Fetch fresh data every run (do NOT store raw data in session).
+    # A CATS rail pass receives the frames the bus pass just downloaded.
     # -----------------------
-    csv_buffer = fetch_data(database_name, table_name)
-    if csv_buffer:
-        df = pd.read_csv(csv_buffer)
+    cats_source_frames = None
+    if source_frames is not None:
+        print(f"CATS combined sync for {project}: using the surveys already loaded. MySQL stays closed.")
+        df = None if source_frames.get("elvis") is None else source_frames["elvis"].copy()
+        df1 = None if source_frames.get("main") is None else source_frames["main"].copy()
     else:
-        st.error("Failed to load elvis data.")
         df = None
-
-    df1 = None
-    if main_config:
-        main_csv_buffer = fetch_data(main_database_name, main_table_name)
-        if main_csv_buffer:
-            df1 = pd.read_csv(main_csv_buffer)
+        df1 = None
+        same_mysql = (
+            main_config
+            and main_database_name == database_name
+            and cats_rail_partner(project)
+        )
+        if same_mysql:
+            loaded = fetch_mysql_tables(database_name, [table_name, main_table_name])
+            if loaded:
+                df, df1 = loaded
+            else:
+                st.error("Failed to load CATS survey data.")
         else:
-            st.error("Failed to load main data.")
+            csv_buffer = fetch_data(database_name, table_name)
+            if csv_buffer:
+                df = pd.read_csv(csv_buffer)
+            else:
+                st.error("Failed to load elvis data.")
+                df = None
+
+            df1 = None
+            if main_config:
+                main_csv_buffer = fetch_data(main_database_name, main_table_name)
+                if main_csv_buffer:
+                    df1 = pd.read_csv(main_csv_buffer)
+                else:
+                    st.error("Failed to load main data.")
+        cats_source_frames = {
+            "elvis": None if df is None else df.copy(),
+            "main": None if df1 is None else df1.copy(),
+        }
 
     # -----------------------
     # Step 1: Merge df and df1
@@ -1093,7 +1142,12 @@ def fetch_and_process_data(project,schema):
         if len(df) == 0:
             # No usable Pilot surveys — still load CR goals (Collect = 0).
             # Filters/logic above are unchanged; this only replaces the hard stop.
-            return sync_cr_goals_only(project, schema)
+            sync_cr_goals_only(project, schema, table_prefix=table_prefix)
+            if not table_prefix:
+                partner = cats_rail_partner(project)
+                if partner:
+                    sync_cr_goals_only(partner, schema, table_prefix=CATS_RAIL_TABLE_PREFIX)
+            return "CR_GOALS_ONLY"
         # Rename route surveyed column
         if route_surveyed_code:
             df.rename(columns={route_surveyed_code[0]: 'ROUTE_SURVEYEDCode'}, inplace=True)
@@ -1140,7 +1194,7 @@ def fetch_and_process_data(project,schema):
     # -----------------------
     # Display success
     # -----------------------
-    if baby_elvis_df_merged is not None:
+    if baby_elvis_df_merged is not None and source_frames is None:
         st.success(f"Collected {len(baby_elvis_df_merged)} records from baby_elvis and elvis 📊 … now normalizing, cleaning, and reshaping the dataset ⏳💪")
 
 
@@ -1703,6 +1757,16 @@ def fetch_and_process_data(project,schema):
     stopon_clntid_column=check_all_characters_present(df,stopon_clntid_column_check)
     stopoff_clntid_column_check=['stopoffclntid']
     stopoff_clntid_column=check_all_characters_present(df,stopoff_clntid_column_check)
+    # CATS rail pages reuse these cleaned surveys. Do not download or clean them again.
+    cats_page_weekday = None
+    cats_page_weekend = None
+    cats_page_time_column = None
+    cats_page_stops = None
+    if not table_prefix and cats_rail_partner(project):
+        cats_page_weekday = weekday_df.copy()
+        cats_page_weekend = weekend_df.copy()
+        cats_page_time_column = time_column
+        cats_page_stops = detail_df_stops if "detail_df_stops" in locals() else None
 
 
     if wkend_overall_df is not None and 'LS_NAME_CODE' in wkend_overall_df.columns:
@@ -2744,8 +2808,152 @@ def fetch_and_process_data(project,schema):
         }
 
 
-    # Call the function
+    # Call the function. A CATS rail pass prefixes every table so the
+    # bus tables already written in this schema are left in place.
     print("Final call")
-    create_tables_and_insert_data(dataframes, table_info)
+    create_tables_and_insert_data(dataframes, _prefix_table_info(table_info, table_prefix))
 
     print("Files Uploaded SuccessFully")
+    if cats_page_weekday is not None:
+        _write_cats_rail_page_tables(
+            project,
+            schema,
+            cats_page_weekday,
+            cats_page_weekend,
+            cats_page_time_column,
+            cats_page_stops,
+            read_excel_from_s3,
+            bucket_name,
+            create_tables_and_insert_data,
+        )
+
+
+def _write_cats_rail_page_tables(
+    project,
+    schema,
+    weekday_df,
+    weekend_df,
+    time_column,
+    stops_df,
+    read_excel_from_s3,
+    bucket_name,
+    insert_tables,
+):
+    """Write the CATS rail page tables from surveys that are already cleaned.
+
+    This does not download MySQL again and does not run the bus cleaning steps again.
+    It reads the rail sheets and builds the rail page tables in the bus schema.
+    """
+    partner = cats_rail_partner(project)
+    if not partner:
+        return None
+    rail_config = PROJECTS.get(partner)
+    if not rail_config:
+        return None
+    print(f"CATS rail pages: building rail tables in {schema} from the surveys already cleaned.")
+    files = rail_config["files"]
+    wkday_overall_df = read_excel_from_s3(bucket_name, files["cr"], "WkDAY-RAIL")
+    wkend_overall_df = read_excel_from_s3(bucket_name, files["cr"], "WkEND-RAIL")
+    wkday_route_df = read_excel_from_s3(bucket_name, files["cr"], "WkDAY-RailTotal")
+    wkend_route_df = read_excel_from_s3(bucket_name, files["cr"], "WkEND-RailTotal")
+    if stops_df is None:
+        stops_df = read_excel_from_s3(bucket_name, files["details"], "STOPS")
+    for frame in (wkday_overall_df, wkend_overall_df):
+        if frame is None or frame.empty:
+            continue
+        if "LS_NAME_CODE" in frame.columns:
+            frame.dropna(subset=["LS_NAME_CODE"], inplace=True)
+        if "STATION_ID" in frame.columns:
+            frame["STATION_ID_SPLITTED"] = frame["STATION_ID"].apply(lambda x: str(x).split("_")[-1])
+
+    weekday_df = weekday_df.copy() if isinstance(weekday_df, pd.DataFrame) else pd.DataFrame()
+    weekend_df = weekend_df.copy() if isinstance(weekend_df, pd.DataFrame) else pd.DataFrame()
+    for rail_df in (weekday_df, weekend_df):
+        if rail_df.empty:
+            continue
+        stop_cols = check_all_characters_present(rail_df, ["stoponclntid"])
+        if stop_cols:
+            rail_df["STATION_ID"] = rail_df[stop_cols[0]].astype(str)
+        elif "STOP_ON_CLINTID_NEW" in rail_df.columns:
+            rail_df["STATION_ID"] = rail_df["STOP_ON_CLINTID_NEW"].astype(str)
+        if "STATION_ID" in rail_df.columns:
+            rail_df["STATION_ID_SPLITTED"] = rail_df["STATION_ID"].apply(lambda x: str(x).split("_")[-1])
+
+    weekday_df = apply_rail_cr_directional_logic(weekday_df, wkday_overall_df, stops_df=stops_df)
+    weekend_df = apply_rail_cr_directional_logic(weekend_df, wkend_overall_df, stops_df=stops_df)
+    rail_routes, rail_stations = _rail_cr_route_and_station_ids(wkday_overall_df, wkend_overall_df)
+    weekday_df = filter_surveys_to_rail_cr(weekday_df, rail_routes, rail_stations)
+    weekend_df = filter_surveys_to_rail_cr(weekend_df, rail_routes, rail_stations)
+    print(
+        f"CATS rail pages: weekday {len(weekday_df)}, weekend {len(weekend_df)}. "
+        "MySQL stayed closed."
+    )
+
+    time_period_config = get_time_period_config(partner)
+    wkday_time_df = create_time_value_df_with_display(
+        wkday_overall_df, weekday_df, time_column, partner, time_period_config
+    )
+    wkend_time_df = create_time_value_df_with_display(
+        wkend_overall_df, weekend_df, time_column, partner, time_period_config
+    )
+    wkday_dir_df = create_route_direction_level_df(
+        wkday_overall_df, weekday_df, time_column, partner, time_period_config
+    )
+    wkend_dir_df = create_route_direction_level_df(
+        wkend_overall_df, weekend_df, time_column, partner, time_period_config
+    )
+    wkday_comparison_df = create_route_level_df(
+        wkday_overall_df, wkday_route_df, weekday_df, time_column, partner, time_period_config
+    )
+    wkend_comparison_df = create_route_level_df(
+        wkend_overall_df, wkend_route_df, weekend_df, time_column, partner, time_period_config
+    )
+
+    def _fill_difference(frame):
+        if frame is None or frame.empty or "CR_Total" not in frame.columns or "DB_Total" not in frame.columns:
+            return frame
+        frame = frame.copy()
+        frame["Total_DIFFERENCE"] = [
+            math.ceil(max(0, (row["CR_Total"] - row["DB_Total"])))
+            for _, row in frame.iterrows()
+        ]
+        return frame
+
+    wkday_comparison_df = _fill_difference(wkday_comparison_df)
+    wkend_comparison_df = _fill_difference(wkend_comparison_df)
+    goal_rename = {
+        "CR_Overall_Goal": "Route Level Goal",
+        "DB_Total": "# of Surveys",
+        "Overall_Goal_DIFFERENCE": "Remaining",
+    }
+    period_rename = get_time_period_rename_dict(partner) or {}
+    wkday_comparison_df = wkday_comparison_df.rename(columns={**period_rename, **goal_rename})
+    wkend_comparison_df = wkend_comparison_df.rename(columns={**period_rename, **goal_rename})
+    wkday_dir_df = wkday_dir_df.rename(columns=period_rename)
+    wkend_dir_df = wkend_dir_df.rename(columns=period_rename)
+    drop_cols = ["CR_Total", "Total_DIFFERENCE", "DB_Total"]
+    wkday_station_df = wkday_dir_df.drop(columns=[c for c in drop_cols if c in wkday_dir_df.columns], errors="ignore")
+    wkend_station_df = wkend_dir_df.drop(columns=[c for c in drop_cols if c in wkend_dir_df.columns], errors="ignore")
+
+    dataframes = {
+        "WkDAY Route Comparison": wkday_comparison_df,
+        "WkEND Route Comparison": wkend_comparison_df,
+        "WkDAY Route DIR Comparison": wkday_dir_df,
+        "WkEND Route DIR Comparison": wkend_dir_df,
+        "WkDAY Time Data": wkday_time_df,
+        "WkEND Time Data": wkend_time_df,
+        "WkDAY Stationwise Comparison": wkday_station_df,
+        "WkEND Stationwise Comparison": wkend_station_df,
+    }
+    table_info = {
+        "WkDAY Route Comparison": "wkday_comparison",
+        "WkEND Route Comparison": "wkend_comparison",
+        "WkDAY Route DIR Comparison": "wkday_dir_comparison",
+        "WkEND Route DIR Comparison": "wkend_dir_comparison",
+        "WkDAY Time Data": "wkday_time_data",
+        "WkEND Time Data": "wkend_time_data",
+        "WkDAY Stationwise Comparison": "wkday_stationwise_comparison",
+        "WkEND Stationwise Comparison": "wkend_stationwise_comparison",
+    }
+    insert_tables(dataframes, _prefix_table_info(table_info, CATS_RAIL_TABLE_PREFIX))
+    print(f"CATS rail pages: rail_ tables written in {schema}.")

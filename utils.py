@@ -230,6 +230,37 @@ import boto3
 from dotenv import load_dotenv
 load_dotenv()
 
+def fetch_mysql_tables(database_name, table_names):
+    """Read several tables through one MySQL connection.
+
+    Returns a list of DataFrames in the same order as table_names, or None
+    when the connection fails.
+    """
+    HOST = os.getenv("SQL_HOST")
+    USER = os.getenv("SQL_USER")
+    PASSWORD = os.getenv("SQL_PASSWORD")
+    db_connector = DatabaseConnector(HOST, database_name, USER, PASSWORD)
+    frames = []
+    try:
+        db_connector.connect()
+        if db_connector.connection is None:
+            print(f"MySQL connection failed for {database_name}")
+            return None
+        print(f"MySQL connected once to {database_name} for {list(table_names)}")
+        for table_name in table_names:
+            print(f"{table_name=} and {database_name=}")
+            frames.append(pd.read_sql(f"SELECT * FROM {table_name}", db_connector.connection))
+        return frames
+    except Exception as e:
+        print(f"Error fetching MySQL tables from {database_name}: {e}")
+        return None
+    finally:
+        try:
+            db_connector.disconnect()
+        except Exception:
+            pass
+
+
 # Function to fetch data from the database
 def fetch_data(database_name, table_name):
     HOST = os.getenv("SQL_HOST")

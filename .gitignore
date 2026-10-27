@@ -202,3 +202,8 @@ local_scratch/
 # Morning sync / runtime logs
 logs/
 
+# Zip & doc & extra folders
+*.zip
+*.docx
+_call_extract/
+_test_reverse_direction.py

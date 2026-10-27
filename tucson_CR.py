@@ -18,6 +18,8 @@ from automated_refresh_flow_new import (
     get_frontend_time_period_columns,
     refresh_projects,
     ensure_project_configs_elvis_project_name_column,
+    cats_rail_partner,
+    CATS_RAIL_TABLE_PREFIX,
 )
 from automated_sync_flow_utils import (
     check_all_characters_present,
@@ -1037,6 +1039,51 @@ if "logged_in" not in st.session_state:
 query_params = st.query_params
 
 
+def _norm_project_name(value):
+    """Compare project names whether they use spaces or underscores."""
+    return re.sub(r"[\s_]+", " ", str(value or "")).strip().upper()
+
+
+def paired_rail_project(project_name, projects):
+    """Bus project -> (rail project name, rail schema), when a sibling exists.
+
+    CATS_CHARLOTTE_NC matches CATS_CHARLOTTE_NC RAIL. The rail project itself
+    has no pair, so opening it from the project list stays unchanged.
+    """
+    bus_norm = _norm_project_name(project_name)
+    if not bus_norm or bus_norm.endswith(" RAIL") or not projects:
+        return None
+    target = f"{bus_norm} RAIL"
+    for candidate, schema in projects.items():
+        if schema and _norm_project_name(candidate) == target:
+            return str(candidate), str(schema)
+    return None
+
+
+def _survey_total(df):
+    """Sum the route-level '# of Surveys' column. None when that table is missing."""
+    if not isinstance(df, pd.DataFrame) or "# of Surveys" not in getattr(df, "columns", []):
+        return None
+    total = pd.to_numeric(df["# of Surveys"], errors="coerce").sum()
+    if pd.isna(total):
+        return None
+    return int(total)
+
+
+RAIL_MENU_ITEMS = (
+    "🚆  RAIL WEEKDAY",
+    "🚆  RAIL WEEKEND",
+    "◉  RAIL WEEKDAY Stations",
+    "⦾  RAIL WEEKEND Stations",
+)
+RAIL_PAGE_KEYS = (
+    "rail_weekday",
+    "rail_weekend",
+    "rail_weekday_station",
+    "rail_weekend_station",
+)
+
+
 def _current_page_from_query():
     """Stable page key: Streamlit may return a list; normalize so auth links always match."""
     p = st.query_params.get("page", "login")
@@ -1183,19 +1230,23 @@ else:
             "⦾  WEEKEND StationWise Comparison",
         )
         WEEKEND_PAGE_KEYS = ("weekend", "weekend_station")
-        def create_snowflake_connection():
+        def create_snowflake_connection(schema_override=None):
             # Get selected project and agency
             selected_agency = st.session_state.get("selected_agency", None)
             selected_project = st.session_state.get("selected_project", "")
             print("Selected Agency:", selected_agency)
 
-            # Determine which schema to use
-            schema_to_use = selected_schema  # Default to current schema
-            
-            if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
-                # Use agency-specific schema: LACMTA_FEEDER_<AGENCY_NAME>
-                schema_to_use = f"LACMTA_FEEDER_{selected_agency}"
-                print(f"Using agency schema: {schema_to_use}")
+            # Determine which schema to use. An override reads another project's
+            # schema (rail sibling) without changing the project the user picked.
+            if schema_override:
+                schema_to_use = schema_override
+            else:
+                schema_to_use = selected_schema  # Default to current schema
+
+                if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                    # Use agency-specific schema: LACMTA_FEEDER_<AGENCY_NAME>
+                    schema_to_use = f"LACMTA_FEEDER_{selected_agency}"
+                    print(f"Using agency schema: {schema_to_use}")
 
             # Unquoted connector schema= uppercases identifiers. Mixed-case schemas
             # (e.g. historically "Oahu_Honolulu_Rail") only resolve via quoted USE SCHEMA.
@@ -1719,18 +1770,21 @@ else:
         pinned_column='ROUTE_SURVEYEDCode'
 
         # @st.cache(allow_output_mutation=True)  # Use st.cache in Streamlit 1.6.0
-        def fetch_dataframes_from_snowflake(cache_key):
+        def fetch_dataframes_from_snowflake(cache_key, schema_override=None, only_tables=None, table_prefix=None):
             """
             Fetches data from Snowflake tables and returns them as a dictionary of DataFrames.
             If a table is missing or an error occurs, it returns an empty DataFrame.
+
+            schema_override reads that schema instead of the project currently selected.
+            only_tables limits the fetch to those Snowflake table names.
 
             Returns:
                 dict: A dictionary where keys are DataFrame names and values are DataFrames.
             """
             # Snowflake connection details
-            selected_schema = st.session_state.get("schema", None)
-            print("Connecting Snowflake using this schema",selected_schema)
-            conn = create_snowflake_connection()
+            schema_in_use = schema_override or st.session_state.get("schema", None)
+            print("Connecting Snowflake using this schema", schema_in_use)
+            conn = create_snowflake_connection(schema_override=schema_override)
             cur = conn.cursor()
 
             # Table-to-DataFrame mapping
@@ -1765,6 +1819,14 @@ else:
                 'last_survey_date': 'last_survey_date_df',
             }
 
+            if only_tables:
+                wanted = {str(name).lower() for name in only_tables}
+                table_to_df_mapping = {
+                    table_name: df_name
+                    for table_name, df_name in table_to_df_mapping.items()
+                    if table_name.lower() in wanted
+                }
+
             # Initialize an empty dictionary to hold DataFrames
             dataframes = {}
 
@@ -1773,7 +1835,8 @@ else:
                 for table_name, df_name in table_to_df_mapping.items():
                     try:
                         # Query to fetch data
-                        query = f"SELECT * FROM {table_name}"
+                        query_table = f"{table_prefix}{table_name}" if table_prefix else table_name
+                        query = f"SELECT * FROM {query_table}"
                         
                         # Execute query and fetch data
                         cur.execute(query)
@@ -1804,6 +1867,51 @@ else:
         if "cache_key" not in st.session_state:
             st.session_state["cache_key"] = 0
         dataframes = fetch_dataframes_from_snowflake(st.session_state["cache_key"] )
+
+        # Rail pages. Other projects keep reading the rail schema.
+        # CATS reads rail_ tables in the bus schema. One Sync writes both.
+        rail_project_name = None
+        rail_schema_name = None
+        rail_frames = {}
+        rail_weekday_records = None
+        rail_weekend_records = None
+        rail_has_data = False
+        cats_combined = False
+        _rail_pair = paired_rail_project(st.session_state.get("selected_project"), schema_value)
+        _cats_partner = cats_rail_partner(st.session_state.get("selected_project"))
+        if _rail_pair:
+            rail_project_name, rail_schema_name = _rail_pair
+            cats_combined = bool(_cats_partner)
+            _rail_tables = None
+            if cats_combined:
+                _rail_tables = (
+                    "wkday_comparison",
+                    "wkend_comparison",
+                    "wkday_dir_comparison",
+                    "wkend_dir_comparison",
+                    "wkday_time_data",
+                    "wkend_time_data",
+                    "wkday_stationwise_comparison",
+                    "wkend_stationwise_comparison",
+                )
+            elif current_page not in RAIL_PAGE_KEYS:
+                _rail_tables = ("wkday_comparison", "wkend_comparison")
+            _rail_read_schema = selected_schema if cats_combined else rail_schema_name
+            _rail_prefix = CATS_RAIL_TABLE_PREFIX if cats_combined else None
+            _rail_exists_table = "RAIL_WKDAY_DIR_COMPARISON" if cats_combined else "WKDAY_DIR_COMPARISON"
+            try:
+                rail_frames = fetch_dataframes_from_snowflake(
+                    st.session_state["cache_key"],
+                    schema_override=None if cats_combined else rail_schema_name,
+                    only_tables=_rail_tables,
+                    table_prefix=_rail_prefix,
+                )
+                rail_has_data = table_exists(_rail_read_schema, _rail_exists_table)
+                rail_weekday_records = _survey_total(rail_frames.get("wkday_df"))
+                rail_weekend_records = _survey_total(rail_frames.get("wkend_df"))
+            except Exception as rail_load_error:
+                print(f"Rail sibling load skipped for {rail_project_name}: {rail_load_error}")
+                rail_frames = {}
 
         has_project_data = table_exists(selected_schema, "WKDAY_DIR_COMPARISON")
         print(f"Dataframes fetched. Any data present? {has_project_data}")
@@ -1857,6 +1965,10 @@ else:
             "∆   Surveyor/Route/Trend Reports": "surveyreport",
             "◉  WEEKDAY StationWise Comparison": "weekday_station",
             "⦾  WEEKEND StationWise Comparison": "weekend_station",
+            "🚆  RAIL WEEKDAY": "rail_weekday",
+            "🚆  RAIL WEEKEND": "rail_weekend",
+            "◉  RAIL WEEKDAY Stations": "rail_weekday_station",
+            "⦾  RAIL WEEKEND Stations": "rail_weekend_station",
             "🚫  Refusal Analysis": "refusal",
             "👥  Demographic Review": "demographic",
             "📊  Demographic Setup": "demographic_setup",
@@ -2639,6 +2751,11 @@ else:
             if hide_weekend:
                 menu_items = [item for item in menu_items if item not in WEEKEND_MENU_LABELS]
 
+            if rail_project_name:
+                for rail_item in RAIL_MENU_ITEMS:
+                    if rail_item not in menu_items:
+                        menu_items.append(rail_item)
+
             # --- Session State ---
             if "selected_page" not in st.session_state:
                 st.session_state.selected_page = "🏠︎   Home"
@@ -2647,6 +2764,16 @@ else:
                 current_page in WEEKEND_PAGE_KEYS
                 or st.session_state.get("selected_page") in WEEKEND_MENU_LABELS
                 or st.session_state.get("sidebar_menu") in WEEKEND_MENU_LABELS
+            ):
+                st.session_state.selected_page = "🏠︎   Home"
+                st.session_state.sidebar_menu = "🏠︎   Home"
+                st.query_params["page"] = "main"
+                st.rerun()
+
+            if not rail_project_name and (
+                current_page in RAIL_PAGE_KEYS
+                or st.session_state.get("selected_page") in RAIL_MENU_ITEMS
+                or st.session_state.get("sidebar_menu") in RAIL_MENU_ITEMS
             ):
                 st.session_state.selected_page = "🏠︎   Home"
                 st.session_state.sidebar_menu = "🏠︎   Home"
@@ -2698,6 +2825,29 @@ else:
             if "sidebar_menu" not in st.session_state:
                 st.session_state.sidebar_menu = st.session_state.selected_page
 
+            if "page_history" not in st.session_state:
+                st.session_state.page_history = []
+            if st.session_state.pop("page_history_back", False):
+                st.session_state.page_history_current = current_page
+            else:
+                previous_page = st.session_state.get("page_history_current")
+                if previous_page and previous_page != current_page:
+                    history = st.session_state.page_history
+                    if not history or history[-1] != previous_page:
+                        history.append(previous_page)
+                    st.session_state.page_history = history[-20:]
+                st.session_state.page_history_current = current_page
+
+            def _go_back():
+                history = list(st.session_state.get("page_history") or [])
+                dest = history.pop() if history else "main"
+                st.session_state.page_history = history
+                st.session_state.page_history_back = True
+                st.query_params["page"] = dest
+                if "back" in st.query_params:
+                    del st.query_params["back"]
+                st.rerun()
+
             def on_dashboard_change():
                 # Called when dashboard dropdown changes
                 new_val = st.session_state.sidebar_menu
@@ -2708,7 +2858,7 @@ else:
                     st.query_params["page"] = get_page_key(new_val)
 
             # --- Dashboard dropdown (NO dynamic index) ---
-            if not has_project_data:
+            if not has_project_data and not rail_has_data:
                 st.warning("No data available for the selected project yet. Please check back later or run sync.")
             else:
                 st.session_state.sidebar_menu = st.session_state.selected_page
@@ -2947,23 +3097,42 @@ else:
             .header-left {
                 display: flex;
                 flex-direction: column;
-                justify-content: center; /* ✅ vertically center h1 + p relative to cards */
-                gap: 0.2rem;             /* small gap between title and subtitle */
+                justify-content: center;
+                align-self: center;
+                flex: 0 0 340px;
+                min-width: 320px;
+                gap: 0.25rem;
+            }
+
+            .header-titles {
+                display: flex;
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
+            .header-left h1 {
+                margin: 0;
+                padding: 0;
+                font-size: 2.05rem;
+                font-weight: 700;
+                line-height: 1.15;
+                color: #fff;
             }
 
             .header-left p {
-                font-size: 0.95rem;
+                font-size: 0.9rem;
                 font-weight: 400;
                 opacity: 0.85;
                 margin: 0;
                 line-height: 1.3;
                 color: #fff;
+                white-space: nowrap;
             }
 
             .metric-group {
                 display: flex;
                 gap: 0.6rem;
-                flex-wrap: nowrap;
+                flex-wrap: wrap;
                 justify-content: flex-end;
             }
 
@@ -3028,35 +3197,97 @@ else:
                             <p class="metric-value">{weekend_records:,}</p>
                         </div>"""
 
+            rail_metric_html = ""
+            if rail_project_name:
+                rail_weekday_label = (
+                    f"{rail_weekday_records:,}" if rail_weekday_records is not None else "Awaiting Data"
+                )
+                rail_weekend_label = (
+                    f"{rail_weekend_records:,}" if rail_weekend_records is not None else "Awaiting Data"
+                )
+                rail_metric_html = f"""
+                        <div class="metric-card">
+                            <p class="metric-label">Rail Weekday Records</p>
+                            <p class="metric-value">{rail_weekday_label}</p>
+                        </div>
+                        <div class="metric-card">
+                            <p class="metric-label">Rail Weekend Records</p>
+                            <p class="metric-value">{rail_weekend_label}</p>
+                        </div>"""
+
             # === HEADER CONTENT ===
-            st.markdown(f"""
-            <div class="professional-header">
-                <div class="header-content">
-                    <div class="header-left">
-                        <h1>Completion Report</h1>
-                        <p>Comprehensive Route Performance Overview</p>
-                    </div>
-                    <div class="metric-group">
-                        <div class="metric-card">
-                            <p class="metric-label">Weekday Records</p>
-                            <p class="metric-value">{weekday_records:,}</p>
-                        </div>{weekend_metric_html}
-                        <div class="metric-card">
-                            <p class="metric-label">⏱ Last Refresh</p>
-                            <p class="metric-value">{formatted_date}</p>
-                        </div>
-                        <div class="metric-card">
-                            <p class="metric-label">Last Completed</p>
-                            <p class="metric-value">
-                            {most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S') if most_recent_completed_date else "Awaiting Data"}
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.html(
+                '<div class="professional-header">'
+                '<div class="header-content">'
+                '<div class="header-left">'
+                '<div class="header-titles">'
+                "<h1>Completion Report</h1>"
+                "<p>Comprehensive Route Performance Overview</p>"
+                "</div>"
+                "</div>"
+                '<div class="metric-group">'
+                '<div class="metric-card">'
+                '<p class="metric-label">Weekday Records</p>'
+                f'<p class="metric-value">{weekday_records:,}</p>'
+                "</div>"
+                f"{weekend_metric_html}{rail_metric_html}"
+                '<div class="metric-card">'
+                '<p class="metric-label">⏱ Last Refresh</p>'
+                f'<p class="metric-value">{formatted_date}</p>'
+                "</div>"
+                '<div class="metric-card">'
+                '<p class="metric-label">Last Completed</p>'
+                "<p class=\"metric-value\">"
+                f"{most_recent_completed_date.strftime('%Y-%m-%d %H:%M:%S') if most_recent_completed_date else 'Awaiting Data'}"
+                "</p>"
+                "</div>"
+                "</div>"
+                "</div>"
+                "</div>"
+            )
 
         # Call the function right after your sidebar
+        _back_history = st.session_state.get("page_history") or []
+        _back_target = _back_history[-1] if _back_history else None
+        if not _back_target and current_page not in ("main", "", None):
+            _back_target = "main"
+        if _back_target and _back_target != current_page:
+            st.markdown(
+                """
+                <style>
+                div[class*="st-key-dashboard_back"] {
+                    position: relative;
+                    z-index: 8;
+                    width: fit-content;
+                    height: 0;
+                    margin: 0 0 0 0.15rem;
+                    overflow: visible;
+                }
+                div[class*="st-key-dashboard_back"] button {
+                    position: relative;
+                    top: -2.45rem;
+                    width: auto;
+                    min-height: 1.75rem;
+                    background: rgba(255, 255, 255, 0.16);
+                    color: #fff;
+                    border: 1px solid rgba(255, 255, 255, 0.75);
+                    border-radius: 999px;
+                    padding: 0.05rem 0.75rem;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                }
+                div[class*="st-key-dashboard_back"] button:hover {
+                    background: rgba(255, 255, 255, 0.3);
+                    color: #fff;
+                    border-color: #fff;
+                }
+                .professional-header { padding-top: 3.15rem !important; }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("← Back", key="dashboard_back"):
+                _go_back()
         create_professional_header()
         # === END PROFESSIONAL HEADER ===
 
@@ -3478,6 +3709,88 @@ else:
             if st.button("Home Page"):
                 st.query_params()
                 st.rerun()
+
+        def _rail_frame(name):
+            frame = rail_frames.get(name, pd.DataFrame())
+            return frame if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+
+        def _with_day_column(frame, columns):
+            columns = list(columns)
+            day_col = _cr_day_column(frame)
+            if day_col and day_col not in columns and "ROUTE_SURVEYED" in columns:
+                columns.insert(columns.index("ROUTE_SURVEYED") + 1, day_col)
+            return columns
+
+        def rail_overall_page(day):
+            """Rail completion report, read from the rail schema while the bus project stays selected."""
+            is_weekday = day == "weekday"
+            st.title("Rail Weekday" if is_weekday else "Rail Weekend")
+            if cats_combined:
+                st.caption(f"{rail_project_name} tables are in this project's schema.")
+            else:
+                st.caption(f"{rail_project_name}. Bus and rail stay in their own schemas.")
+            if not rail_has_data:
+                st.info("No rail data yet. Use **Sync** on this page to load it." if cats_combined else "No rail data yet. Use **Sync Rail** on this page to load it.")
+                return
+            if is_weekday:
+                dir_df = _rail_frame("wkday_dir_df")
+                time_df = _rail_frame("wkday_time_df")
+                route_df = _rail_frame("wkday_df")
+            else:
+                dir_df = _rail_frame("wkend_dir_df")
+                time_df = _rail_frame("wkend_time_df")
+                route_df = _rail_frame("wkend_df")
+            if dir_df.empty and route_df.empty:
+                st.info("No rail rows for this day yet. Run Sync to refresh them." if cats_combined else "No rail rows for this day yet. Use **Sync Rail** to refresh them.")
+                return
+            frontend_cols = get_frontend_time_period_columns(rail_project_name)
+            if frontend_cols:
+                dir_columns, time_columns = frontend_cols
+                route_columns = [
+                    "ROUTE_SURVEYEDCode",
+                    "ROUTE_SURVEYED",
+                    "Route Level Goal",
+                    "# of Surveys",
+                    "Remaining",
+                ]
+            else:
+                dir_columns = get_dynamic_direction_columns(dir_df) or list(dir_df.columns)
+                time_columns = get_dynamic_time_columns(time_df) or list(time_df.columns)
+                route_columns = get_dynamic_route_level_columns(route_df) or list(route_df.columns)
+            dir_columns = _with_day_column(dir_df, dir_columns)
+            route_columns = _with_day_column(route_df, route_columns)
+            main_page(
+                dir_df[cols_with_cr_sort(dir_df, dir_columns)],
+                time_df[[c for c in time_columns if c in time_df.columns]],
+                route_df[cols_with_cr_sort(route_df, route_columns)],
+                route_level_title="Station Level Comparison",
+                route_goal_label="Station Level Goal",
+            )
+
+        def rail_station_page(day):
+            is_weekday = day == "weekday"
+            st.subheader(
+                "Rail StationWise Comparison (Weekday)"
+                if is_weekday
+                else "Rail StationWise Comparison (Weekend)"
+            )
+            if cats_combined:
+                st.caption(f"{rail_project_name} tables are in this project's schema.")
+            else:
+                st.caption(f"{rail_project_name}. Bus and rail stay in their own schemas.")
+            frame_name = "wkday_stationwise_df" if is_weekday else "wkend_stationwise_df"
+            station_df = _rail_frame(frame_name)
+            if not rail_has_data or station_df.empty:
+                st.info("No rail station data yet. Use **Sync** on this page to load it." if cats_combined else "No rail station data yet. Use **Sync Rail** on this page to load it.")
+                return
+            station_columns = get_dynamic_station_columns(station_df) or list(station_df.columns)
+            station_columns = _with_day_column(station_df, station_columns)
+            visible = station_df[[c for c in station_columns if c in station_df.columns]]
+            st.dataframe(
+                filter_dataframe(visible, search_query),
+                use_container_width=True,
+                hide_index=True,
+            )
 
         def low_response_questions_page():
             st.title("📋 LOW RESPONSE QUESTIONS")
@@ -8492,14 +8805,35 @@ else:
                     warning_placeholder.empty()
                 
                 sync_blocked = is_sync_running or other_sync_busy
-                # Render button with disabled state based on sync status
-                sync_button_clicked = st.button(
-                    "Sync" if not sync_blocked else (
-                        "Sync (busy...)" if other_sync_busy else "Sync (running...)"
-                    ),
-                    disabled=sync_blocked,
-                    key="sync_button"
-                )
+                # A bus project with a rail sibling gets two buttons. Each syncs
+                # only its own schema. The selected project does not change.
+                rail_sync_clicked = False
+                if rail_project_name and not cats_combined:
+                    if other_sync_busy:
+                        busy_suffix = " (busy...)"
+                    elif sync_blocked:
+                        busy_suffix = " (running...)"
+                    else:
+                        busy_suffix = ""
+                    sync_button_clicked = st.button(
+                        f"Sync Bus{busy_suffix}",
+                        disabled=sync_blocked,
+                        key="sync_button",
+                    )
+                    rail_sync_clicked = st.button(
+                        f"Sync Rail{busy_suffix}",
+                        disabled=sync_blocked,
+                        key="sync_rail_button",
+                    )
+                    st.caption(f"Sync Rail updates {rail_project_name} only.")
+                else:
+                    sync_button_clicked = st.button(
+                        "Sync" if not sync_blocked else (
+                            "Sync (busy...)" if other_sync_busy else "Sync (running...)"
+                        ),
+                        disabled=sync_blocked,
+                        key="sync_button"
+                    )
                 if other_sync_busy:
                     if st.button("Check sync status again", key="sync_status_refresh"):
                         st.rerun()
@@ -8507,7 +8841,7 @@ else:
                 # Determine if we should execute sync:
                 # Only execute if button was clicked AND sync is not already running
                 # We don't continue sync on rerun - it must complete in one execution
-                should_execute_sync = sync_button_clicked and not sync_blocked
+                should_execute_sync = (sync_button_clicked or rail_sync_clicked) and not sync_blocked
 
                 last_sync_error = st.session_state.get("last_sync_error")
                 if last_sync_error and not should_execute_sync and not is_sync_running:
@@ -8557,8 +8891,12 @@ else:
 
                     start_time = time.time()
                     sync_hist_run_id = None
-                    sync_hist_schema = st.session_state.get("schema") or ""
-                    sync_hist_project = st.session_state.get("selected_project") or ""
+                    if rail_sync_clicked:
+                        sync_hist_schema = rail_schema_name or ""
+                        sync_hist_project = rail_project_name or ""
+                    else:
+                        sync_hist_schema = st.session_state.get("schema") or ""
+                        sync_hist_project = st.session_state.get("selected_project") or ""
                     try:
                         from od_sync_history import (
                             finish_project_row as _sync_hist_finish_project,
@@ -8586,7 +8924,12 @@ else:
                         selected_agency = st.session_state.get("selected_agency", None)
                         selected_project = st.session_state.get("selected_project", "")
                         
-                        if selected_project == "LACMTA_FEEDER" and selected_agency and selected_agency != "All":
+                        if (
+                            not rail_sync_clicked
+                            and selected_project == "LACMTA_FEEDER"
+                            and selected_agency
+                            and selected_agency != "All"
+                        ):
                             # Create agency schema if it doesn't exist
                             update_progress(2, 12, f"Preparing agency schema: {selected_agency}...", start_time)
                             # agency_schema_name = create_agency_schema(selected_agency)
@@ -8620,12 +8963,12 @@ else:
                                     st.session_state["schema"],
                                 )
                         else:
-                            update_progress(2, 12, "Syncing to default schema...", start_time)
+                            update_progress(2, 12, f"Syncing {sync_hist_project}...", start_time)
                             update_progress(3, 12, "Fetching and processing data from Snowflake...", start_time)
-                            
+
                             result = fetch_and_process_data(
-                                st.session_state["selected_project"],
-                                st.session_state["schema"],
+                                sync_hist_project,
+                                sync_hist_schema,
                             )
 
                         cr_goals_only = result == "CR_GOALS_ONLY"
@@ -8696,6 +9039,18 @@ else:
                                 f"✅ Data synced successfully to {selected_agency} schema in {total_time:.1f} seconds! "
                                 f"Schema: LACMTA_FEEDER_{selected_agency} 📂"
                             )
+                        elif rail_sync_clicked:
+                            st.success(
+                                f"✅ Rail synced ({rail_project_name}) in {total_time:.1f} seconds!"
+                            )
+                        elif cats_combined:
+                            st.success(
+                                f"✅ Bus and rail tables synced into this schema in {total_time:.1f} seconds!"
+                            )
+                        elif rail_project_name:
+                            st.success(
+                                f"✅ Bus synced in {total_time:.1f} seconds!"
+                            )
                         else:
                             st.success(
                                 f"✅ Data synced successfully in {total_time:.1f} seconds! "
@@ -8718,11 +9073,11 @@ else:
                         sync_traceback = traceback.format_exc()
                         print(
                             "❌ Sync failed for project "
-                            f"{st.session_state.get('selected_project', '')}:\n{sync_traceback}"
+                            f"{sync_hist_project}:\n{sync_traceback}"
                         )
                         # The rerun below wipes this block, so hand the detail to the next run.
                         st.session_state["last_sync_error"] = {
-                            "project": st.session_state.get("selected_project", ""),
+                            "project": sync_hist_project,
                             "message": str(e),
                             "traceback": sync_traceback,
                         }
@@ -8823,7 +9178,24 @@ else:
                     mime="text/csv",
                     key=f"download_{export_stem}",
                 )
-            if not client_view_active:
+            rail_direction_exports = {
+                "rail_weekday": ("wkday_dir_df", "Download Rail Weekday CR", "rail_weekday_cr"),
+                "rail_weekend": ("wkend_dir_df", "Download Rail Weekend CR", "rail_weekend_cr"),
+                "rail_weekday_station": ("wkday_stationwise_df", "Download Rail Weekday Stations", "rail_weekday_stations"),
+                "rail_weekend_station": ("wkend_stationwise_df", "Download Rail Weekend Stations", "rail_weekend_stations"),
+            }
+            if current_page in rail_direction_exports:
+                frame_name, export_label, export_stem = rail_direction_exports[current_page]
+                export_source = rail_frames.get(frame_name, pd.DataFrame())
+                export_df = direction_comparison_export_frame(export_source)
+                st.download_button(
+                    export_label,
+                    data=export_df.to_csv(index=False),
+                    file_name=f"{export_stem}.csv",
+                    mime="text/csv",
+                    key=f"download_{export_stem}",
+                )
+            if not client_view_active and current_page not in RAIL_PAGE_KEYS:
                 if current_page == "weekend":
                     csv_weekend_raw, week_end_raw_file_name = create_csv(wkend_raw_df, "wkend_raw_data.csv")
                     st.download_button(
@@ -8887,7 +9259,11 @@ else:
             "admin_portal_select", "portal_select", "od_project_select",
             "sync_history",
         }
-        if current_page not in PAGES_NOT_REQUIRING_DATA and not has_project_data:
+        if (
+            current_page not in PAGES_NOT_REQUIRING_DATA
+            and not has_project_data
+            and not (current_page in RAIL_PAGE_KEYS and rail_has_data)
+        ):
             st.warning("⚠️ No project data available yet.")
             st.info("This project schema exists but no datasets are loaded yet.")
             st.stop()
@@ -9037,6 +9413,14 @@ else:
             weekday_station_page()
         elif current_page=='weekend_station':
             weekend_station_page()
+        elif current_page == "rail_weekday":
+            rail_overall_page("weekday")
+        elif current_page == "rail_weekend":
+            rail_overall_page("weekend")
+        elif current_page == "rail_weekday_station":
+            rail_station_page("weekday")
+        elif current_page == "rail_weekend_station":
+            rail_station_page("weekend")
         else:
             requested_page_rendered = False
 
