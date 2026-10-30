@@ -49,6 +49,14 @@ from utils import (
 )
 from authentication.auth import get_projects,get_frontend_projects,filter_frontend_projects,clear_projects_cache,clear_landing_stats_cache,warm_landing_stats,enforce_client_project_session,register_page,login,logout,is_authenticated,forgot_password,reset_password,activate_account,change_password,send_change_password_email,change_password_form,create_new_user_page,staff_signup_page,is_super_admin,can_use_client_view_switch,is_client_view,can_access_survey_assignment_manager,accounts_management_page,create_accounts_page,password_update_page,client_signup_page,app_public_url,client_project_select_page,admin_portal_select_page,portal_select_page,od_project_select_page,allowed_portals,od_role_to_rcd_role,PORTAL_REVIEW_CYCLE
 from authentication.sync_history_page import sync_history_page
+from cs_survey_pages import (
+    CS_REVIEW_MENU_LABEL,
+    CS_SETUP_MENU_LABEL,
+    get_cs_config_cached,
+    project_has_cs_review,
+    render_cs_review_page,
+    render_cs_setup_page,
+)
 from dotenv import load_dotenv
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -1863,6 +1871,22 @@ else:
 
             return dataframes
 
+        @st.cache_data(ttl=600, show_spinner=False)
+        def fetch_cs_review_from_snowflake(cache_key, schema_name):
+            conn = create_snowflake_connection()
+            cur = conn.cursor()
+            try:
+                cur.execute("SELECT * FROM demographic_review_cs")
+                data = cur.fetchall()
+                columns = [desc[0] for desc in cur.description] if cur.description else []
+                return pd.DataFrame(data, columns=columns) if data else pd.DataFrame(columns=columns)
+            except Exception as e:
+                print(f"[CS survey] demographic_review_cs not available: {e}")
+                return pd.DataFrame()
+            finally:
+                cur.close()
+                conn.close()
+
         # Fetch dataframes from Snowflake
         if "cache_key" not in st.session_state:
             st.session_state["cache_key"] = 0
@@ -1972,6 +1996,7 @@ else:
             "🚫  Refusal Analysis": "refusal",
             "👥  Demographic Review": "demographic",
             "📊  Demographic Setup": "demographic_setup",
+            CS_REVIEW_MENU_LABEL: "cs_demographic",
             "⚙️  Accounts Management": "accounts_management",
             "⚙️  Projects Configuration": "projects_configuration",
             "➕  Create Accounts": "create_accounts",
@@ -2756,6 +2781,13 @@ else:
                     if rail_item not in menu_items:
                         menu_items.append(rail_item)
 
+            cs_review_available = project_has_cs_review(st.session_state.get("selected_project"))
+            if cs_review_available and CS_REVIEW_MENU_LABEL not in menu_items:
+                if "👥  Demographic Review" in menu_items:
+                    menu_items.insert(menu_items.index("👥  Demographic Review") + 1, CS_REVIEW_MENU_LABEL)
+                else:
+                    menu_items.append(CS_REVIEW_MENU_LABEL)
+
             # --- Session State ---
             if "selected_page" not in st.session_state:
                 st.session_state.selected_page = "🏠︎   Home"
@@ -2779,6 +2811,16 @@ else:
                 st.session_state.sidebar_menu = "🏠︎   Home"
                 st.query_params["page"] = "main"
                 st.rerun()
+
+            if not cs_review_available and (
+                current_page == "cs_demographic"
+                or st.session_state.get("selected_page") == CS_REVIEW_MENU_LABEL
+                or st.session_state.get("sidebar_menu") == CS_REVIEW_MENU_LABEL
+            ):
+                st.session_state.selected_page = "🏠︎   Home"
+                st.session_state.sidebar_menu = "🏠︎   Home"
+                st.query_params["page"] = "main"
+                st.rerun()
             
             # Check if current page is a management page
             management_page_keys = [
@@ -2788,6 +2830,7 @@ else:
                 "file_management",
                 "view_s3_files",
                 "demographic_setup",
+                "cs_demographic_setup",
                 "survey_tracker_setup",
                 "edit_project_configs",
                 "sync_history",
@@ -2804,6 +2847,7 @@ else:
                 "file_management": "📁  File Management",
                 "view_s3_files": "📦  View S3 Files",
                 "demographic_setup": "📊  Demographic Setup",
+                "cs_demographic_setup": CS_SETUP_MENU_LABEL,
                 "survey_tracker_setup": "📋  Survey Tracker Setup",
                 "sync_history": "🔄  Sync History",
             }
@@ -2948,6 +2992,13 @@ else:
                     if "selected_management_page" in st.session_state:
                         del st.session_state.selected_management_page
                     st.query_params["page"] = "demographic_setup"
+                    st.rerun()
+
+                if st.button("CS Demographic Setup", use_container_width=True, type="primary"):
+                    st.session_state.selected_page = "🏠︎   Home"
+                    if "selected_management_page" in st.session_state:
+                        del st.session_state.selected_management_page
+                    st.query_params["page"] = "cs_demographic_setup"
                     st.rerun()
 
                 if st.button("Survey Tracker Setup", use_container_width=True, type="primary"):
@@ -9255,6 +9306,7 @@ else:
         PAGES_NOT_REQUIRING_DATA = {
             "accounts_management", "projects_configuration", "create_accounts",
             "password_update", "file_management", "view_s3_files", "demographic_setup",
+            "cs_demographic_setup",
             "survey_tracker_setup", "edit_project_configs", "field_assignments",
             "admin_portal_select", "portal_select", "od_project_select",
             "sync_history",
@@ -9281,6 +9333,7 @@ else:
             "file_management": file_management_page,
             "view_s3_files": view_s3_files_page,
             "demographic_setup": demographic_setup_page,
+            "cs_demographic_setup": lambda: render_cs_setup_page(filter_frontend_projects(refresh_projects())),
             "survey_tracker_setup": lambda: survey_tracker_setup_page(private_key_bytes),
             "sync_history": sync_history_page,
         }
@@ -9409,6 +9462,19 @@ else:
                     "No demographic breakdown is in the database yet. "
                     "After an administrator saves **Demographic Setup** and the pipeline runs, results will appear here."
                 )
+        elif current_page == "cs_demographic":
+            proj = st.session_state.get("selected_project")
+            cs_cfg = get_cs_config_cached(proj) if proj else None
+            cs_review_df = pd.DataFrame()
+            try:
+                cs_fetch = fetch_cs_review_from_snowflake(
+                    st.session_state.get("cache_key", 0), st.session_state.get("schema")
+                )
+                if cs_fetch is not None:
+                    cs_review_df = cs_fetch
+            except Exception as e:
+                print(f"[CS survey] Could not load demographic_review_cs: {e}")
+            render_cs_review_page(proj, cs_review_df, cs_cfg)
         elif current_page=='weekday_station':
             weekday_station_page()
         elif current_page=='weekend_station':

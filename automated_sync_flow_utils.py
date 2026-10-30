@@ -1044,6 +1044,65 @@ def contest_valid_contact_mask(df) -> pd.Series:
     )
 
 
+OK2INVITE_REPORT_COLUMN = '% of OK2Invite2CS'
+OK2INVITE_DEFAULT_FIELD = 'OK2Invite2CS'
+_OK2INVITE_CLEAN_NAMES = ('ok2invite2cs', 'oktoinvitetocs', 'ok2invitecs')
+
+
+def find_ok2invite_column(df):
+    """Column holding the OD 'OK to invite to the Customer Satisfaction survey' answer, or None.
+
+    The text column is preferred over its ...Code twin; both store Yes/No style answers.
+    """
+    if df is None or not hasattr(df, 'columns'):
+        return None
+    text_col = None
+    code_col = None
+    for col in df.columns:
+        cleaned = clean_string(str(col))
+        for base in _OK2INVITE_CLEAN_NAMES:
+            if cleaned == base and text_col is None:
+                text_col = col
+            elif cleaned == base + 'code' and code_col is None:
+                code_col = col
+    return text_col if text_col is not None else code_col
+
+
+def ok2invite_yes_mask(series) -> pd.Series:
+    """True for Yes answers: Yes / Y / 1 / True, including labels such as '(1) Yes'."""
+    s = series.astype(str).str.strip().str.lower()
+    return (
+        s.isin(['yes', 'y', '1', '1.0', 'true'])
+        | s.str.startswith('yes')
+        | s.str.match(r'^\(?1\)\s')
+    )
+
+
+def append_ok2invite_percent(report_df, filtered_elvis, group_col, formatter):
+    """Add '% of OK2Invite2CS' per group_col. Leaves report_df untouched when the field is absent."""
+    ok_col = find_ok2invite_column(filtered_elvis)
+    if ok_col is None or group_col not in filtered_elvis.columns or group_col not in report_df.columns:
+        return report_df
+    try:
+        work = filtered_elvis[[group_col, 'id']].copy()
+        work['_ok2invite_yes'] = ok2invite_yes_mask(filtered_elvis[ok_col]).values
+        grouped = work.groupby(group_col).agg(
+            total_records=('id', 'count'),
+            yes_count=('_ok2invite_yes', 'sum'),
+        ).reset_index()
+        grouped[OK2INVITE_REPORT_COLUMN] = (
+            (grouped['yes_count'] / grouped['total_records']) * 100
+        ).apply(formatter)
+        merged = report_df.merge(
+            grouped[[group_col, OK2INVITE_REPORT_COLUMN]], on=group_col, how='left'
+        )
+        merged[OK2INVITE_REPORT_COLUMN] = merged[OK2INVITE_REPORT_COLUMN].fillna(formatter(0))
+        return merged
+    except Exception as e:
+        print(f"[OK2Invite2CS] Skipped report column for {group_col}: {e}")
+        return report_df
+
+
 def get_race_number(race_col):
     """Extract number from RACE_X or RACE_OTHER for sorting purposes
 
@@ -3588,6 +3647,8 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
         contest_valid_group[['INTERV_INIT', '% of Contest - (Yes & Good Info)/Overall # of Records']],
         how='left'
     ).fillna('0.0%')
+
+    summary_df = append_ok2invite_percent(summary_df, contest_filtered, 'INTERV_INIT', format_percentage)
     
     # Add total row
     total_row = {
@@ -3630,7 +3691,8 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
     known_non_race_cols = [
         '% of Incomplete Home Address', '% of 0 Transfers', '% of Access Walk', 
         '% of Egress Walk', '% of LowIncome', '% of Income Refused',
-        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records',
+        OK2INVITE_REPORT_COLUMN,
     ]
     race_columns = [col for col in all_percent_cols if col not in known_non_race_cols]
     
@@ -3654,7 +3716,8 @@ def process_surveyor_data_transit_ls6(ke_df, elvis_df, project=None, race_label_
     available_race_columns = [col for col in race_columns if col in summary_df.columns]
     
     column_order = base_columns + available_race_columns + [
-        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records',
+        OK2INVITE_REPORT_COLUMN,
     ]
     
     # Ensure all columns in column_order exist in summary_df
@@ -4580,6 +4643,10 @@ def process_route_data_transit_ls6(df, elvis_df, race_label_map=None, project=No
     else:
         route_report_df['% of Contest - Yes'] = 'N/A'
         route_report_df['% of Contest - (Yes & Good Info)/Overall # of Records'] = 'N/A'
+
+    route_report_df = append_ok2invite_percent(
+        route_report_df, filtered_elvis, 'ROUTE_ROOT', lambda x: f"{x:.1f}%"
+    )
     
     # Add total row
     total_row = {
@@ -4890,6 +4957,8 @@ def process_surveyor_date_data_transit_ls6(
         contest_valid_group[['Date_Surveyor', '% of Contest - (Yes & Good Info)/Overall # of Records']],
         how='left'
     ).fillna('0.0%')
+
+    summary_df = append_ok2invite_percent(summary_df, filtered_elvis, 'Date_Surveyor', format_percentage)
     
     # Add total row
     total_row = {
@@ -4988,11 +5057,15 @@ def process_surveyor_date_data_transit_ls6(
                 if label == race_name or race_metric_display_name(label) == col_name.replace('% of ', ''):
                     return get_race_number(col)
         return 999
-    race_columns = sorted(race_columns, key=get_race_name_for_sorting)
+    race_columns = sorted(
+        [col for col in race_columns if col != OK2INVITE_REPORT_COLUMN],
+        key=get_race_name_for_sorting,
+    )
     
     # Build final column order
     other_cols = [
-        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records'
+        '% of Contest - Yes', '% of Contest - (Yes & Good Info)/Overall # of Records',
+        OK2INVITE_REPORT_COLUMN,
     ]
     column_order = base_columns + race_columns + other_cols
     
@@ -5260,6 +5333,10 @@ def process_route_date_data_transit_ls6(
             on='Date_Route',
             how='left'
         ).fillna('0.0%')
+
+    route_report_df = append_ok2invite_percent(
+        route_report_df, filtered_elvis, 'Date_Route', lambda x: f"{x:.1f}%"
+    )
 
     # -------------------------------
     # 9–12 FINAL FORMATTING

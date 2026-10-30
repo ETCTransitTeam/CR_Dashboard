@@ -19,6 +19,13 @@ from cryptography.hazmat.primitives import serialization
 from automated_sync_flow_utils import *
 from automated_sync_flow_constants_maps import KCATA_HEADER_MAPPING
 from rail_cr_direction import apply_rail_cr_directional_logic
+from cs_survey import (
+    CS_REVIEW_TABLE,
+    alias_ok2invite_column,
+    build_cs_review_for_project,
+    is_cs_enabled,
+    load_cs_survey_config,
+)
 from utils import extract_race_labels_from_header, fetch_data, fetch_mysql_tables, apply_lacmta_agency_filter, load_demographic_setup_from_s3
 
 warnings.filterwarnings('ignore')
@@ -2113,6 +2120,13 @@ def fetch_and_process_data(project, schema, table_prefix=None, source_frames=Non
         if "id" in unfiltered_elvis_df.columns:
             unfiltered_elvis_df = unfiltered_elvis_df.drop_duplicates(subset="id")
 
+        try:
+            cs_config = load_cs_survey_config(project)
+            if is_cs_enabled(cs_config) and cs_config.get("ok2invite_field"):
+                unfiltered_elvis_df = alias_ok2invite_column(unfiltered_elvis_df, cs_config["ok2invite_field"])
+        except Exception as e:
+            print(f"[CS survey] OK2Invite field mapping skipped for {project}: {e}")
+
         survey_report_df = process_surveyor_data_transit_ls6(ke_df, unfiltered_elvis_df, project, race_label_map)
         route_report_df = process_route_data_transit_ls6(ke_df, unfiltered_elvis_df, race_label_map, project=project)
         print("Survey and route reports processed successfully.")
@@ -2814,6 +2828,17 @@ def fetch_and_process_data(project, schema, table_prefix=None, source_frames=Non
     create_tables_and_insert_data(dataframes, _prefix_table_info(table_info, table_prefix))
 
     print("Files Uploaded SuccessFully")
+    if not table_prefix:
+        try:
+            cs_review_df = build_cs_review_for_project(project, PROJECTS.get(project) or {})
+            if cs_review_df is not None:
+                create_tables_and_insert_data(
+                    {'CS Demographic Review': cs_review_df},
+                    {'CS Demographic Review': CS_REVIEW_TABLE},
+                )
+                print("CS Demographic Review uploaded successfully")
+        except Exception as e:
+            print(f"[CS survey] CS Demographic Review not refreshed for {project}: {e}")
     if cats_page_weekday is not None:
         _write_cats_rail_page_tables(
             project,
