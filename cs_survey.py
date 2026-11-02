@@ -482,18 +482,35 @@ def _is_checked(value, label):
     return bool(label) and s == str(label).strip().lower()
 
 
+def _date_submitted_mask(series):
+    """True when Date_submitted has a value. Blank, null, and 'null' do not count."""
+    text = series.astype(str).str.strip()
+    missing = series.isna() | text.eq("") | text.str.lower().isin({"nan", "none", "null", "nat", "<na>"})
+    return ~missing
+
+
 def prepare_cs_survey_frame(df):
-    """Drop the Elvis header row and supervisor-deleted records."""
+    """Drop the header row, deleted rows, id 0, and surveys that were never submitted."""
     if df is None or df.empty:
         return df
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
+    started = len(df)
     id_col = resolve_column(df.columns, "id")
     if id_col is not None and len(df) and pd.isna(pd.to_numeric(df[id_col].iloc[0], errors="coerce")):
         df = df.iloc[1:].reset_index(drop=True)
     status_col = resolve_column(df.columns, "ElvisStatus")
     if status_col is not None:
         df = df[df[status_col].astype(str).str.strip().str.lower() != "delete"]
+    if id_col is not None:
+        id_num = pd.to_numeric(df[id_col], errors="coerce")
+        df = df[id_num != 0]
+    submitted_col = resolve_column(df.columns, "Date_submitted")
+    if submitted_col is not None:
+        df = df[_date_submitted_mask(df[submitted_col])]
+    else:
+        print("[CS survey] Date_submitted column not found - blank submissions were not removed.")
+    print(f"[CS survey] Counted {len(df)} of {started} CS records (id 0 and blank Date_submitted removed).")
     return df.reset_index(drop=True)
 
 
