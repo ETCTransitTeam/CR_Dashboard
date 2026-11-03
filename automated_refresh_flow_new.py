@@ -616,6 +616,73 @@ def apply_cr_sort(df: pd.DataFrame) -> pd.DataFrame:
 CATS_RAIL_TABLE_PREFIX = "rail_"
 
 
+def _blank_token(value):
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    if text.lower() in ("", "nan", "none", "nat", "<na>"):
+        return ""
+    if text.endswith(".0") and text[:-2].lstrip("-").isdigit():
+        return text[:-2]
+    return text
+
+
+def _station_name_map(*frames, stops_df=None):
+    """Boarding stop id -> station name. CR station names win over the stops sheet."""
+    names = {}
+
+    def put(key, value, overwrite=False):
+        station_id = _blank_token(key)
+        station_name = _blank_token(value)
+        if not station_id or not station_name or station_name.lower() == "unknown station":
+            return
+        if overwrite or station_id not in names:
+            names[station_id] = station_name
+
+    for frame in frames:
+        if isinstance(frame, pd.DataFrame) and {"STATION_ID", "STATION_NAME"} <= set(frame.columns):
+            for key, value in zip(frame["STATION_ID"], frame["STATION_NAME"]):
+                put(key, value, overwrite=True)
+    if isinstance(stops_df, pd.DataFrame) and {"ETC_STOP_ID", "ETC_STOP_NAME"} <= set(stops_df.columns):
+        for key, value in zip(stops_df["ETC_STOP_ID"], stops_df["ETC_STOP_NAME"]):
+            put(key, value)
+    return names
+
+
+def attach_boarding_station(export_df, source_df, name_map):
+    """Add the survey's boarding stop id and name. Missing stops stay blank."""
+    export_df = export_df.copy()
+    export_df["BOARDING_STATION_ID"] = ""
+    export_df["BOARDING_STATION"] = ""
+    if not isinstance(source_df, pd.DataFrame) or "id" not in source_df.columns or "id" not in export_df.columns:
+        return export_df
+    stop_cols = check_all_characters_present(source_df, ["stoponclntid"])
+    if not stop_cols:
+        return export_df
+    stops = (
+        source_df[["id", stop_cols[0]]]
+        .drop_duplicates(subset="id", keep="last")
+        .set_index("id")[stop_cols[0]]
+        .map(_blank_token)
+    )
+    export_df["BOARDING_STATION_ID"] = export_df["id"].map(stops).fillna("")
+    export_df["BOARDING_STATION"] = export_df["BOARDING_STATION_ID"].map(
+        lambda station_id: name_map.get(station_id, "") if station_id else ""
+    )
+    addr_cols = check_all_characters_present(source_df, ["stoponaddrnew"])
+    if addr_cols:
+        addresses = (
+            source_df[["id", addr_cols[0]]]
+            .drop_duplicates(subset="id", keep="last")
+            .set_index("id")[addr_cols[0]]
+            .map(_blank_token)
+        )
+        fallback = export_df["id"].map(addresses).fillna("")
+        missing_name = export_df["BOARDING_STATION"].eq("")
+        export_df.loc[missing_name, "BOARDING_STATION"] = fallback[missing_name]
+    return export_df
+
+
 def cats_rail_partner(project_name):
     """CATS bus project name -> its rail project, so one sync writes both."""
     bus_norm = re.sub(r"[\s_]+", " ", str(project_name or "")).strip().upper()
@@ -2378,14 +2445,6 @@ def fetch_and_process_data(project, schema, table_prefix=None, source_frames=Non
             route_survey_name_column[0]: 'ROUTE_SURVEYED'
         })
 
-        # Ensure all expected columns are present
-        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL']
-        for col in expected_reverse_columns:
-            if col not in reverse_routes_export.columns:
-                reverse_routes_export[col] = ''
-
-        reverse_routes_export = reverse_routes_export[expected_reverse_columns]
-
         # 3. Reverse Routes Difference sheet
         reverse_diff_export = reverse_df[reverse_df['Type'] != ''][[
             'id', route_survey_column[0], route_survey_name_column[0], 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL'
@@ -2397,11 +2456,28 @@ def fetch_and_process_data(project, schema, table_prefix=None, source_frames=Non
             route_survey_name_column[0]: 'ROUTE_SURVEYED'
         })
 
+        # Boarding station lets rail cloning target the CR station, not only the route.
+        try:
+            station_names = _station_name_map(
+                locals().get("wkday_overall_df"),
+                locals().get("wkend_overall_df"),
+                stops_df=locals().get("detail_df_stops"),
+            )
+            station_source = df if isinstance(df, pd.DataFrame) and "id" in df.columns else baby_elvis_merged_df_filtered
+            reverse_routes_export = attach_boarding_station(reverse_routes_export, station_source, station_names)
+            reverse_diff_export = attach_boarding_station(reverse_diff_export, station_source, station_names)
+        except Exception as station_exc:
+            print(f"[Reverse routes] Boarding station not added: {station_exc}")
+
         # Ensure all expected columns are present
+        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'BOARDING_STATION_ID', 'BOARDING_STATION', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL']
         for col in expected_reverse_columns:
+            if col not in reverse_routes_export.columns:
+                reverse_routes_export[col] = ''
             if col not in reverse_diff_export.columns:
                 reverse_diff_export[col] = ''
 
+        reverse_routes_export = reverse_routes_export[expected_reverse_columns]
         reverse_diff_export = reverse_diff_export[expected_reverse_columns]
 
         # Data type conversion to match Excel/Snowflake schema

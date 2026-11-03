@@ -5274,6 +5274,22 @@ else:
                             selected_time_period = st.selectbox("Filter by Time Period:", period_options)
                         else:
                             selected_time_period = 'All'
+
+                    selected_station = 'All'
+                    station_filter_col = None
+                    for station_col in ('BOARDING_STATION', 'BOARDING_STATION_ID'):
+                        if station_col not in merged_df.columns:
+                            continue
+                        filled = {
+                            str(v).strip() for v in merged_df[station_col].tolist()
+                            if str(v).strip() and str(v).strip().lower() not in ('nan', 'none')
+                        }
+                        if filled:
+                            station_filter_col = station_col
+                            break
+                    if station_filter_col:
+                        station_values = sorted(filled)
+                        selected_station = st.selectbox("Filter by Boarding Station:", ['All'] + station_values)
                     
                     # Apply filters
                     filtered_df = merged_df.copy()
@@ -5291,6 +5307,9 @@ else:
 
                     if selected_time_period != 'All' and 'TIME_PERIOD' in filtered_df.columns:
                         filtered_df = filtered_df[filtered_df['TIME_PERIOD'] == selected_time_period]
+
+                    if selected_station != 'All' and station_filter_col in filtered_df.columns:
+                        filtered_df = filtered_df[filtered_df[station_filter_col].astype(str) == selected_station]
                     
                     # Additional search filter
                     search_term = st.text_input("Search across all columns:", "")
@@ -5317,6 +5336,17 @@ else:
                             display_df = display_df.drop(columns=[col])
                     if 'TIME_PERIOD' in display_df.columns:
                         display_df = display_df.rename(columns={'TIME_PERIOD': 'Time Period'})
+                    display_df = display_df.rename(columns={
+                        'BOARDING_STATION': 'Boarding Station',
+                        'BOARDING_STATION_ID': 'Boarding Station ID',
+                    })
+                    preferred_columns = [
+                        'id', 'Time Period', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME',
+                        'Boarding Station', 'Boarding Station ID', 'Type', 'COMPLETED By', 'URL',
+                    ]
+                    ordered_columns = [col for col in preferred_columns if col in display_df.columns]
+                    ordered_columns += [col for col in display_df.columns if col not in ordered_columns]
+                    display_df = display_df[ordered_columns]
                     
                     st.dataframe(display_df, use_container_width=True, height=400)
                     
@@ -5814,7 +5844,24 @@ else:
                             st.write(f"• {step}: {count:,} records")
                     
                     if not clonable_df.empty:
-                        # Group by route and collect IDs
+                        # Bus stays grouped by route. Rail records also split by boarding station
+                        # so a large CR remain at one station can be matched to those IDs.
+                        boarding_cols = check_all_characters_present(clonable_df, ['stoponclntid'])
+                        boarding_col = boarding_cols[0] if boarding_cols else None
+
+                        def boarding_station_label(row):
+                            if not boarding_col:
+                                return ''
+                            text = str(row.get(boarding_col, '')).strip()
+                            if text.lower() in ('', 'nan', 'none'):
+                                return ''
+                            if text.endswith('.0') and text[:-2].lstrip('-').isdigit():
+                                return text[:-2]
+                            return text
+
+                        def clone_by_station(route_code, route_name):
+                            return 'RAIL' in f"{route_code} {route_name}".upper()
+
                         route_groups = {}
                         
                         for idx, row in clonable_df.iterrows():
@@ -5824,13 +5871,16 @@ else:
                             
                             if pd.notna(route_code) and pd.notna(record_id):
                                 route_key = str(route_code)
-                                if route_key not in route_groups:
-                                    route_groups[route_key] = {
+                                station = boarding_station_label(row) if clone_by_station(route_code, route_name) else ''
+                                group_key = f"{route_key}||{station}" if station else route_key
+                                if group_key not in route_groups:
+                                    route_groups[group_key] = {
                                         'route_code': route_code,
                                         'route_name': route_name if pd.notna(route_name) else route_code,
+                                        'station': station,
                                         'ids': []
                                     }
-                                route_groups[route_key]['ids'].append(str(record_id))
+                                route_groups[group_key]['ids'].append(str(record_id))
                         
                         # Convert to DataFrame
                         clonable_list = []
@@ -5847,6 +5897,7 @@ else:
                             clonable_list.append({
                                 'Route Code': route_data['route_code'],
                                 'Route Name': route_data['route_name'],
+                                'Boarding Station': route_data.get('station', ''),
                                 'Clonable IDs': ids_string,
                                 'Count': len(route_data['ids'])
                             })
@@ -5899,7 +5950,9 @@ else:
                                 top_routes = clonable_summary_df.nlargest(5, 'Count')
                                 st.write("**Top 5 Routes with Most Clonable IDs:**")
                                 for i, (_, row) in enumerate(top_routes.iterrows(), 1):
-                                    st.write(f"{i}. **{row['Route Code']}** - {row['Count']} IDs")
+                                    station = str(row['Boarding Station']).strip() if 'Boarding Station' in row and str(row['Boarding Station']).strip() else ''
+                                    station_text = f" / {station}" if station else ''
+                                    st.write(f"{i}. **{row['Route Code']}**{station_text} - {row['Count']} IDs")
                             
                             # Search and filter
                             st.subheader("🔍 Search and Filter Results")
@@ -5907,18 +5960,32 @@ else:
                             # Add search functionality
                             search_term = st.text_input("Search Routes:", "", key="clonable_search")
                             
+                            show_station = (
+                                'Boarding Station' in clonable_summary_df.columns
+                                and clonable_summary_df['Boarding Station'].astype(str).str.strip().ne('').any()
+                            )
+                            if not show_station and 'Boarding Station' in clonable_summary_df.columns:
+                                clonable_summary_df = clonable_summary_df.drop(columns=['Boarding Station'])
                             if search_term:
+                                station_match = False
+                                if show_station:
+                                    station_match = clonable_summary_df['Boarding Station'].astype(str).str.contains(search_term, case=False, na=False)
                                 filtered_df = clonable_summary_df[
                                     clonable_summary_df['Route Code'].astype(str).str.contains(search_term, case=False, na=False) |
                                     clonable_summary_df['Route Name'].astype(str).str.contains(search_term, case=False, na=False) |
-                                    clonable_summary_df['Clonable IDs'].astype(str).str.contains(search_term, case=False, na=False)
+                                    clonable_summary_df['Clonable IDs'].astype(str).str.contains(search_term, case=False, na=False) |
+                                    station_match
                                 ]
                             else:
                                 filtered_df = clonable_summary_df.copy()
+
+                            clonable_columns = ['Route Code', 'Route Name', 'Clonable IDs', 'Count']
+                            if show_station:
+                                clonable_columns = ['Route Code', 'Route Name', 'Boarding Station', 'Clonable IDs', 'Count']
                             
                             # Display the table
                             st.dataframe(
-                                filtered_df[['Route Code', 'Route Name', 'Clonable IDs', 'Count']],
+                                filtered_df[clonable_columns],
                                 use_container_width=True,
                                 height=600,
                                 column_config={
