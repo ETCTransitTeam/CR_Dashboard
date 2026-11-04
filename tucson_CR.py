@@ -5275,23 +5275,7 @@ else:
                         else:
                             selected_time_period = 'All'
 
-                    selected_station = 'All'
-                    station_filter_col = None
-                    for station_col in ('BOARDING_STATION', 'BOARDING_STATION_ID'):
-                        if station_col not in merged_df.columns:
-                            continue
-                        filled = {
-                            str(v).strip() for v in merged_df[station_col].tolist()
-                            if str(v).strip() and str(v).strip().lower() not in ('nan', 'none')
-                        }
-                        if filled:
-                            station_filter_col = station_col
-                            break
-                    if station_filter_col:
-                        station_values = sorted(filled)
-                        selected_station = st.selectbox("Filter by Boarding Station:", ['All'] + station_values)
-                    
-                    # Apply filters
+                    # Apply route, type, and time first so the station list matches that selection.
                     filtered_df = merged_df.copy()
                     
                     if selected_type != 'All':
@@ -5308,8 +5292,52 @@ else:
                     if selected_time_period != 'All' and 'TIME_PERIOD' in filtered_df.columns:
                         filtered_df = filtered_df[filtered_df['TIME_PERIOD'] == selected_time_period]
 
+                    selected_station = 'All'
+                    station_filter_col = None
+                    for station_col in ('BOARDING_STATION', 'BOARDING_STATION_ID'):
+                        if station_col not in filtered_df.columns:
+                            continue
+                        filled = {
+                            str(v).strip() for v in filtered_df[station_col].tolist()
+                            if str(v).strip() and str(v).strip().lower() not in ('nan', 'none')
+                        }
+                        if filled:
+                            station_filter_col = station_col
+                            break
+                    station_search = ''
+                    if station_filter_col:
+                        station_options = ['All'] + sorted(filled)
+                        if st.session_state.get('reverse_station_filter') not in station_options:
+                            st.session_state['reverse_station_filter'] = 'All'
+                        station_col1, station_col2 = st.columns([2, 1])
+                        selected_station = station_col1.selectbox(
+                            "Filter by Boarding Station:",
+                            station_options,
+                            key='reverse_station_filter',
+                            help="For a reverse record this is the original alighting station, which becomes the new boarding.",
+                        )
+                        station_search = station_col2.text_input("Search station:", placeholder="Type a station name")
+
                     if selected_station != 'All' and station_filter_col in filtered_df.columns:
                         filtered_df = filtered_df[filtered_df[station_filter_col].astype(str) == selected_station]
+                    if station_search and station_filter_col in filtered_df.columns:
+                        filtered_df = filtered_df[
+                            filtered_df[station_filter_col].astype(str).str.contains(station_search, case=False, na=False)
+                        ]
+
+                    if 'DIRECTION_CHECK' in merged_df.columns:
+                        check_values = {
+                            str(v).strip() for v in merged_df['DIRECTION_CHECK'].tolist()
+                            if str(v).strip() and str(v).strip().lower() not in ('nan', 'none')
+                        }
+                        if check_values:
+                            selected_check = st.selectbox(
+                                "Direction check:",
+                                ['All', 'Needs a check'],
+                                help="These records board after they alight, so the stops may be on the wrong side of the road.",
+                            )
+                            if selected_check == 'Needs a check':
+                                filtered_df = filtered_df[filtered_df['DIRECTION_CHECK'].astype(str).str.strip().ne('')]
                     
                     # Additional search filter
                     search_term = st.text_input("Search across all columns:", "")
@@ -5336,13 +5364,19 @@ else:
                             display_df = display_df.drop(columns=[col])
                     if 'TIME_PERIOD' in display_df.columns:
                         display_df = display_df.rename(columns={'TIME_PERIOD': 'Time Period'})
+                    if 'DIRECTION_CHECK' in display_df.columns:
+                        check_filled = merged_df['DIRECTION_CHECK'].fillna('').astype(str).str.strip()
+                        if not check_filled.ne('').any():
+                            display_df = display_df.drop(columns=['DIRECTION_CHECK'])
                     display_df = display_df.rename(columns={
                         'BOARDING_STATION': 'Boarding Station',
                         'BOARDING_STATION_ID': 'Boarding Station ID',
+                        'DIRECTION_CHECK': 'Direction check',
                     })
                     preferred_columns = [
                         'id', 'Time Period', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME',
-                        'Boarding Station', 'Boarding Station ID', 'Type', 'COMPLETED By', 'URL',
+                        'Boarding Station', 'Boarding Station ID', 'Type', 'Direction check',
+                        'COMPLETED By', 'URL',
                     ]
                     ordered_columns = [col for col in preferred_columns if col in display_df.columns]
                     ordered_columns += [col for col in display_df.columns if col not in ordered_columns]

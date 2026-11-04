@@ -6854,17 +6854,24 @@ def process_reverse_direction_logic(
         
         if on_seq is None or off_seq is None:
             return None
+
+        def direction_created_by_button(direction_code):
+            # Rev-p and Rev-n reverse the transfer, so the created record is the other direction.
+            # p and n keep the surveyed direction. Plain Reverse is handled separately.
+            if str(route_type or "").startswith("Rev-") and direction_code in ("00", "01"):
+                return "01" if direction_code == "00" else "00"
+            return direction_code
         
         # Determine direction based on sequence comparison
         if on_direction and off_direction and on_direction == off_direction:
             # Both stops have same direction, use that
-            return on_direction
+            return direction_created_by_button(on_direction)
         elif on_seq < off_seq:
             # Traveling in increasing sequence order - typically direction 00
-            return '00'
+            return direction_created_by_button('00')
         else:
             # Traveling in decreasing sequence order - typically direction 01  
-            return '01'
+            return direction_created_by_button('01')
 
     # NEW FUNCTION: Fix final direction codes using transfer analysis
     def fix_final_direction_codes():

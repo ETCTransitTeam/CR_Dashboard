@@ -649,37 +649,108 @@ def _station_name_map(*frames, stops_df=None):
     return names
 
 
+def _id_value_map(source_df, column):
+    return (
+        source_df[["id", column]]
+        .drop_duplicates(subset="id", keep="last")
+        .set_index("id")[column]
+        .map(_blank_token)
+    )
+
+
+def _reverse_type_mask(types):
+    """True when the new record flips direction, so the original alighting becomes the new boarding."""
+    text = types.fillna("").astype(str).str.strip().str.lower()
+    return text.eq("reverse") | text.str.startswith("rev-")
+
+
 def attach_boarding_station(export_df, source_df, name_map):
-    """Add the survey's boarding stop id and name. Missing stops stay blank."""
+    """Station the new record will fill on the collection report.
+
+    A reverse record flips direction, so that station is the original alighting stop.
+    Other records keep the original boarding stop.
+    """
     export_df = export_df.copy()
     export_df["BOARDING_STATION_ID"] = ""
     export_df["BOARDING_STATION"] = ""
     if not isinstance(source_df, pd.DataFrame) or "id" not in source_df.columns or "id" not in export_df.columns:
         return export_df
-    stop_cols = check_all_characters_present(source_df, ["stoponclntid"])
-    if not stop_cols:
+    on_cols = check_all_characters_present(source_df, ["stoponclntid"])
+    off_cols = check_all_characters_present(source_df, ["stopoffclntid"])
+    if not on_cols and not off_cols:
         return export_df
-    stops = (
-        source_df[["id", stop_cols[0]]]
-        .drop_duplicates(subset="id", keep="last")
-        .set_index("id")[stop_cols[0]]
-        .map(_blank_token)
-    )
-    export_df["BOARDING_STATION_ID"] = export_df["id"].map(stops).fillna("")
+    boarding_ids = _id_value_map(source_df, on_cols[0]) if on_cols else None
+    alighting_ids = _id_value_map(source_df, off_cols[0]) if off_cols else None
+    chosen = export_df["id"].map(boarding_ids).fillna("") if boarding_ids is not None else pd.Series("", index=export_df.index)
+    if alighting_ids is not None and "Type" in export_df.columns:
+        flipped = _reverse_type_mask(export_df["Type"])
+        alighting = export_df["id"].map(alighting_ids).fillna("")
+        chosen = chosen.where(~flipped, alighting)
+    export_df["BOARDING_STATION_ID"] = chosen.fillna("").astype(str)
     export_df["BOARDING_STATION"] = export_df["BOARDING_STATION_ID"].map(
         lambda station_id: name_map.get(station_id, "") if station_id else ""
     )
-    addr_cols = check_all_characters_present(source_df, ["stoponaddrnew"])
-    if addr_cols:
-        addresses = (
-            source_df[["id", addr_cols[0]]]
-            .drop_duplicates(subset="id", keep="last")
-            .set_index("id")[addr_cols[0]]
-            .map(_blank_token)
-        )
-        fallback = export_df["id"].map(addresses).fillna("")
-        missing_name = export_df["BOARDING_STATION"].eq("")
-        export_df.loc[missing_name, "BOARDING_STATION"] = fallback[missing_name]
+    on_addr = check_all_characters_present(source_df, ["stoponaddrnew"])
+    off_addr = check_all_characters_present(source_df, ["stopoffaddrnew", "stopoffaddressnew"])
+    fallback = pd.Series("", index=export_df.index)
+    if on_addr:
+        fallback = export_df["id"].map(_id_value_map(source_df, on_addr[0])).fillna("")
+    if off_addr and "Type" in export_df.columns:
+        off_names = export_df["id"].map(_id_value_map(source_df, off_addr[0])).fillna("")
+        flipped = _reverse_type_mask(export_df["Type"])
+        fallback = fallback.where(~flipped, off_names)
+    missing_name = export_df["BOARDING_STATION"].eq("")
+    export_df.loc[missing_name, "BOARDING_STATION"] = fallback[missing_name]
+    return export_df
+
+
+DIRECTION_CHECK_NOTE = (
+    "Check direction before cloning. Boarding stop is after the alighting stop, "
+    "so the stops may be on the wrong side."
+)
+
+
+def attach_direction_check(export_df, source_df):
+    """Flag records whose own trip runs backward along its stops.
+
+    Elvis already warns when the boarding sequence is higher than the alighting
+    sequence. Those stops can sit on the wrong side of the road, so the suggested
+    direction needs a look. The suggestion itself is left unchanged.
+    """
+    export_df = export_df.copy()
+    export_df["DIRECTION_CHECK"] = ""
+    if not isinstance(source_df, pd.DataFrame) or "id" not in source_df.columns or "id" not in export_df.columns:
+        return export_df
+    on_cols = check_all_characters_present(source_df, ["stoponstpseq"])
+    off_cols = check_all_characters_present(source_df, ["stopoffstpseq"])
+    flag_cols = check_all_characters_present(source_df, ["flgstopseq"])
+    if not on_cols and not off_cols and not flag_cols:
+        return export_df
+
+    notes = pd.Series("", index=source_df.index)
+    if on_cols and off_cols:
+        on_seq = pd.to_numeric(source_df[on_cols[0]], errors="coerce")
+        off_seq = pd.to_numeric(source_df[off_cols[0]], errors="coerce")
+        backward = on_seq.notna() & off_seq.notna() & (on_seq > off_seq)
+        notes = notes.where(~backward, DIRECTION_CHECK_NOTE)
+    if flag_cols:
+        flag_text = source_df[flag_cols[0]].fillna("").astype(str).str.lower()
+        flagged = flag_text.str.contains("boarding stopseq must be less", na=False)
+        # A numeric sequence that increases wins over a stale flag.
+        if on_cols and off_cols:
+            on_seq = pd.to_numeric(source_df[on_cols[0]], errors="coerce")
+            off_seq = pd.to_numeric(source_df[off_cols[0]], errors="coerce")
+            sequence_known = on_seq.notna() & off_seq.notna()
+            flagged = flagged & ~sequence_known
+        notes = notes.where(~flagged, DIRECTION_CHECK_NOTE)
+
+    by_id = (
+        source_df.assign(_direction_check=notes)
+        [["id", "_direction_check"]]
+        .drop_duplicates(subset="id", keep="last")
+        .set_index("id")["_direction_check"]
+    )
+    export_df["DIRECTION_CHECK"] = export_df["id"].map(by_id).fillna("").astype(str)
     return export_df
 
 
@@ -2469,8 +2540,15 @@ def fetch_and_process_data(project, schema, table_prefix=None, source_frames=Non
         except Exception as station_exc:
             print(f"[Reverse routes] Boarding station not added: {station_exc}")
 
+        try:
+            direction_source = df if isinstance(df, pd.DataFrame) and "id" in df.columns else baby_elvis_merged_df_filtered
+            reverse_routes_export = attach_direction_check(reverse_routes_export, direction_source)
+            reverse_diff_export = attach_direction_check(reverse_diff_export, direction_source)
+        except Exception as direction_exc:
+            print(f"[Reverse routes] Direction check not added: {direction_exc}")
+
         # Ensure all expected columns are present
-        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'BOARDING_STATION_ID', 'BOARDING_STATION', 'Type', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL']
+        expected_reverse_columns = ['id', 'ROUTE_SURVEYEDCode', 'ROUTE_SURVEYED', 'TIME_PERIOD', 'DAY_TYPE', 'FINAL_DIRECTION_CODE', 'FINAL_DIRECTION_NAME', 'BOARDING_STATION_ID', 'BOARDING_STATION', 'Type', 'DIRECTION_CHECK', 'REVERSE_TRIPS_STATUS', 'COMPLETED By', 'URL']
         for col in expected_reverse_columns:
             if col not in reverse_routes_export.columns:
                 reverse_routes_export[col] = ''
