@@ -1809,6 +1809,7 @@ def _portal_hub_styles() -> None:
         .etc-hub-card-icon.od { background: #eff6ff; color: #2563eb; }
         .etc-hub-card-icon.rc { background: #ecfdf5; color: #0f766e; }
         .etc-hub-card-icon.sam { background: #f5f3ff; color: #7c3aed; }
+        .etc-hub-card-icon.seg { background: #ecfeff; color: #0e7490; }
         .etc-hub-card-title {
             margin: 0 !important; font-size: 18px; font-weight: 750;
             color: #0f172a; line-height: 1.25;
@@ -1904,7 +1905,8 @@ def _portal_hub_styles() -> None:
         /* Divider + space above Open buttons inside cards */
         div[class*="st-key-portal_select_od"],
         div[class*="st-key-portal_select_review_cycle"],
-        div[class*="st-key-portal_select_sam"] {
+        div[class*="st-key-portal_select_sam"],
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] {
             border-top: 1px solid #e2e8f0 !important;
             padding-top: 16px !important;
             margin-top: 8px !important;
@@ -1927,6 +1929,14 @@ def _portal_hub_styles() -> None:
             border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
             box-shadow: 0 8px 16px rgba(124, 58, 237, 0.22) !important;
         }
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] a,
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] button {
+            background: #0e7490 !important; border-color: #0e7490 !important; color: #fff !important;
+            border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
+            box-shadow: 0 8px 16px rgba(14, 116, 144, 0.22) !important;
+            display: flex !important; align-items: center; justify-content: center;
+            text-decoration: none !important; width: 100% !important;
+        }
         div[class*="st-key-portal_select_od"] button,
         div[class*="st-key-portal_select_review_cycle"] button,
         div[class*="st-key-portal_select_sam"] button {
@@ -1937,7 +1947,8 @@ def _portal_hub_styles() -> None:
         div[class*="st-key-portal_select_review_cycle"] button:hover,
         div[class*="st-key-portal_select_review_cycle"] button[kind="primary"]:hover,
         div[class*="st-key-portal_select_sam"] button:hover,
-        div[class*="st-key-portal_select_sam"] button[kind="primary"]:hover {
+        div[class*="st-key-portal_select_sam"] button[kind="primary"]:hover,
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] a:hover {
             filter: brightness(0.96); transform: translateY(-1px);
             color: #fff !important;
         }
@@ -1952,6 +1963,16 @@ def _portal_hub_styles() -> None:
         div[class*="st-key-portal_select_sam"] button:hover,
         div[class*="st-key-portal_select_sam"] button[kind="primary"]:hover {
             background: #7c3aed !important; border-color: #7c3aed !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] a:hover {
+            background: #0e7490 !important; border-color: #0e7490 !important;
+        }
+        /* Line up portal buttons: every card's button sits at the bottom of the card */
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) > div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {
+            height: 100% !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) > div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] > *:last-child {
+            margin-top: auto !important;
         }
         /* More air between the three portal cards */
         div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) {
@@ -2916,12 +2937,35 @@ def portal_select_page():
                 ),
             }
         )
+    if is_super_admin(email) or str(role).upper() == "ADMIN":
+        portal_cards.append(
+            {
+                "key": "segment",
+                "tone": "seg",
+                "check": "#0e7490",
+                "title": "Segmenting Tool",
+                "description": "Review ridership segments and set client-approved breaks.",
+                "features": [
+                    "Projects assigned to your account",
+                    "Ridership segment review",
+                    "Client-approved breaks",
+                ],
+                "button": "Open Segmenting Tool →",
+                "href": "https://129-153-189-161.sslip.io/",
+                "icon": (
+                    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none">'
+                    '<path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'
+                    '<path d="M8 15l3.2-3.8 2.4 2.2L18 8" stroke="currentColor" stroke-width="2" '
+                    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+                ),
+            }
+        )
 
     if not portal_cards:
         st.warning("No portals are available for your account right now.")
         return
 
-    cols = st.columns(min(len(portal_cards), 3) or 1, gap="large")
+    cols = st.columns(min(len(portal_cards), 4) or 1, gap="large")
     for idx, card in enumerate(portal_cards):
         with cols[idx % len(cols)]:
             feature_items = "".join(
@@ -2942,7 +2986,14 @@ def portal_select_page():
                 ),
                 unsafe_allow_html=True,
             )
-            if st.button(
+            if card.get("href"):
+                st.link_button(
+                    card["button"],
+                    card["href"],
+                    use_container_width=True,
+                    type="primary",
+                )
+            elif st.button(
                 card["button"],
                 key=f"portal_select_{card['key']}",
                 use_container_width=True,
