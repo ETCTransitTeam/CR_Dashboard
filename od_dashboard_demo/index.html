@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>ETC OD Collection Dashboard · Interactive Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --brand:#006894; --brand-dark:#005f82; --brand-2:#007ca5;
+  --ink:#0f172a; --ink-2:#1f2f43; --muted:#64748b; --line:#e2e8f0;
+  --hub-bg:#f4f7fb; --side:#f0f2f6;
+  --good-bg:#d3f9d8; --good:#2b8a3e; --bad-bg:#ffe6e6; --bad:#c62828;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{
+  font-family:'Source Sans 3','Source Sans Pro',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  background:radial-gradient(circle at 20% 0%,#0b6b95 0,#06425c 55%,#032b3d 100%);
+  color:var(--ink);overflow:hidden;
+}
+button{font-family:inherit}
+
+/* ── Stage + device frames ─────────────────────────────── */
+#stage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:12px}
+.controls{display:flex;gap:6px;align-items:center;background:rgba(255,255,255,.1);padding:5px;border-radius:999px;border:1px solid rgba(255,255,255,.18)}
+.controls button{border:0;background:transparent;color:#d7eef8;font-weight:600;font-size:13px;padding:9px 16px;border-radius:999px;cursor:pointer}
+.controls button.on{background:#fff;color:var(--brand-dark)}
+.controls .sep{width:1px;height:20px;background:rgba(255,255,255,.25)}
+.device-wrap{position:relative}
+.device{position:absolute;top:0;left:0;transform-origin:top left;width:410px;height:864px;border-radius:62px;background:#111;padding:10px;
+  box-shadow:0 0 0 2px #2b2b2b,0 0 0 6px #3a3a3c,0 30px 80px rgba(0,0,0,.5)}
+.device.android{border-radius:42px;background:#1c1c1e;box-shadow:0 0 0 2px #2a2a2a,0 0 0 5px #444,0 30px 80px rgba(0,0,0,.5)}
+.screen{position:relative;width:390px;height:844px;border-radius:52px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+.android .screen{border-radius:33px}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:122px;height:35px;background:#000;border-radius:20px;z-index:40}
+.punch{position:absolute;top:9px;left:50%;transform:translateX(-50%);width:13px;height:13px;background:#000;border-radius:50%;z-index:40}
+.android .island,.iphone .punch{display:none}
+
+.status{flex:0 0 auto;height:50px;display:flex;align-items:center;justify-content:space-between;padding:8px 30px 0 40px;
+  font:600 15px/1 -apple-system,'SF Pro Text',system-ui,sans-serif;background:#fff;color:#000;z-index:30}
+.android .status{height:30px;padding:0 18px;font:500 13px/1 Roboto,system-ui,sans-serif}
+.status .icons{display:flex;gap:6px;align-items:center}
+.screen.dark .status,.screen.dark .urlbar{background:#005f82;color:#fff}
+.screen.dark .urlbar .pill{background:rgba(255,255,255,.16);color:#fff}
+
+.urlbar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:6px 14px;background:#f6f6f6;z-index:30;color:#111}
+.urlbar .pill{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#e7e7ea;border-radius:12px;height:36px;font-size:14px}
+.android .urlbar .pill{justify-content:flex-start;padding:0 14px;border-radius:999px;background:#eceff3}
+.urlbar .tabs{width:22px;height:22px;border:2px solid currentColor;border-radius:5px;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;opacity:.8}
+.iphone .urlbar.top,.android .urlbar.bottom{display:none}
+
+.homebar{flex:0 0 auto;height:28px;display:flex;align-items:center;justify-content:center;background:#f6f6f6}
+.homebar i{width:134px;height:5px;border-radius:3px;background:#111}
+.navbar{flex:0 0 auto;height:42px;display:none;align-items:center;justify-content:space-around;background:#f6f6f6;color:#333;font-size:18px}
+.android .homebar{display:none}.android .navbar{display:flex}
+
+.app{position:relative;flex:1;overflow:hidden;background:#fff}
+.scroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.scroll::-webkit-scrollbar{display:none}
+
+.coach{max-width:460px;color:#e6f6fd;font-size:14px;line-height:1.45;text-align:center;min-height:40px;padding:0 10px}
+.coach b{color:#fff}
+.coach .step{display:inline-block;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700;margin-right:6px;letter-spacing:.02em}
+
+#toast{position:absolute;left:50%;bottom:70px;transform:translate(-50%,20px);background:#0f172a;color:#fff;padding:10px 16px;border-radius:12px;font-size:13px;
+  opacity:0;pointer-events:none;transition:.25s;z-index:60;max-width:85%;text-align:center}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+
+.pulse{animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(0,104,148,.55)}70%{box-shadow:0 0 0 12px rgba(0,104,148,0)}100%{box-shadow:0 0 0 0 rgba(0,104,148,0)}}
+
+/* Opened on a real phone: drop the frame, fill the screen */
+body.bare{overflow:auto;background:#fff}
+body.bare #stage{position:static;padding:0;gap:0;display:block}
+body.bare .controls,body.bare .coach,body.bare .status,body.bare .urlbar,body.bare .homebar,body.bare .navbar,body.bare .island,body.bare .punch{display:none!important}
+body.bare .device-wrap{width:100%!important;height:100dvh!important}
+body.bare .device{position:static;transform:none!important;width:100%;height:100dvh;border-radius:0;padding:0;box-shadow:none;background:#fff}
+body.bare .screen{width:100%;height:100%;border-radius:0}
+
+/* ── Access gate ──────────────────────────────────────── */
+#gate{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;
+  background:linear-gradient(135deg,#005f82,#007ca5);font-family:Poppins,system-ui,sans-serif}
+#gate[hidden],#gate-form[hidden]{display:none}
+#gate .box{width:100%;max-width:400px;background:#fff;border-radius:16px;padding:28px 24px;box-shadow:0 20px 50px rgba(0,0,0,.25);text-align:center}
+#gate h2{margin:10px 0 6px;color:rgb(29,39,96);font-size:22px}
+#gate p{margin:0 0 18px;color:var(--muted);font-size:14px}
+#gate input{width:100%;padding:13px;border:1px solid #cfd8e3;border-radius:10px;font-size:16px;text-align:center;letter-spacing:.08em;margin-bottom:12px}
+#gate .err{color:var(--bad);font-size:13px;min-height:18px;margin-bottom:6px}
+#gate .logo{width:200px;max-width:80%}
+
+/* ── Shared UI ───────────────────────────────────────── */
+.btn{display:block;width:100%;border:1px solid #dcdcdc;background:var(--brand);color:#fff;font-weight:600;font-size:15px;padding:12px;border-radius:10px;cursor:pointer;text-align:center}
+.btn:active{filter:brightness(.92)}
+.btn.sm{display:inline-block;width:auto;font-size:13px;padding:8px 14px}
+.btn.ghost{background:#fff;color:var(--brand);border-color:#b9d5e3}
+.alert{border-radius:8px;padding:12px 14px;font-size:14px;margin:10px 0}
+.alert.err{background:#fde8e8;color:#9b1c1c}
+.alert.info{background:#e7f3fb;color:#0d4a6b}
+
+/* ── Login ───────────────────────────────────────────── */
+.login{min-height:100%;background:linear-gradient(135deg,#005f82,#007ca5);padding:22px 20px 28px;font-family:Poppins,system-ui,sans-serif;color:#fff}
+.login .logo{width:210px;max-width:70%;display:block;margin:4px 0 16px}
+.logo-fallback{font:800 22px Poppins,sans-serif;letter-spacing:.04em}
+.login h1{font-size:26px;font-weight:800;line-height:1.2;margin:0 0 10px}
+.login h4{margin:0 0 4px;font-size:14px;font-weight:600;letter-spacing:.08em}
+.login h5{margin:0 0 6px;font-size:13px;font-weight:500;opacity:.92}
+.login .contact{font-size:12px;opacity:.85;line-height:1.6;margin:0 0 18px}
+.card-auth{background:#fff;color:var(--ink);border-radius:15px;padding:22px 18px 16px;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+.card-auth h2{color:rgb(29,39,96);margin:0 0 14px;font-size:24px;font-weight:700}
+.field{margin-bottom:12px}
+.field label{display:block;font-weight:600;font-size:14px;margin:0 0 6px}
+.field input{width:100%;border:1px solid #d5dde6;border-radius:8px;padding:12px;font-size:15px;background:#f6f8fa;font-family:inherit}
+.forgot{text-align:right;margin:2px 0 12px}
+.forgot a{color:red;text-decoration:underline;font-size:13px;cursor:pointer}
+.need{margin:14px 0 4px;padding:10px;border-radius:10px;text-align:center;border:3px solid transparent;
+  background:linear-gradient(#fff,#fff) padding-box,linear-gradient(135deg,#ff6b6b,#4ecdc4,#45b7d1,#96ceb4,#ffeaa7) border-box}
+.need h5{color:#2d3436;margin:0 0 6px;font-size:14px}
+.need p{color:#636e72;margin:0;font-size:12.5px}
+.need a{color:var(--brand)}
+.auth-foot{border-top:1px solid #222;margin-top:16px;padding-top:10px;text-align:center;font-size:11.5px;color:#444}
+.auth-foot a{color:#1d4ed8;text-decoration:none}
+
+/* ── Portal hub ──────────────────────────────────────── */
+.hub{min-height:100%;background:var(--hub-bg);padding:14px 14px 24px}
+.hub-top{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:0 4px 14px rgba(15,23,42,.04)}
+.hub-brand{display:flex;align-items:center;gap:10px;min-width:0}
+.hub-mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(145deg,#1d4ed8,#2563eb);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0}
+.hub-title{font-size:15px;font-weight:700;color:#0f2744;line-height:1.2}
+.hub-user{display:flex;align-items:center;gap:8px}
+.hub-avatar{width:34px;height:34px;border-radius:50%;background:#2563eb;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.hub-banner{margin:14px 0;border:1px solid #dbe7f8;border-radius:18px;padding:16px;
+  background:radial-gradient(circle at 12% 20%,rgba(96,165,250,.22),transparent 42%),radial-gradient(circle at 88% 30%,rgba(167,139,250,.18),transparent 40%),linear-gradient(135deg,#eef5ff,#f5f8ff 55%,#eef8ff)}
+.hub-banner-row{display:flex;align-items:center;gap:12px}
+.hub-banner-icon{width:50px;height:50px;border-radius:14px;background:rgba(255,255,255,.75);border:1px solid #dbeafe;display:flex;align-items:center;justify-content:center;flex:0 0 50px}
+.hub-banner h3{margin:0 0 4px;font-size:21px;font-weight:800;letter-spacing:-.02em}
+.hub-banner p{margin:0;font-size:13px;color:var(--muted)}
+.hub-banner .btn{margin-top:12px;background:#fff;color:#0f172a;border-color:#c5d5eb}
+.hub-section{display:flex;gap:12px;align-items:flex-start;margin:4px 0 12px}
+.hub-section-icon{width:32px;height:32px;border-radius:10px;background:#eff6ff;color:#2563eb;display:flex;align-items:center;justify-content:center;flex:0 0 32px}
+.hub-section h4{margin:0 0 2px;font-size:17px}
+.hub-section p{margin:0;font-size:13px;color:var(--muted)}
+.hub-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:20px 18px 18px;box-shadow:0 10px 24px rgba(15,23,42,.05)}
+.hub-card-top{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.hub-card-icon{width:46px;height:46px;border-radius:14px;background:#eff6ff;color:#2563eb;display:flex;align-items:center;justify-content:center}
+.hub-card h4{margin:0;font-size:18px}
+.hub-card p{margin:0 0 12px;font-size:14px;color:var(--muted);line-height:1.5}
+.feat{display:flex;align-items:center;gap:10px;font-size:14px;color:#334155;margin:0 0 12px}
+.hub-foot{text-align:center;color:var(--muted);font-size:12px;margin-top:18px}
+
+/* ── Project picker ──────────────────────────────────── */
+.picker{min-height:100%;padding:14px 14px 24px;background:#fff}
+.project-hero{background:linear-gradient(135deg,#0b6b95,#1b8fb8 45%,#4fc3dc);border-radius:16px;padding:18px;color:#fff;box-shadow:0 8px 24px rgba(12,58,86,.18);margin-bottom:14px}
+.project-hero .t{margin:0;font-size:21px;font-weight:800}
+.project-hero .s{margin:6px 0 0;font-size:13.5px;color:#eaf7ff;line-height:1.45}
+.select-wrap{background:linear-gradient(180deg,#f8fcff,#eef6fb);border:1px solid #d8e8f5;border-radius:14px;padding:14px 16px;margin-bottom:14px}
+.select-wrap .t{margin:0;font-size:18px;font-weight:700;color:#1d2e40}
+.select-wrap .s{margin:4px 0 0;font-size:13px;color:#3c4f63}
+.project-card{border:1px solid #d6e4ef;border-radius:12px;padding:14px;background:#fff;box-shadow:0 4px 12px rgba(19,55,79,.07);margin-bottom:8px}
+.project-card .name{font-size:16px;font-weight:700;color:var(--ink-2);margin:0 0 2px}
+.project-card .meta{font-size:12px;color:#63758a;margin:0}
+.chip{display:inline-block;margin-top:8px;font-size:11px;font-weight:700;color:#0d5b85;background:#e6f4ff;border:1px solid #b9def8;border-radius:999px;padding:3px 9px}
+.project-metrics{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:rgb(0,104,148);border-radius:10px;padding:8px;margin-top:12px}
+.project-metric{background:rgba(255,255,255,.62);border-radius:8px;border:1px solid rgba(180,200,255,.45);padding:6px;text-align:center}
+.project-metric .l{font-size:10px;font-weight:600;color:#123f72;margin:0 0 4px}
+.project-metric .v{margin:0;font-size:11.5px;font-weight:700;color:#1e3a5f;background:#fff;padding:3px 6px;border-radius:6px;display:inline-block;font-family:ui-monospace,'Roboto Mono',Menlo,monospace}
+.project-block{margin-bottom:16px}
+
+/* ── Dashboard shell ─────────────────────────────────── */
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;height:50px;padding:0 12px;background:#fff;border-bottom:1px solid #edf0f3}
+.icon-btn{width:38px;height:38px;border-radius:10px;border:1px solid #e1e6eb;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#31333f;flex:0 0 38px}
+.topbar .tt{font-weight:700;font-size:15px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar .proj{font-size:11px;color:#fff;background:var(--brand);border-radius:6px;padding:4px 8px;font-weight:600;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.content{padding:12px 12px 28px}
+
+.pro-header{background:rgb(0,104,148);border-radius:18px;padding:16px 14px;color:#fff;box-shadow:0 6px 20px rgba(0,0,0,.08);border:1px solid rgba(170,200,255,.6);margin-bottom:16px;position:relative}
+.pro-header h1{margin:0;font-size:24px;font-weight:700;line-height:1.15}
+.pro-header .sub{font-size:13px;opacity:.85;margin:4px 0 12px}
+.pro-header .back{position:absolute;top:12px;right:12px;background:rgba(255,255,255,.16);color:#fff;border:1px solid rgba(255,255,255,.75);border-radius:999px;padding:3px 11px;font-size:12.5px;font-weight:600;cursor:pointer}
+.metric-group{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.metric-card{background:rgba(255,255,255,.6);border-radius:10px;border:1px solid rgba(180,200,255,.5);padding:8px 6px;text-align:center}
+.metric-card .l{font-size:11px;font-weight:500;color:#123f72;margin:0 0 4px}
+.metric-card .v{margin:0;font-size:12.5px;font-weight:600;color:#1e3a5f;background:#fff;padding:3px 8px;border-radius:6px;display:inline-block;font-family:'Roboto Mono',Menlo,monospace;letter-spacing:-.3px}
+
+.page-title{font-size:25px;font-weight:700;margin:4px 0 10px;color:#31333f}
+.subhead{font-size:18px;font-weight:600;margin:18px 0 8px;color:#31333f}
+.caption{font-size:13px;color:#808495;margin:0 0 8px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid #e6e9ef;margin:0 0 12px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{padding:10px 0;font-size:14px;color:#31333f;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px;background:none;border-top:0;border-left:0;border-right:0}
+.tab.on{color:var(--brand);border-bottom-color:var(--brand);font-weight:600}
+.filter-chip{display:inline-flex;align-items:center;gap:6px;background:#e7f3fb;color:#0d4a6b;border-radius:999px;padding:4px 10px;font-size:12.5px;margin-bottom:10px;cursor:pointer}
+
+.grid{overflow:auto;border:1px solid #e6e9ef;border-radius:8px;-webkit-overflow-scrolling:touch}
+.grid table{border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:100%}
+.grid th{position:sticky;top:0;background:#f7f8fa;color:#555867;font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid #e6e9ef;white-space:nowrap;cursor:pointer;z-index:2}
+.grid td{padding:7px 10px;border-bottom:1px solid #f0f2f6;white-space:nowrap;color:#31333f}
+.grid th:first-child,.grid td:first-child{position:sticky;left:0;background:#fff;z-index:1;border-right:1px solid #eef0f3}
+.grid th:first-child{background:#f7f8fa;z-index:3}
+.grid td.num{text-align:right;font-variant-numeric:tabular-nums}
+.grid td.good{background:var(--good-bg);color:var(--good);font-weight:600;text-align:right}
+.grid td.bad{background:var(--bad-bg);color:var(--bad);font-weight:600;text-align:right}
+.grid td.hi{background:#e6f0ff;text-align:right}
+.grid td.empty{text-align:center;color:var(--muted);padding:20px}
+.grid-foot{font-size:11.5px;color:#9aa0ac;margin:4px 2px 0}
+
+.bars{display:flex;flex-direction:column;gap:9px;margin:6px 0}
+.bar-row{display:grid;grid-template-columns:96px 1fr 46px;gap:8px;align-items:center;font-size:12.5px}
+.bar-row .lab{color:#31333f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-row .val{text-align:right;font-variant-numeric:tabular-nums;color:#31333f;font-weight:600}
+.track{height:12px;background:#eef1f5;border-radius:6px;overflow:hidden;position:relative}
+.track i{display:block;height:100%;border-radius:6px;background:var(--brand)}
+.track b{position:absolute;top:-2px;bottom:-2px;width:2px;background:#e63946}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#555867;margin:6px 0 2px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 12px}
+.kpi{border:1px solid #e6e9ef;border-radius:12px;padding:10px 12px;background:#fff}
+.kpi .l{font-size:12px;color:#808495}
+.kpi .v{font-size:20px;font-weight:700;color:#31333f;margin-top:2px}
+.kpi .d{font-size:11.5px;color:var(--good);margin-top:2px}
+.kpi .d.neg{color:var(--bad)}
+.qaqc{background:#f7fbfe;border:1px solid #d8e8f5;border-radius:12px;padding:10px 12px;margin-bottom:12px}
+.qaqc .h{font-size:12px;font-weight:700;color:#0d4a6b;letter-spacing:.02em;margin-bottom:8px}
+
+.seg{display:flex;background:#e9edf2;border-radius:10px;padding:3px;gap:3px;margin:6px 0 10px}
+.seg button{flex:1;border:0;background:transparent;padding:8px 6px;border-radius:8px;font-size:13px;color:#31333f;cursor:pointer}
+.seg button.on{background:#fff;color:var(--brand);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.chips button{border:1px solid #d6e0ea;background:#fff;border-radius:999px;padding:6px 12px;font-size:12.5px;color:#31333f;cursor:pointer}
+.chips button.on{background:var(--brand);border-color:var(--brand);color:#fff}
+
+.map{position:relative;border:1px solid #e6e9ef;border-radius:12px;overflow:hidden;background:#eef2f5}
+.map svg{display:block;width:100%;height:auto}
+.map circle{cursor:pointer}
+.map-pop{border:1px solid #d6e4ef;border-radius:12px;padding:12px;margin-top:10px;background:#fff;box-shadow:0 4px 12px rgba(19,55,79,.07);font-size:13px;line-height:1.55}
+.map-pop .t{font-weight:700;font-size:14px;margin-bottom:2px}
+
+.home-btn{margin-top:16px}
+
+/* ── Sidebar drawer ──────────────────────────────────── */
+.scrim{position:absolute;inset:0;background:rgba(15,23,42,.38);z-index:40;animation:fade .2s}
+.drawer{position:absolute;top:0;bottom:0;left:0;width:86%;max-width:340px;z-index:41;background:linear-gradient(180deg,#f0f2f6,#fff);
+  box-shadow:6px 0 24px rgba(0,0,0,.18);overflow-y:auto;padding:14px 14px 22px;animation:slide .22s ease-out;scrollbar-width:none}
+.drawer::-webkit-scrollbar{display:none}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.drawer .close{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:8px;border:0;background:transparent;font-size:20px;cursor:pointer;color:#555}
+.profile-card{background:#fff;border:1px solid rgba(66,133,244,.3);border-radius:16px;padding:16px 12px;text-align:center;margin:18px 0 6px;box-shadow:0 2px 10px rgba(0,0,0,.05);font-size:14px}
+.profile-initial{width:58px;height:58px;border-radius:50%;background:rgb(0,104,148);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.45rem;margin:0 auto 10px;border:3px solid rgba(255,255,255,.4);box-shadow:0 4px 15px rgba(66,133,244,.4)}
+.profile-card .sm{font-size:12px;color:#000}
+.profile-card .pb{font-size:11px;color:#fff;margin-top:8px;padding:4px 8px;background:rgb(0,104,148);border-radius:6px;display:inline-block}
+.section-label{text-transform:uppercase;font-size:13.5px;font-weight:600;opacity:.7;margin:18px 0 8px;position:relative;padding-left:10px}
+.section-label::before{content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:12px;background:var(--brand);border-radius:2px}
+.drawer hr{border:0;border-top:1px solid #000;opacity:.2;margin:18px 0 0}
+.search{width:100%;padding:10px 12px;border-radius:10px;border:1px solid rgba(0,123,255,.4);font-size:14px;background:#fff;font-family:inherit}
+.view-why{font-size:11.5px;color:#555867;margin:0 0 4px;line-height:1.45}
+.client-chip{font-size:12px;background:#fff4e5;color:#8a4b00;border:1px solid #ffd8a8;border-radius:8px;padding:6px 8px;margin-top:6px}
+.select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #d5dde6;font-size:14px;background:#fff;font-family:inherit;margin-bottom:8px}
+.nav-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:transparent;padding:10px 10px;border-radius:8px;font-size:14px;color:#31333f;cursor:pointer;border-left:3px solid transparent}
+.nav-item .ic{width:20px;text-align:center}
+.nav-item.on{background:linear-gradient(90deg,rgba(0,104,148,.15),rgba(0,104,148,.05));border-left-color:var(--brand);font-weight:600;color:#00405c}
+.bottom-btns{display:flex;gap:8px;margin-top:14px}
+.bottom-btns button{flex:1;border:0;color:#fff;border-radius:10px;padding:11px 8px;font-weight:600;font-size:13.5px;cursor:pointer}
+.b-green{background:linear-gradient(135deg,#2ecc71,#27ae60)}
+.b-red{background:linear-gradient(135deg,#e63946,#c62828)}
+</style>
+</head>
+<body>
+
+<div id="gate" hidden>
+  <div class="box">
+    <img class="logo" src="https://etcinstitute.com/wp-content/uploads/2023/09/ETC-NewLogo-Horizontal-Web.png" alt="ETC Institute" onerror="this.outerHTML='<div class=&quot;logo-fallback&quot; style=&quot;color:#005f82&quot;>ETC INSTITUTE</div>'">
+    <h2 id="gate-title">Interactive Demo</h2>
+    <p id="gate-sub">Enter the access code you received from your ETC project manager.</p>
+    <form id="gate-form">
+      <input id="gate-code" autocomplete="off" placeholder="Access code" aria-label="Access code">
+      <div class="err" id="gate-err"></div>
+      <button class="btn" type="submit">Open Demo</button>
+    </form>
+  </div>
+</div>
+
+<div id="stage">
+  <div class="controls" id="controls">
+    <button data-device="iphone" class="on">iPhone</button>
+    <button data-device="android">Android</button>
+    <span class="sep"></span>
+    <button id="restart">Restart</button>
+  </div>
+  <div class="device-wrap" id="wrap">
+    <div class="device iphone" id="device">
+      <div class="island"></div><div class="punch"></div>
+      <div class="screen" id="screen">
+        <div class="status" id="status"></div>
+        <div class="urlbar top"><div class="pill">🔒 odcollection.etc-research.com</div><span class="tabs">2</span><span style="font-size:18px">⋮</span></div>
+        <div class="app" id="app"></div>
+        <div class="urlbar bottom"><span style="font-size:15px;opacity:.75">AA</span><div class="pill">🔒 odcollection.etc-research.com</div><span style="font-size:18px">↻</span></div>
+        <div class="homebar"><i></i></div>
+        <div class="navbar"><span>◁</span><span>○</span><span>▢</span></div>
+        <div id="toast"></div>
+      </div>
+    </div>
+  </div>
+  <div class="coach" id="coach"></div>
+</div>
+
+<script>
+// Browser-side only. Real access control and the 5-day expiry must be enforced by the web server.
+const ACCESS_CODE = 'ETC-DEMO';
+const ACCESS_EXPIRES = '';  // 'YYYY-MM-DD'; leave empty for no expiry
+
+const LOGO = 'https://etcinstitute.com/wp-content/uploads/2023/09/ETC-NewLogo-Horizontal-Web.png';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n).toLocaleString('en-US');
+const pad = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+function rng(seed) {
+  let s = seed >>> 0 || 1;
+  return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+}
+
+/* ── Demo data (fictional) ─────────────────────────────── */
+const PROJECTS = [
+  { id:'DEMO_METRO', name:'Metro City Transit', type:'bus', weekend:true, seed:11 },
+  { id:'DEMO_METRO_RAIL', name:'Metro City Rail', type:'rail', weekend:true, seed:23 },
+  { id:'DEMO_RIVERSIDE', name:'Riverside Regional Transit', type:'bus', weekend:false, seed:37 },
+];
+const BUS_UNITS = [['1','Downtown / Airport'],['2','Main Street'],['4','University Ave'],['6','Riverfront Loop'],['8','Northgate Express'],
+  ['10','Medical Center'],['12','Eastside Crosstown'],['15','Westfield Mall'],['18','Industrial Park'],['22','Lakeshore'],['30','Southpoint'],['40','Commuter Express']];
+const RAIL_UNITS = [['RL01','Union Station'],['RL02','Civic Center'],['RL03','Market Square'],['RL04','Convention Center'],['RL05','Midtown'],
+  ['RL06','University'],['RL07','Stadium'],['RL08','Medical District'],['RL09','Northpark'],['RL10','Airport']];
+const TIME_SLOTS = [
+  ['AM1','Before 5:00 am','00:00-04:59',1],['AM2','5:00 am - 6:00 am','05:00-05:59',1],['AM3','6:00 am - 7:00 am','06:00-06:59',1],
+  ['MID1','7:00 am - 8:00 am','07:00-07:59',1],['MID2','8:00 am - 9:00 am','08:00-08:59',1],['MID7','9:00 am - 10:00 am','09:00-09:59',2],
+  ['MID3','10:00 am - 11:00 am','10:00-10:59',2],['MID4','11:00 am - 12:00 pm','11:00-11:59',2],['MID5','12:00 pm - 1:00 pm','12:00-12:59',2],
+  ['MID6','1:00 pm - 2:00 pm','13:00-13:59',2],['PM1','2:00 pm - 3:00 pm','14:00-14:59',3],['PM2','3:00 pm - 4:00 pm','15:00-15:59',3],
+  ['PM3','4:00 pm - 5:00 pm','16:00-16:59',3],['PM4','5:00 pm - 6:00 pm','17:00-17:59',3],['PM5','6:00 pm - 7:00 pm','18:00-18:59',3],
+  ['PM6','7:00 pm - 8:00 pm','19:00-19:59',4],['PM7','8:00 pm - 9:00 pm','20:00-20:59',4],['PM8','9:00 pm - 10:00 pm','21:00-21:59',4],
+  ['PM9','After 10:00 pm','22:00-23:59',4]];
+const PERIOD_NAMES = ['AM PEAK','MIDDAY','PM PEAK','EVENING'];
+const INTERVIEWERS = ['AK','BM','CR','DL','EJ','FS','GT','HN'];
+const DEMO_QUESTIONS = {
+  'Age': ['16-17','18-24','25-34','35-44','45-54','55-64','65+'],
+  'Gender': ['Male','Female','Non-binary / Other','Prefer not to say'],
+  'Race / Ethnicity': ['White','Black / African American','Hispanic / Latino','Asian','American Indian','Two or more','Other'],
+  'Household Income': ['Under $15k','$15k-$25k','$25k-$35k','$35k-$50k','$50k-$75k','$75k+'],
+};
+const MAP_ROUTES = [
+  { color:'#e63946', pts:[[20,385],[90,300],[150,262],[222,200],[300,120],[345,40]] },
+  { color:'#2563eb', pts:[[12,205],[100,208],[182,212],[262,216],[352,222]] },
+  { color:'#2ecc71', pts:[[182,18],[176,120],[186,212],[170,322],[182,412]] },
+];
+
+const mapLineNames = p => p.type === 'rail'
+  ? ['Red Line', 'Blue Line', 'Green Line']
+  : BUS_UNITS.slice(0, MAP_ROUTES.length).map(([c, n]) => `${c} - ${n}`);
+
+function makeDay(r, units, scale) {
+  const ri = (a, b) => a + Math.floor(r() * (b - a + 1));
+  const dir = [], route = [];
+  units.forEach(([code, name]) => {
+    const tot = { code, name, goal:0, done:0 };
+    ['Inbound','Outbound'].forEach(d => {
+      const row = { code, name, dir:d };
+      let g = 0, c = 0;
+      for (let k = 1; k <= 4; k++) {
+        const goal = Math.max(1, Math.round(ri(4, 16) * scale));
+        const col = Math.min(goal + ri(0, 2), Math.round(goal * (0.3 + r() * 0.9)));
+        row['c'+k] = col; row['r'+k] = Math.max(goal - col, 0); row['g'+k] = goal;
+        g += goal; c += col;
+      }
+      row.goal = g; row.done = c;
+      tot.goal += g; tot.done += c;
+      dir.push(row);
+    });
+    tot.rem = Math.max(tot.goal - tot.done, 0);
+    tot.pct = Math.round(100 * Math.min(tot.done / tot.goal, 1));
+    route.push(tot);
+  });
+  dir.forEach(row => {
+    const t = route.find(x => x.code === row.code);
+    Object.assign(row, { rgoal:t.goal, rdone:t.done, rrem:t.rem, pct:t.pct });
+  });
+  const perCollected = [1,2,3,4].map(k => dir.reduce((s, x) => s + x['c'+k], 0));
+  const perGoal = [1,2,3,4].map(k => dir.reduce((s, x) => s + x['g'+k], 0));
+  const time = TIME_SLOTS.map(([code, txt, range, per]) => ({ code, txt, range, per, p1:0, p2:0, p3:0, p4:0 }));
+  [1,2,3,4].forEach(k => {
+    const slots = time.filter(t => t.per === k);
+    const w = slots.map(() => 0.5 + r());
+    const ws = w.reduce((a, b) => a + b, 0);
+    let left = perCollected[k-1];
+    slots.forEach((s, i) => {
+      const v = i === slots.length - 1 ? left : Math.min(left, Math.round(perCollected[k-1] * w[i] / ws));
+      s['p'+k] = v; left -= v;
+    });
+  });
+  const total = route.reduce((s, x) => s + x.done, 0);
+  return { dir, route, time, perCollected, perGoal, total };
+}
+
+const DATA = {};
+function data(p) {
+  if (DATA[p.id]) return DATA[p.id];
+  const r = rng(p.seed);
+  const ri = (a, b) => a + Math.floor(r() * (b - a + 1));
+  const units = p.type === 'rail' ? RAIL_UNITS : BUS_UNITS;
+  const weekday = makeDay(r, units, 1);
+  const weekend = p.weekend ? makeDay(r, units, 0.45) : null;
+
+  const now = new Date();
+  const y = new Date(now); y.setDate(y.getDate() - 1);
+  const lastRefresh = `${ymd(now)} 05:00:00 CST`;
+  const lastCompleted = `${ymd(y)} ${pad(ri(17,19))}:${pad(ri(0,59))}:${pad(ri(0,59))}`;
+
+  const daily = [];
+  for (let i = 14; i >= 1; i--) {
+    const d = new Date(now); d.setDate(d.getDate() - i);
+    const isWe = d.getDay() === 0 || d.getDay() === 6;
+    const count = isWe ? (p.weekend ? ri(18, 46) : 0) : ri(55, 120);
+    const per = {}; let left = count;
+    INTERVIEWERS.slice(0, 6).forEach((iv, j) => {
+      const v = j === 5 ? left : Math.min(left, Math.round(count * (0.08 + r() * 0.2)));
+      per[iv] = v; left -= v;
+    });
+    daily.push({ date: ymd(d), day: d.toLocaleDateString('en-US', { weekday:'short' }), wk: isWe ? 0 : count, we: isWe ? count : 0,
+      total: count, ivs: Object.values(per).filter(v => v > 0).length, ...per });
+  }
+
+  const surveyors = INTERVIEWERS.map(iv => {
+    const total = ri(90, 260), err = ri(2, 18);
+    return { iv, total, err, errp: +(100 * err / total).toFixed(1), mins: +(6 + r() * 6).toFixed(1), dist: ri(0, 9), rev: ri(0, 6) };
+  });
+  const routeReport = weekday.route.map(x => {
+    const total = x.done + (weekend ? weekend.route.find(w => w.code === x.code).done : 0);
+    const err = ri(1, 12);
+    return { code:x.code, name:x.name, total, rev: ri(0, 8), xfer: ri(0, 10), dist: ri(0, 7), errp: +(100 * err / Math.max(total, 1)).toFixed(1) };
+  });
+
+  const completes = weekday.total + (weekend ? weekend.total : 0);
+  const refusals = Math.round(completes * (0.32 + r() * 0.12));
+  const reasonsRaw = [['Not interested', 0.34], ['No time / in a hurry', 0.27], ['Language barrier', 0.12], ['Under 16', 0.08], ['Already surveyed', 0.1], ['Other', 0.09]];
+  const reasons = reasonsRaw.map(([label, w]) => ({ label, n: Math.round(refusals * w * (0.85 + r() * 0.3)) }));
+  const refusalByIv = INTERVIEWERS.map(iv => {
+    const c = ri(100, 300), rf = ri(25, 110);
+    return { iv, contacts: c + rf, completes: c, refusals: rf, rate: +(100 * rf / (c + rf)).toFixed(1) };
+  });
+  const refusalByRoute = weekday.route.map(x => {
+    const rf = ri(5, 60);
+    return { code:x.code, name:x.name, completes:x.done, refusals:rf, rate: +(100 * rf / (x.done + rf)).toFixed(1) };
+  });
+
+  const demo = {};
+  Object.entries(DEMO_QUESTIONS).forEach(([q, cats]) => {
+    const t = cats.map(() => 0.4 + r()); const ts = t.reduce((a, b) => a + b, 0);
+    const c = t.map(v => v * (0.75 + r() * 0.5)); const cs = c.reduce((a, b) => a + b, 0);
+    demo[q] = cats.map((cat, i) => {
+      const target = +(100 * t[i] / ts).toFixed(1), got = +(100 * c[i] / cs).toFixed(1);
+      return { cat, got, target, diff: +(got - target).toFixed(1), n: Math.round(completes * got / 100) };
+    });
+  });
+
+  const reverse = Array.from({ length: 14 }, (_, i) => {
+    const u = units[ri(0, units.length - 1)];
+    return { id: 10200 + ri(1, 900) + i * 3, route: `${u[0]} - ${u[1]}`, sdir: r() > 0.5 ? 'Inbound' : 'Outbound',
+      board: `Stop ${ri(100, 999)}`, alight: `Stop ${ri(100, 999)}`, status: r() > 0.3 ? 'Reverse match' : 'Needs review' };
+  }).map(x => ({ ...x, rdir: x.sdir === 'Inbound' ? 'Outbound' : 'Inbound' }));
+  const shortages = [];
+  weekday.dir.forEach(row => [1,2,3,4].forEach(k => {
+    if (row['r'+k] > 0) shortages.push({ route: `${row.code} - ${row.name}`, dir: row.dir, period: `${k} · ${PERIOD_NAMES[k-1]}`, goal: row['g'+k], got: row['c'+k], short: row['r'+k] });
+  }));
+  shortages.sort((a, b) => b.short - a.short);
+  const clonable = weekday.route.map(x => {
+    const n = ri(0, 14);
+    return { route: `${x.code} - ${x.name}`, n, ids: Array.from({ length: Math.min(n, 3) }, () => 10000 + ri(100, 9999)).join(', ') || '—' };
+  });
+
+  const points = Array.from({ length: 70 }, (_, i) => {
+    const ridx = ri(0, MAP_ROUTES.length - 1), pts = MAP_ROUTES[ridx].pts;
+    const s = ri(0, pts.length - 2), t = r();
+    const x = pts[s][0] + (pts[s+1][0] - pts[s][0]) * t + (r() - 0.5) * 26;
+    const yv = pts[s][1] + (pts[s+1][1] - pts[s][1]) * t + (r() - 0.5) * 26;
+    const purposes = ['Home','Work','School','Shopping','Medical','Recreation'];
+    return { i, x: Math.max(8, Math.min(352, x)), y: Math.max(8, Math.min(412, yv)), kind: r() > 0.5 ? 'origin' : 'destination',
+      day: (p.weekend && r() > 0.72) ? 'Weekend' : 'Weekday', id: 10000 + ri(100, 9999), route: mapLineNames(p)[ridx],
+      purpose: purposes[ri(0, purposes.length - 1)], time: `${ri(5, 21) % 12 || 12}:${pad(ri(0, 59))} ${r() > 0.5 ? 'AM' : 'PM'}` };
+  });
+
+  return (DATA[p.id] = { weekday, weekend, lastRefresh, lastCompleted, daily, surveyors, routeReport, completes, refusals, reasons,
+    refusalByIv, refusalByRoute, demo, reverse, shortages, clonable, points });
+}
+
+/* ── Pages ─────────────────────────────────────────────── */
+const PAGES = [
+  { key:'main', label:'Home', icon:'🏠︎', client:true },
+  { key:'weekday', label:'WEEKDAY-OVERALL', icon:'🗓︎', client:true },
+  { key:'weekend', label:'WEEKEND-OVERALL', icon:'☀︎', client:true, weekendOnly:true },
+  { key:'timedetails', label:'Time Of Day Details', icon:'🕒', client:true },
+  { key:'location_maps', label:'Location Maps', icon:'🗺️', client:true },
+  { key:'demographic', label:'Demographic Review', icon:'👥', client:true },
+  { key:'refusal', label:'Refusal Analysis', icon:'🚫', client:true },
+  { key:'reverse_routes', label:'All Possible Records', icon:'↺', busOnly:true },
+  { key:'dailytotals', label:'DAILY TOTALS', icon:'⌗' },
+  { key:'surveyreport', label:'Surveyor/Route/Trend Reports', icon:'∆' },
+  { key:'weekday_station', label:'WEEKDAY StationWise Comparison', icon:'◉', railOnly:true },
+  { key:'weekend_station', label:'WEEKEND StationWise Comparison', icon:'⦾', railOnly:true, weekendOnly:true },
+];
+const COACH = {
+  login: ['1 of 4', 'Sign in. Demo details are already filled in, so just tap <b>Login</b>.'],
+  portal: ['2 of 4', 'This is the platform hub. Tap <b>Open Dashboard</b> to enter the OD Collection Dashboard.'],
+  projects: ['3 of 4', 'Pick a project. Each card shows its record counts and last refresh time.'],
+  main: ['4 of 4', 'This is the Completion Report. Swipe tables sideways, tap a column to sort, and tap <b>☰</b> to open other pages.'],
+  weekday: ['Page', 'Weekday goals vs collected surveys, by route and direction, for each time period.'],
+  weekend: ['Page', 'Same view as Weekday, for Saturday and Sunday collection.'],
+  timedetails: ['Page', 'How many surveys were collected in each hour, rolled up into the four time periods.'],
+  location_maps: ['Page', 'Tap any dot to see the survey record behind it. Use the chips to filter.'],
+  demographic: ['Page', 'Compares who we surveyed against the target population. Tap a question to switch.'],
+  refusal: ['Page', 'Why riders said no, broken down by interviewer and route.'],
+  reverse_routes: ['Page', 'Records that can fill gaps: reverse-direction trips, shortages, and clonable IDs.'],
+  dailytotals: ['Page', 'Collection by day and by interviewer for the last two weeks.'],
+  surveyreport: ['Page', 'Trip logic and QA/QC checks for each surveyor and each route.'],
+  weekday_station: ['Page', 'Station-by-station progress for weekday rail collection.'],
+  weekend_station: ['Page', 'Station-by-station progress for weekend rail collection.'],
+};
+
+const S = {
+  screen:'login', device:'iphone', project:null, page:'main', drawer:false, view:'admin', search:'',
+  tab:{}, sort:{}, demoQ:'Age', mapKind:'all', mapDay:'Weekday', mapSel:null, loginErr:false, seen:{},
+};
+const proj = () => PROJECTS.find(p => p.id === S.project);
+const visiblePages = () => {
+  const p = proj();
+  return PAGES.filter(pg => (S.view !== 'client' || pg.client) && (!pg.weekendOnly || p.weekend)
+    && (!pg.railOnly || p.type === 'rail') && (!pg.busOnly || p.type !== 'rail'));
+};
+
+/* ── Building blocks ───────────────────────────────────── */
+function dataTable(id, cols, rows, height = 420) {
+  const q = S.search.trim().toLowerCase();
+  let list = q ? rows.filter(r => cols.some(c => String(r[c.k] ?? '').toLowerCase().includes(q))) : rows.slice();
+  const so = S.sort[id];
+  if (so) list.sort((a, b) => {
+    const x = a[so.k], y = b[so.k];
+    return so.dir * ((typeof x === 'number' && typeof y === 'number') ? x - y : String(x).localeCompare(String(y), undefined, { numeric:true }));
+  });
+  const head = cols.map(c => `<th data-act="sort" data-t="${id}" data-k="${c.k}">${esc(c.label)}${so && so.k === c.k ? (so.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
+  const body = list.length
+    ? list.map(r => `<tr>${cols.map(c => {
+        const v = r[c.k];
+        const cls = c.cls ? c.cls(v, r) : (typeof v === 'number' ? 'num' : '');
+        return `<td class="${cls}">${c.f ? c.f(v, r) : esc(typeof v === 'number' ? fmt(v) : v)}</td>`;
+      }).join('')}</tr>`).join('')
+    : `<tr><td class="empty" colspan="${cols.length}">No rows match “${esc(S.search)}”.</td></tr>`;
+  return `<div class="grid" style="max-height:${height}px"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+    <div class="grid-foot">${list.length} row${list.length === 1 ? '' : 's'}${q ? ' · filtered by search' : ''} · tap a column to sort</div>`;
+}
+const remainCls = v => v > 0 ? 'bad' : 'good';
+const pctF = v => `${v}%`;
+
+function tabs(key, labels) {
+  const cur = S.tab[key] || 0;
+  return { cur, html: `<div class="tabs">${labels.map((l, i) => `<button class="tab ${i === cur ? 'on' : ''}" data-act="tab" data-key="${key}" data-i="${i}">${esc(l)}</button>`).join('')}</div>` };
+}
+function bars(items, max, color = 'var(--brand)') {
+  return `<div class="bars">${items.map(it => `<div class="bar-row"><span class="lab">${esc(it.label)}</span>
+    <span class="track"><i style="width:${Math.min(100, 100 * it.v / (max || 1))}%;background:${it.color || color}"></i>${it.mark != null ? `<b style="left:${Math.min(99, 100 * it.mark / (max || 1))}%"></b>` : ''}</span>
+    <span class="val">${esc(it.text ?? fmt(it.v))}</span></div>`).join('')}</div>`;
+}
+function searchChip() {
+  return S.search ? `<span class="filter-chip" data-act="clear-search">🔎 “${esc(S.search)}” ✕</span>` : '';
+}
+
+/* ── Screens ───────────────────────────────────────────── */
+function loginHTML() {
+  return `<div class="scroll"><div class="login">
+    <img class="logo" src="${LOGO}" alt="ETC Institute" onerror="this.outerHTML='<div class=&quot;logo-fallback&quot;>ETC INSTITUTE</div>'">
+    <h1>Welcome to Supervisor<br>Dashboard</h1>
+    <h4>TRANSIT SURVEY</h4>
+    <h5>Origin-Destination Collection Dashboard</h5>
+    <p class="contact">725 W. Frontier Lane, Olathe, KS<br>(913) 829-1215 · info@etcinstitute.com</p>
+    <div class="card-auth">
+      <h2>Login</h2>
+      <div class="field"><label>Email</label><input id="email" value="demo.user@etcinstitute.com" placeholder="Enter your email address"></div>
+      <div class="field"><label>Password</label><input id="password" type="password" value="demopassword" placeholder="Enter your password"></div>
+      <div class="forgot"><a data-act="toast" data-msg="In the live site this emails a reset link. Nothing is sent in the demo.">Forgot Password?</a></div>
+      ${S.loginErr ? '<div class="alert err">Incorrect email or password</div>' : ''}
+      <button class="btn ${S.seen.login ? '' : 'pulse'}" data-act="login">Login</button>
+      <div class="need"><h5>Need Access?</h5><p>Staff member? <a data-act="toast" data-msg="Registration is turned off in the demo.">Register here</a>. Client project signup uses your project link from your administrator.</p></div>
+      <div class="auth-foot"><a>Facebook</a> | <a>Twitter</a> | <a>LinkedIn</a> | <a>Instagram</a><br>ETC Institute © 2025 All Rights Reserved.</div>
+    </div>
+  </div></div>`;
+}
+
+function portalHTML() {
+  const check = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#2563eb" opacity=".15"/><path d="M7.5 12.5l3 3 6-6.5" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return `<div class="scroll"><div class="hub">
+    <div class="hub-top">
+      <div class="hub-brand"><span class="hub-mark">ETC</span><div class="hub-title">ETC OD Collection Platform</div></div>
+      <div class="hub-user"><span class="hub-avatar">DU</span></div>
+    </div>
+    <div class="hub-banner">
+      <div class="hub-banner-row">
+        <div class="hub-banner-icon"><svg width="30" height="30" viewBox="0 0 34 34" fill="none"><rect x="2" y="6" width="16" height="16" rx="4" fill="#60a5fa" opacity=".85"/><rect x="10" y="2" width="16" height="16" rx="4" fill="#818cf8" opacity=".75"/><rect x="14" y="12" width="16" height="16" rx="4" fill="#38bdf8" opacity=".7"/></svg></div>
+        <div><h3>Welcome back, Demo User!</h3><p>Select a portal below to access your workspace.</p></div>
+      </div>
+      <button class="btn sm" data-act="logout" style="margin-top:12px;background:#fff;color:#0f172a;border-color:#c5d5eb">⎋ Sign out</button>
+    </div>
+    <div class="hub-section">
+      <span class="hub-section-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor"/><rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity=".75"/><rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity=".75"/><rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity=".5"/></svg></span>
+      <div><h4>Available Portals</h4><p>Choose the application you want to open.</p></div>
+    </div>
+    <div class="hub-card">
+      <div class="hub-card-top">
+        <span class="hub-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 19V10M10 19V5M16 19V13M22 19H2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+        <h4>OD Collection Dashboard</h4>
+      </div>
+      <p>Access collection, refusal analysis, and project reports.</p>
+      <div class="feat">${check}Survey collection overview</div>
+      <div class="feat">${check}Refusal analysis</div>
+      <div class="feat">${check}Project reports &amp; analytics</div>
+      <button class="btn ${S.seen.portal ? '' : 'pulse'}" data-act="open-od">Open Dashboard →</button>
+    </div>
+    <div class="hub-foot">ETC Institute · OD Collection Platform</div>
+  </div></div>`;
+}
+
+function projectsHTML() {
+  const cards = PROJECTS.map((p, i) => {
+    const d = data(p);
+    const m = (l, v) => `<div class="project-metric"><p class="l">${l}</p><p class="v">${esc(v)}</p></div>`;
+    return `<div class="project-block"><div class="project-card">
+      <p class="name">${esc(p.name)}</p><p class="meta">OD Collection Dashboard · ${p.type === 'rail' ? 'Rail' : 'Bus'}</p><span class="chip">Available</span>
+      <div class="project-metrics">
+        ${m('Weekday Records', fmt(d.weekday.total))}
+        ${p.weekend ? m('Weekend Records', fmt(d.weekend.total)) : m('Weekend Records', 'Not surveyed')}
+        ${m('⏱ Last Refresh', d.lastRefresh.slice(5, 16))}
+        ${m('Last Completed', d.lastCompleted.slice(5, 16))}
+      </div></div>
+      <button class="btn ${i === 0 && !S.seen.projects ? 'pulse' : ''}" data-act="enter" data-id="${p.id}">Enter ${esc(p.name)}</button></div>`;
+  }).join('');
+  return `<div class="scroll"><div class="picker">
+    <div class="project-hero"><p class="t">Pick Your Project</p><p class="s">Choose an OD Collection project to open the dashboard. Cards show weekday/weekend records and last refresh times.</p></div>
+    <div class="select-wrap"><p class="t">Choose Your Project</p><p class="s">You can switch projects later from the dashboard sidebar.</p></div>
+    ${cards}
+    <button class="btn ghost" data-act="go" data-screen="portal">← Back to portal selection</button>
+  </div></div>`;
+}
+
+function headerHTML() {
+  const p = proj(), d = data(p);
+  const mc = (l, v) => `<div class="metric-card"><p class="l">${l}</p><p class="v">${esc(v)}</p></div>`;
+  return `<div class="pro-header">
+    ${S.page !== 'main' ? '<button class="back" data-act="page" data-page="main">← Back</button>' : ''}
+    <h1>Completion Report</h1>
+    <p class="sub">Comprehensive ${p.type === 'rail' ? 'Station' : 'Route'} Performance Overview</p>
+    <div class="metric-group">
+      ${mc('Weekday Records', fmt(d.weekday.total))}
+      ${p.weekend ? mc('Weekend Records', fmt(d.weekend.total)) : ''}
+      ${mc('⏱ Last Refresh', d.lastRefresh)}
+      ${mc('Last Completed', d.lastCompleted)}
+    </div></div>`;
+}
+
+function crColumns() {
+  const rail = proj().type === 'rail';
+  const cols = [
+    { k:'code', label: rail ? 'STATION_ID' : 'ROUTE_SURVEYEDCode' },
+    { k:'name', label: rail ? 'STATION' : 'ROUTE_SURVEYED' },
+    { k:'dir', label:'Direction' },
+  ];
+  [1,2,3,4].forEach(k => {
+    cols.push({ k:'c'+k, label:`(${k}) Collect` });
+    cols.push({ k:'r'+k, label:`(${k}) Remain`, cls: remainCls });
+  });
+  cols.push({ k:'rgoal', label: rail ? 'Station Level Goal' : 'Route Level Goal' },
+    { k:'rdone', label:'# of Surveys', cls: () => 'hi' },
+    { k:'rrem', label:'Remaining', cls: remainCls },
+    { k:'pct', label:'CR %', f: pctF, cls: () => 'num' });
+  return cols;
+}
+
+function crBlock(day, key) {
+  const rail = proj().type === 'rail';
+  const t = tabs(key, ['CR', 'Time of Day Details']);
+  let body;
+  if (t.cur === 0) {
+    body = `<p class="caption">Inbound and outbound stay side by side. The ${rail ? 'station' : 'route'} total is repeated on both directions.</p>
+      ${dataTable(key + '-cr', crColumns(), day.dir, 460)}`;
+  } else {
+    body = timeBlock(day, key);
+  }
+  return t.html + body;
+}
+
+function timeBlock(day, key) {
+  const timeCols = [
+    { k:'code', label:'Display_Text' }, { k:'txt', label:'Original Text' }, { k:'range', label:'Time Range' },
+    { k:'p1', label:'1' }, { k:'p2', label:'2' }, { k:'p3', label:'3' }, { k:'p4', label:'4' },
+  ];
+  const overall = [1,2,3,4].map(k => ({ period: `${k} · ${PERIOD_NAMES[k-1]}`, got: day.perCollected[k-1], goal: day.perGoal[k-1],
+    rem: Math.max(day.perGoal[k-1] - day.perCollected[k-1], 0) }));
+  const max = Math.max(...overall.map(o => o.goal));
+  return `<div class="subhead" style="margin-top:4px">Time Range Data</div>
+    ${dataTable(key + '-time', timeCols, day.time, 320)}
+    <div class="subhead">Time Period OverAll Data</div>
+    ${dataTable(key + '-period', [
+      { k:'period', label:'Time Period' }, { k:'got', label:'Collected Totals', cls: () => 'hi' },
+      { k:'goal', label:'Expected Totals' }, { k:'rem', label:'Remaining', cls: remainCls },
+    ], overall, 260)}
+    <div class="legend"><span><i style="background:var(--brand)"></i>Collected</span><span><i style="background:#e63946;width:3px"></i>Expected</span></div>
+    ${bars(overall.map(o => ({ label: o.period, v: o.got, mark: o.goal, text: `${Math.round(100 * o.got / o.goal)}%` })), max)}`;
+}
+
+function stationBlock(day, key) {
+  const rows = day.route.map(x => ({ ...x }));
+  return `<p class="caption">Progress at each station, both directions combined.</p>
+    ${dataTable(key, [
+      { k:'code', label:'STATION_ID' }, { k:'name', label:'STATION' }, { k:'goal', label:'Goal' },
+      { k:'done', label:'Collected', cls: () => 'hi' }, { k:'rem', label:'Remaining', cls: remainCls }, { k:'pct', label:'CR %', f: pctF, cls: () => 'num' },
+    ], rows, 440)}
+    <div class="subhead">Completion by station</div>
+    ${bars(rows.map(x => ({ label: x.name, v: x.pct, text: `${x.pct}%`, color: x.pct >= 100 ? '#2ecc71' : 'var(--brand)' })), 100)}`;
+}
+
+function mapBlock(d) {
+  const p = proj();
+  const pts = d.points.filter(pt => (S.mapKind === 'all' || pt.kind === S.mapKind) && (!p.weekend || pt.day === S.mapDay));
+  const streets = [];
+  for (let x = 30; x < 360; x += 40) streets.push(`<line x1="${x}" y1="0" x2="${x}" y2="420" stroke="#fff" stroke-width="${x % 120 === 30 ? 6 : 3}"/>`);
+  for (let y = 25; y < 420; y += 40) streets.push(`<line x1="0" y1="${y}" x2="360" y2="${y}" stroke="#fff" stroke-width="${y % 120 === 25 ? 6 : 3}"/>`);
+  const routes = MAP_ROUTES.map(r => `<polyline points="${r.pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="${r.color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>`).join('');
+  const dots = pts.map(pt => `<circle data-act="map-pt" data-i="${pt.i}" cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="${S.mapSel === pt.i ? 8 : 5.5}"
+    fill="${pt.kind === 'origin' ? '#1d4ed8' : '#f59e0b'}" stroke="#fff" stroke-width="${S.mapSel === pt.i ? 3 : 1.5}"/>`).join('');
+  const sel = d.points.find(pt => pt.i === S.mapSel);
+  return `${p.weekend ? `<div class="seg">${['Weekday','Weekend'].map(v => `<button class="${S.mapDay === v ? 'on' : ''}" data-act="map-day" data-v="${v}">${v}</button>`).join('')}</div>` : ''}
+    <div class="chips">${[['all','All points'],['origin','Origins'],['destination','Destinations']].map(([k, l]) => `<button class="${S.mapKind === k ? 'on' : ''}" data-act="map-kind" data-v="${k}">${l}</button>`).join('')}</div>
+    <div class="map"><svg viewBox="0 0 360 420">
+      <rect width="360" height="420" fill="#e9eef2"/>${streets.join('')}
+      <path d="M0 140 C 80 120, 120 170, 200 150 S 320 90, 360 110 L 360 128 C 320 112, 260 170, 200 168 S 90 140, 0 158 Z" fill="#b9dcf0"/>
+      <rect x="236" y="268" width="88" height="70" rx="10" fill="#cfe9c8"/>
+      ${routes}${dots}
+    </svg></div>
+    <div class="legend"><span><i style="background:#1d4ed8;border-radius:50%"></i>Origin</span><span><i style="background:#f59e0b;border-radius:50%"></i>Destination</span>
+      ${MAP_ROUTES.map((r, i) => `<span><i style="background:${r.color}"></i>${esc(p.type === 'rail' ? mapLineNames(p)[i] : 'Route ' + mapLineNames(p)[i].split(' - ')[0])}</span>`).join('')}</div>
+    ${sel ? `<div class="map-pop"><div class="t">Record #${sel.id}</div>
+      ${sel.kind === 'origin' ? 'Origin' : 'Destination'} · ${esc(sel.purpose)}<br>${p.type === 'rail' ? '' : 'Route '}${esc(sel.route)}<br>Boarded ${esc(sel.time)} · ${esc(sel.day)}</div>`
+      : `<p class="caption" style="margin-top:8px">${pts.length} points shown. Tap a dot to see the record.</p>`}`;
+}
+
+function refusalBlock(d) {
+  const t = tabs('refusal', ['Overview', 'By Interviewer', 'By Route', 'Demographics']);
+  const rate = (100 * d.refusals / (d.refusals + d.completes)).toFixed(1);
+  let body = '';
+  if (t.cur === 0) {
+    const max = Math.max(...d.reasons.map(r => r.n));
+    body = `<div class="kpis">
+      <div class="kpi"><div class="l">Total Contacts</div><div class="v">${fmt(d.refusals + d.completes)}</div></div>
+      <div class="kpi"><div class="l">Completes</div><div class="v">${fmt(d.completes)}</div></div>
+      <div class="kpi"><div class="l">Refusals</div><div class="v">${fmt(d.refusals)}</div></div>
+      <div class="kpi"><div class="l">Refusal Rate</div><div class="v">${rate}%</div><div class="d">▼ 1.8 pts vs last week</div></div>
+    </div><div class="subhead" style="margin-top:4px">Refusal reasons</div>
+    ${bars(d.reasons.map(r => ({ label: r.label, v: r.n, color:'#e63946' })), max)}`;
+  } else if (t.cur === 1) {
+    body = dataTable('ref-iv', [
+      { k:'iv', label:'INTERV_INIT' }, { k:'contacts', label:'Contacts' }, { k:'completes', label:'Completes' },
+      { k:'refusals', label:'Refusals' }, { k:'rate', label:'Refusal %', f: pctF, cls: v => v > 30 ? 'bad' : 'num' },
+    ], d.refusalByIv, 420);
+  } else if (t.cur === 2) {
+    body = dataTable('ref-route', [
+      { k:'code', label:'ROUTE' }, { k:'name', label:'ROUTE_NAME' }, { k:'completes', label:'Completes' },
+      { k:'refusals', label:'Refusals' }, { k:'rate', label:'Refusal %', f: pctF, cls: v => v > 25 ? 'bad' : 'num' },
+    ], d.refusalByRoute, 440);
+  } else {
+    const rows = d.demo['Race / Ethnicity'];
+    const max = Math.max(...rows.map(r => r.got));
+    body = `<p class="caption">Refusals by observed race / ethnicity (interviewer-recorded).</p>
+      ${bars(rows.map(r => ({ label: r.cat, v: r.got, text: `${r.got}%`, color:'#7c3aed' })), max)}`;
+  }
+  return t.html + body;
+}
+
+function demographicBlock(d) {
+  const rows = d.demo[S.demoQ];
+  const max = Math.max(...rows.flatMap(r => [r.got, r.target]));
+  return `<p class="caption">Collected share compared with the target population for this service area.</p>
+    <div class="chips">${Object.keys(DEMO_QUESTIONS).map(q => `<button class="${S.demoQ === q ? 'on' : ''}" data-act="demo-q" data-v="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+    <div class="legend"><span><i style="background:var(--brand)"></i>Collected %</span><span><i style="background:#e63946;width:3px"></i>Target %</span></div>
+    ${bars(rows.map(r => ({ label: r.cat, v: r.got, mark: r.target, text: `${r.got}%` })), max)}
+    <div class="subhead">${esc(S.demoQ)} detail</div>
+    ${dataTable('demo-' + S.demoQ, [
+      { k:'cat', label:'Category' }, { k:'n', label:'Records' }, { k:'got', label:'Collected %', f: pctF, cls: () => 'num' },
+      { k:'target', label:'Target %', f: pctF, cls: () => 'num' },
+      { k:'diff', label:'Difference', f: v => `${v > 0 ? '+' : ''}${v} pts`, cls: v => Math.abs(v) > 3 ? 'bad' : 'good' },
+    ], rows, 340)}`;
+}
+
+function reverseBlock(d) {
+  const t = tabs('reverse', ['Reverse Routes', 'Route Shortages', 'Clonable IDs by Route']);
+  let body;
+  if (t.cur === 0) body = dataTable('rev', [
+    { k:'id', label:'ID', f: v => esc(v) }, { k:'route', label:'ROUTE' }, { k:'sdir', label:'Surveyed Dir' }, { k:'rdir', label:'Reverse Dir' },
+    { k:'board', label:'Boarding' }, { k:'alight', label:'Alighting' },
+    { k:'status', label:'Status', cls: v => v === 'Reverse match' ? 'good' : 'bad' },
+  ], d.reverse, 440);
+  else if (t.cur === 1) body = dataTable('short', [
+    { k:'route', label:'ROUTE' }, { k:'dir', label:'Direction' }, { k:'period', label:'Time Period' },
+    { k:'goal', label:'Goal' }, { k:'got', label:'Collected' }, { k:'short', label:'Shortage', cls: () => 'bad' },
+  ], d.shortages, 440);
+  else body = dataTable('clone', [
+    { k:'route', label:'ROUTE' }, { k:'n', label:'Clonable IDs', cls: v => v > 0 ? 'good' : 'num' }, { k:'ids', label:'Sample IDs' },
+  ], d.clonable, 440);
+  return t.html + body;
+}
+
+function dailyBlock(d) {
+  const p = proj();
+  const t = tabs('daily', ['Daily Totals Summary', 'Interviewer Records']);
+  if (t.cur === 0) {
+    const max = Math.max(...d.daily.map(x => x.total));
+    return t.html + dataTable('daily', [
+      { k:'date', label:'Date' }, { k:'day', label:'Day' }, { k:'wk', label:'Weekday' },
+      ...(p.weekend ? [{ k:'we', label:'Weekend' }] : []), { k:'total', label:'Total', cls: () => 'hi' }, { k:'ivs', label:'Interviewers' },
+    ], d.daily, 360) + `<div class="subhead">Records per day</div>` +
+      bars(d.daily.map(x => ({ label: `${x.day} ${x.date.slice(5)}`, v: x.total, color: x.we ? '#f59e0b' : 'var(--brand)' })), max);
+  }
+  return t.html + dataTable('daily-iv', [
+    { k:'date', label:'Date' }, ...INTERVIEWERS.slice(0, 6).map(iv => ({ k: iv, label: iv })), { k:'total', label:'Total', cls: () => 'hi' },
+  ], d.daily, 460);
+}
+
+function surveyBlock(d) {
+  const t = tabs('survey', ['Surveyor Report', 'Route Report']);
+  const kp = (l, v) => `<div class="metric-card"><p class="l">${l}</p><p class="v">${esc(v)}</p></div>`;
+  if (t.cur === 0) {
+    const tot = d.surveyors.reduce((s, x) => s + x.total, 0), err = d.surveyors.reduce((s, x) => s + x.err, 0);
+    return t.html + `<div class="qaqc"><div class="h">TRIP LOGIC &amp; QAQC REPORT – SURVEYOR REPORT</div><div class="metric-group">
+      ${kp('Total Records', fmt(tot))}${kp('Logic Errors', fmt(err))}${kp('Error Rate', (100 * err / tot).toFixed(1) + '%')}${kp('Surveyors', d.surveyors.length)}</div></div>
+      ${dataTable('surv', [
+        { k:'iv', label:'INTERV_INIT' }, { k:'total', label:'Records' }, { k:'err', label:'Logic Errors' },
+        { k:'errp', label:'Error %', f: pctF, cls: v => v > 6 ? 'bad' : 'good' }, { k:'mins', label:'Avg Minutes' },
+        { k:'dist', label:'Distance Flags' }, { k:'rev', label:'Reverse Trips' },
+      ], d.surveyors, 420)}`;
+  }
+  const tot = d.routeReport.reduce((s, x) => s + x.total, 0);
+  return t.html + `<div class="qaqc"><div class="h">TRIP LOGIC &amp; QAQC REPORT – ROUTE REPORT</div><div class="metric-group">
+    ${kp('Total Records', fmt(tot))}${kp('Routes', d.routeReport.length)}${kp('Transfer Flags', fmt(d.routeReport.reduce((s, x) => s + x.xfer, 0)))}${kp('Distance Flags', fmt(d.routeReport.reduce((s, x) => s + x.dist, 0)))}</div></div>
+    ${dataTable('route-rep', [
+      { k:'code', label:'ROUTE' }, { k:'name', label:'ROUTE_NAME' }, { k:'total', label:'Records' }, { k:'rev', label:'Reverse Dir' },
+      { k:'xfer', label:'Transfer Flags' }, { k:'dist', label:'Distance Flags' }, { k:'errp', label:'Error %', f: pctF, cls: v => v > 6 ? 'bad' : 'good' },
+    ], d.routeReport, 440)}`;
+}
+
+function contentHTML() {
+  const p = proj(), d = data(p);
+  const homeBtn = '<button class="btn home-btn" data-act="page" data-page="main">Home Page</button>';
+  let body = '';
+  switch (S.page) {
+    case 'main':
+      body = (p.type === 'rail' ? '<div class="subhead" style="margin-top:0">Station Level Comparison</div>' : '') + crBlock(d.weekday, 'home'); break;
+    case 'weekday': body = `<div class="page-title">Weekday OverAll Data</div>${crBlock(d.weekday, 'wk')}${homeBtn}`; break;
+    case 'weekend': body = `<div class="page-title">Weekend OverAll Data</div>${crBlock(d.weekend, 'we')}${homeBtn}`; break;
+    case 'timedetails': body = `<div class="page-title">Time Of Day Details</div>${timeBlock(d.weekday, 'td')}`; break;
+    case 'location_maps': body = `<div class="page-title">Location Maps</div>${mapBlock(d)}`; break;
+    case 'demographic': body = `<div class="page-title">🧭 Demographic Review</div>${demographicBlock(d)}`; break;
+    case 'refusal': body = `<div class="page-title">Refusal Analysis</div>${refusalBlock(d)}`; break;
+    case 'reverse_routes': body = `<div class="page-title">All Possible Records</div>${reverseBlock(d)}`; break;
+    case 'dailytotals': body = `<div class="page-title">Daily Totals</div>${dailyBlock(d)}`; break;
+    case 'surveyreport': body = `<div class="page-title">Surveyor / Route / Trend Reports</div>${surveyBlock(d)}`; break;
+    case 'weekday_station': body = `<div class="page-title">Weekday StationWise Comparison</div>${stationBlock(d.weekday, 'st-wk')}`; break;
+    case 'weekend_station': body = `<div class="page-title">Weekend StationWise Comparison</div>${stationBlock(d.weekend, 'st-we')}`; break;
+  }
+  return headerHTML() + searchChip() + body;
+}
+
+function drawerHTML() {
+  if (!S.drawer) return '';
+  const p = proj();
+  const items = visiblePages().map(pg => `<button class="nav-item ${S.page === pg.key ? 'on' : ''}" data-act="page" data-page="${pg.key}"><span class="ic">${pg.icon}</span>${esc(pg.label)}</button>`).join('');
+  return `<div class="scrim" data-act="close-drawer"></div>
+  <aside class="drawer">
+    <button class="close" data-act="close-drawer" aria-label="Close menu">✕</button>
+    <div class="profile-card">
+      <div class="profile-initial">D</div>
+      <div><strong>Demo User</strong></div>
+      <div class="sm">demo.user@etcinstitute.com</div>
+      <div class="sm">Role: ${S.view === 'client' ? 'Admin (Client view)' : 'Admin'}</div>
+      <div class="pb">Project: <strong>${esc(p.id)}</strong></div>
+    </div>
+    <div class="section-label">Dashboard view</div>
+    <div class="seg">${['admin','client'].map(v => `<button class="${S.view === v ? 'on' : ''}" data-act="view" data-v="${v}">${v === 'admin' ? 'Admin view' : 'Client view'}</button>`).join('')}</div>
+    <p class="view-why">Use <strong>Client view</strong> on client calls so the screen matches what they see. Use <strong>Admin view</strong> for your own weekly review.</p>
+    ${S.view === 'client' ? '<div class="client-chip">You are seeing the client dashboard</div>' : ''}
+    <hr>
+    <div class="section-label">Filters</div>
+    <input class="search" id="search" placeholder="Search here..." value="${esc(S.search)}" autocomplete="off">
+    ${S.view === 'admin' ? `<div class="section-label">Admin Controls</div>
+      <select class="select" id="proj-select">${PROJECTS.map(x => `<option value="${x.id}" ${x.id === p.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : ''}
+    <div class="section-label">Dashboard Pages</div>
+    ${items}
+    ${S.view === 'admin' ? '<hr><button class="btn" style="margin-top:14px" data-act="go" data-screen="portal">Switch Portal</button>' : ''}
+    <hr>
+    <div class="bottom-btns">
+      <button class="b-green" data-act="toast" data-msg="In the live site this emails a password change link.">Change Password</button>
+      <button class="b-red" data-act="logout">Logout</button>
+    </div>
+  </aside>`;
+}
+
+function dashHTML() {
+  const pg = PAGES.find(x => x.key === S.page);
+  return `<div class="scroll" id="dash-scroll">
+    <div class="topbar">
+      <button class="icon-btn ${S.seen.menu ? '' : 'pulse'}" data-act="open-drawer" aria-label="Open menu">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+      <div class="tt">${pg.icon} ${esc(pg.label)}</div>
+      <span class="proj">${esc(proj().name)}</span>
+    </div>
+    <div class="content" id="content">${contentHTML()}</div>
+  </div>${drawerHTML()}`;
+}
+
+/* ── Render + events ───────────────────────────────────── */
+const screenEl = $('#screen'), appEl = $('#app');
+
+function statusHTML() {
+  const t = new Date();
+  const time = S.device === 'iphone' ? '9:41' : `${t.getHours() % 12 || 12}:${pad(t.getMinutes())}`;
+  const sig = '<svg width="17" height="11" viewBox="0 0 17 11"><rect x="0" y="7" width="3" height="4" rx="1" fill="currentColor"/><rect x="4.5" y="5" width="3" height="6" rx="1" fill="currentColor"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx="1" fill="currentColor"/></svg>';
+  const wifi = '<svg width="15" height="11" viewBox="0 0 15 11"><path d="M7.5 11l2.2-2.6a3.4 3.4 0 00-4.4 0zM3.6 6.4a5.8 5.8 0 017.8 0l1.4-1.6a8 8 0 00-10.6 0zM.8 3.1a10 10 0 0113.4 0L15.5 1.6a12.2 12.2 0 00-16 0z" fill="currentColor"/></svg>';
+  const bat = '<svg width="25" height="12" viewBox="0 0 25 12"><rect x=".5" y=".5" width="21" height="11" rx="3" fill="none" stroke="currentColor" opacity=".45"/><rect x="2" y="2" width="16" height="8" rx="1.6" fill="currentColor"/><rect x="22.5" y="4" width="1.8" height="4" rx=".9" fill="currentColor" opacity=".45"/></svg>';
+  return `<span>${time}</span><span class="icons">${sig}${wifi}${bat}</span>`;
+}
+
+function coach() {
+  const key = S.screen === 'dash' ? S.page : S.screen;
+  const c = COACH[key];
+  $('#coach').innerHTML = c ? `<span class="step">${c[0] === 'Page' ? 'Tip' : 'Step ' + c[0]}</span>${c[1]}` : '';
+}
+
+function render(keepScroll) {
+  const sc = appEl.querySelector('.scroll');
+  const top = keepScroll && sc ? sc.scrollTop : 0;
+  screenEl.classList.toggle('dark', S.screen === 'login');
+  $('#status').innerHTML = statusHTML();
+  appEl.innerHTML = S.screen === 'login' ? loginHTML() : S.screen === 'portal' ? portalHTML() : S.screen === 'projects' ? projectsHTML() : dashHTML();
+  const nsc = appEl.querySelector('.scroll');
+  if (nsc) nsc.scrollTop = top;
+  coach();
+}
+
+function renderContent() {
+  const c = $('#content');
+  if (c) c.innerHTML = contentHTML();
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+appEl.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const a = el.dataset.act;
+  switch (a) {
+    case 'login': {
+      const email = $('#email').value.trim(), pw = $('#password').value;
+      if (!email || !pw) { S.loginErr = true; render(true); return; }
+      S.loginErr = false; S.seen.login = true; S.screen = 'portal'; render(); toast('Welcome Demo User!'); return;
+    }
+    case 'open-od': S.seen.portal = true; S.screen = 'projects'; render(); return;
+    case 'go': S.screen = el.dataset.screen; S.drawer = false; render(); return;
+    case 'enter':
+      S.seen.projects = true; S.project = el.dataset.id; S.page = 'main'; S.search = ''; S.screen = 'dash'; render();
+      toast(`Project selected: ${proj().name}`); return;
+    case 'logout': Object.assign(S, { screen:'login', drawer:false, project:null, search:'', view:'admin' }); render(); toast('Logged out successfully!'); return;
+    case 'open-drawer': S.seen.menu = true; S.drawer = true; render(true); return;
+    case 'close-drawer': S.drawer = false; render(true); return;
+    case 'page':
+      S.page = el.dataset.page; S.drawer = false; S.mapSel = null; render(); return;
+    case 'view':
+      S.view = el.dataset.v;
+      if (!visiblePages().some(p => p.key === S.page)) S.page = 'main';
+      render(true); return;
+    case 'tab': S.tab[el.dataset.key] = +el.dataset.i; render(true); return;
+    case 'sort': {
+      const cur = S.sort[el.dataset.t];
+      S.sort[el.dataset.t] = { k: el.dataset.k, dir: cur && cur.k === el.dataset.k ? -cur.dir : -1 };
+      render(true); return;
+    }
+    case 'demo-q': S.demoQ = el.dataset.v; render(true); return;
+    case 'map-kind': S.mapKind = el.dataset.v; S.mapSel = null; render(true); return;
+    case 'map-day': S.mapDay = el.dataset.v; S.mapSel = null; render(true); return;
+    case 'map-pt': S.mapSel = +el.dataset.i; render(true); return;
+    case 'clear-search': S.search = ''; render(true); return;
+    case 'toast': toast(el.dataset.msg); return;
+  }
+});
+
+appEl.addEventListener('input', e => {
+  if (e.target.id === 'search') { S.search = e.target.value; renderContent(); }
+});
+appEl.addEventListener('change', e => {
+  if (e.target.id === 'proj-select') {
+    S.project = e.target.value; S.page = 'main'; S.drawer = false; S.search = ''; S.mapSel = null;
+    if (!visiblePages().some(p => p.key === S.page)) S.page = 'main';
+    render(); toast(`Switched to ${proj().name}`);
+  }
+});
+appEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.target.id === 'email' || e.target.id === 'password')) appEl.querySelector('[data-act="login"]').click();
+});
+
+document.querySelectorAll('[data-device]').forEach(b => b.addEventListener('click', () => {
+  S.device = b.dataset.device;
+  document.querySelectorAll('[data-device]').forEach(x => x.classList.toggle('on', x === b));
+  $('#device').className = 'device ' + S.device;
+  render(true);
+}));
+$('#restart').addEventListener('click', () => {
+  Object.assign(S, { screen:'login', project:null, page:'main', drawer:false, view:'admin', search:'', tab:{}, sort:{}, mapSel:null, loginErr:false, seen:{} });
+  render();
+});
+
+function fit() {
+  const bare = window.innerWidth < 560;
+  document.body.classList.toggle('bare', bare);
+  const wrap = $('#wrap'), dev = $('#device');
+  if (bare) { dev.style.transform = ''; return; }
+  const reserved = $('#controls').offsetHeight + $('#coach').offsetHeight + 60;
+  const s = Math.min(1, (window.innerHeight - reserved) / 864, (window.innerWidth - 24) / 410);
+  dev.style.transform = `scale(${s})`;
+  wrap.style.width = `${410 * s}px`;
+  wrap.style.height = `${864 * s}px`;
+}
+window.addEventListener('resize', fit);
+
+function start() {
+  $('#gate').hidden = true;
+  render(); fit();
+}
+
+(function gate() {
+  const expired = ACCESS_EXPIRES && new Date() > new Date(ACCESS_EXPIRES + 'T23:59:59');
+  if (!ACCESS_CODE && !expired) return start();
+  if (!expired && sessionStorage.getItem('od-demo-ok') === '1') return start();
+  const g = $('#gate'); g.hidden = false;
+  if (expired) {
+    $('#gate-title').textContent = 'This demo link has expired';
+    $('#gate-sub').textContent = 'Please contact your ETC project manager for a new access code.';
+    $('#gate-form').hidden = true;
+    return;
+  }
+  $('#gate-form').addEventListener('submit', e => {
+    e.preventDefault();
+    if ($('#gate-code').value.trim().toUpperCase() === ACCESS_CODE.toUpperCase()) {
+      sessionStorage.setItem('od-demo-ok', '1'); start();
+    } else {
+      $('#gate-err').textContent = 'That code is not valid.';
+    }
+  });
+  $('#gate-code').focus();
+})();
+</script>
+</body>
+</html>
