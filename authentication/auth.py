@@ -1275,6 +1275,7 @@ def can_access_survey_assignment_manager(email: str, role: str | None = None) ->
 PORTAL_OD = "od"
 PORTAL_REVIEW_CYCLE = "review_cycle"
 PORTAL_SAM = "sam"
+PORTAL_EXPANSION = "expansion"
 
 VALID_STAFF_ROLES = {"USER", "ADMIN", "CLEANING", "CLIENT"}
 
@@ -1283,7 +1284,7 @@ def allowed_portals(email: str, role: str | None = None) -> list[str]:
     """Portals a user may open after login."""
     role_u = str(role or "").upper()
     if is_super_admin(email):
-        return [PORTAL_OD, PORTAL_REVIEW_CYCLE, PORTAL_SAM]
+        return [PORTAL_OD, PORTAL_REVIEW_CYCLE, PORTAL_SAM, PORTAL_EXPANSION]
     if role_u == "CLIENT":
         return [PORTAL_OD]
     if role_u == "CLEANING":
@@ -1314,6 +1315,8 @@ def _portal_entry_page(portal: str) -> str:
         return "od_project_select"
     if portal == PORTAL_SAM:
         return "field_assignments"
+    if portal == PORTAL_EXPANSION:
+        return "expansion"
     if portal == PORTAL_REVIEW_CYCLE:
         return "review_cycle"
     return "portal_select"
@@ -1809,6 +1812,7 @@ def _portal_hub_styles() -> None:
         .etc-hub-card-icon.od { background: #eff6ff; color: #2563eb; }
         .etc-hub-card-icon.rc { background: #ecfdf5; color: #0f766e; }
         .etc-hub-card-icon.sam { background: #f5f3ff; color: #7c3aed; }
+        .etc-hub-card-icon.exp { background: #f0fdfa; color: #087e83; }
         .etc-hub-card-icon.seg { background: #ecfeff; color: #0e7490; }
         .etc-hub-card-title {
             margin: 0 !important; font-size: 18px; font-weight: 750;
@@ -1906,6 +1910,7 @@ def _portal_hub_styles() -> None:
         div[class*="st-key-portal_select_od"],
         div[class*="st-key-portal_select_review_cycle"],
         div[class*="st-key-portal_select_sam"],
+        div[class*="st-key-portal_select_expansion"],
         div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] {
             border-top: 1px solid #e2e8f0 !important;
             padding-top: 16px !important;
@@ -1929,6 +1934,12 @@ def _portal_hub_styles() -> None:
             border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
             box-shadow: 0 8px 16px rgba(124, 58, 237, 0.22) !important;
         }
+        div[class*="st-key-portal_select_expansion"] button,
+        div[class*="st-key-portal_select_expansion"] button[kind="primary"] {
+            background: #087e83 !important; border-color: #087e83 !important; color: #fff !important;
+            border-radius: 12px !important; font-weight: 650 !important; height: 48px !important;
+            box-shadow: 0 8px 16px rgba(8, 126, 131, 0.22) !important;
+        }
         div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] a,
         div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] button {
             background: #0e7490 !important; border-color: #0e7490 !important; color: #fff !important;
@@ -1939,7 +1950,8 @@ def _portal_hub_styles() -> None:
         }
         div[class*="st-key-portal_select_od"] button,
         div[class*="st-key-portal_select_review_cycle"] button,
-        div[class*="st-key-portal_select_sam"] button {
+        div[class*="st-key-portal_select_sam"] button,
+        div[class*="st-key-portal_select_expansion"] button {
             margin-top: 0 !important;
         }
         div[class*="st-key-portal_select_od"] button:hover,
@@ -1948,6 +1960,8 @@ def _portal_hub_styles() -> None:
         div[class*="st-key-portal_select_review_cycle"] button[kind="primary"]:hover,
         div[class*="st-key-portal_select_sam"] button:hover,
         div[class*="st-key-portal_select_sam"] button[kind="primary"]:hover,
+        div[class*="st-key-portal_select_expansion"] button:hover,
+        div[class*="st-key-portal_select_expansion"] button[kind="primary"]:hover,
         div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] a:hover {
             filter: brightness(0.96); transform: translateY(-1px);
             color: #fff !important;
@@ -1963,6 +1977,10 @@ def _portal_hub_styles() -> None:
         div[class*="st-key-portal_select_sam"] button:hover,
         div[class*="st-key-portal_select_sam"] button[kind="primary"]:hover {
             background: #7c3aed !important; border-color: #7c3aed !important;
+        }
+        div[class*="st-key-portal_select_expansion"] button:hover,
+        div[class*="st-key-portal_select_expansion"] button[kind="primary"]:hover {
+            background: #087e83 !important; border-color: #087e83 !important;
         }
         div[data-testid="stHorizontalBlock"]:has(.etc-hub-card) [data-testid="stLinkButton"] a:hover {
             background: #0e7490 !important; border-color: #0e7490 !important;
@@ -2937,6 +2955,29 @@ def portal_select_page():
                 ),
             }
         )
+    if PORTAL_EXPANSION in portals:
+        portal_cards.append(
+            {
+                "key": "expansion",
+                "tone": "exp",
+                "check": "#087e83",
+                "title": "Survey Expansion",
+                "description": "Expand OD surveys to APC ridership and review areas to fix.",
+                "features": [
+                    "Workbook with O2O, OD, APC, and SAMPLING",
+                    "Ten-pass expansion and nearby pooling",
+                    "Areas to fix and Excel export",
+                ],
+                "button": "Open Survey Expansion →",
+                "target_page": "expansion",
+                "icon": (
+                    '<svg width="22" height="22" viewBox="0 0 24 24" fill="none">'
+                    '<path d="M4 19V5M4 19h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'
+                    '<path d="M8 15l3-4 2.5 2.5L18 8" stroke="currentColor" stroke-width="2" '
+                    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+                ),
+            }
+        )
     if is_super_admin(email) or str(role).upper() == "ADMIN":
         portal_cards.append(
             {
@@ -2965,60 +3006,72 @@ def portal_select_page():
         st.warning("No portals are available for your account right now.")
         return
 
-    cols = st.columns(min(len(portal_cards), 4) or 1, gap="large")
-    for idx, card in enumerate(portal_cards):
-        with cols[idx % len(cols)]:
-            feature_items = "".join(
-                _portal_feature_row(card["check"], point) for point in card["features"]
-            )
-            # No Current Project / Your Role blocks — features then CTA only
-            # Compact HTML (no blank lines) so Streamlit markdown won't inject <p> and break flex rows
-            st.markdown(
-                (
-                    f'<div class="etc-hub-card">'
-                    f'<div class="etc-hub-card-top">'
-                    f'<div class="etc-hub-card-icon {html.escape(card["tone"])}">{card["icon"]}</div>'
-                    f'<div class="etc-hub-card-title">{html.escape(card["title"])}</div>'
-                    f"</div>"
-                    f'<p class="etc-hub-card-desc">{html.escape(card["description"])}</p>'
-                    f'<div class="etc-hub-features">{feature_items}</div>'
-                    f"</div>"
-                ),
-                unsafe_allow_html=True,
-            )
-            if card.get("href"):
-                st.link_button(
+    # One card per column. A fifth card used to wrap into the first column and
+    # share that card's border and button, which stacked Segmenting under OD.
+    per_row = 4
+    if len(portal_cards) <= per_row:
+        card_rows = [portal_cards]
+        row_width = len(portal_cards) or 1
+    else:
+        card_rows = [portal_cards[i:i + per_row] for i in range(0, len(portal_cards), per_row)]
+        row_width = per_row
+    for row_index, card_row in enumerate(card_rows):
+        if row_index:
+            st.markdown("<div style='height: 1.25rem'></div>", unsafe_allow_html=True)
+        cols = st.columns(row_width, gap="large")
+        for col, card in zip(cols, card_row):
+            with col:
+                feature_items = "".join(
+                    _portal_feature_row(card["check"], point) for point in card["features"]
+                )
+                # No Current Project / Your Role blocks — features then CTA only
+                # Compact HTML (no blank lines) so Streamlit markdown won't inject <p> and break flex rows
+                st.markdown(
+                    (
+                        f'<div class="etc-hub-card">'
+                        f'<div class="etc-hub-card-top">'
+                        f'<div class="etc-hub-card-icon {html.escape(card["tone"])}">{card["icon"]}</div>'
+                        f'<div class="etc-hub-card-title">{html.escape(card["title"])}</div>'
+                        f"</div>"
+                        f'<p class="etc-hub-card-desc">{html.escape(card["description"])}</p>'
+                        f'<div class="etc-hub-features">{feature_items}</div>'
+                        f"</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
+                if card.get("href"):
+                    st.link_button(
+                        card["button"],
+                        card["href"],
+                        use_container_width=True,
+                        type="primary",
+                    )
+                elif st.button(
                     card["button"],
-                    card["href"],
+                    key=f"portal_select_{card['key']}",
                     use_container_width=True,
                     type="primary",
-                )
-            elif st.button(
-                card["button"],
-                key=f"portal_select_{card['key']}",
-                use_container_width=True,
-                type="primary",
-            ):
-                target = card["target_page"]
-                if target == "review_cycle":
-                    st.session_state["rcd_boot_complete"] = False
-                    st.session_state["rcd_boot_splash_shown"] = False
-                    try:
-                        from embed import install_boot_cover
-
-                        # Cover the portal immediately so RCD CSS never washes it out mid-nav.
-                        install_boot_cover("Opening your Review Cycle workspace…")
-                    except ImportError:
+                ):
+                    target = card["target_page"]
+                    if target == "review_cycle":
+                        st.session_state["rcd_boot_complete"] = False
+                        st.session_state["rcd_boot_splash_shown"] = False
                         try:
-                            from REVIEW_CYCLE_DASHBOARD.embed import install_boot_cover
+                            from embed import install_boot_cover
 
+                            # Cover the portal immediately so RCD CSS never washes it out mid-nav.
                             install_boot_cover("Opening your Review Cycle workspace…")
+                        except ImportError:
+                            try:
+                                from REVIEW_CYCLE_DASHBOARD.embed import install_boot_cover
+
+                                install_boot_cover("Opening your Review Cycle workspace…")
+                            except Exception:
+                                pass
                         except Exception:
                             pass
-                    except Exception:
-                        pass
-                st.query_params["page"] = target
-                st.rerun()
+                    st.query_params["page"] = target
+                    st.rerun()
 
     # Single Sign out stays in the welcome banner — footer is help + copyright only
     st.html(

@@ -1143,7 +1143,7 @@ if not st.session_state["logged_in"]:
         login(client_mode=True)
     elif current_page == "login":
         login()  # Show the login page by default
-    elif current_page == "field_assignments":
+    elif current_page in ("field_assignments", "expansion"):
         login()
     elif current_page == "forgot_password":
         forgot_password()
@@ -1220,6 +1220,18 @@ else:
                     st.rerun()
                 st.stop()
             render_field_assignments_page()
+            st.stop()
+        if current_page == "expansion":
+            _ex_user = st.session_state.get("user", {})
+            if not is_super_admin(_ex_user.get("email", "")):
+                st.error("You do not have access to Survey Expansion. This portal is limited to super admins.")
+                if st.button("Back to portal selection", key="expansion_denied_back"):
+                    st.query_params["page"] = "portal_select"
+                    st.rerun()
+                st.stop()
+            from expansion.page import render_survey_expansion_page
+
+            render_survey_expansion_page()
             st.stop()
 
         _gate_user = st.session_state.get("user", {})
