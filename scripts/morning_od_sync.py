@@ -42,6 +42,7 @@ HIDDEN_PROJECTS = frozenset({
 # 3.8 GB server; run by hand with: python scripts/morning_od_sync.py --project Oahu_Honolulu
 MORNING_EXCLUDED_PROJECTS = frozenset({
     "Oahu_Honolulu",
+    "Oahu_Honolulu RAIL",
 })
 
 
