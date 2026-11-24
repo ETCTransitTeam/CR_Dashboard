@@ -38,6 +38,12 @@ HIDDEN_PROJECTS = frozenset({
     "PARKCITY",
 })
 
+# Skipped by the morning run even with --include-hidden. Too heavy for the
+# 3.8 GB server; run by hand with: python scripts/morning_od_sync.py --project Oahu_Honolulu
+MORNING_EXCLUDED_PROJECTS = frozenset({
+    "Oahu_Honolulu",
+})
+
 
 class _HeadlessStreamlit:
     """Minimal stand-in so fetch_and_process_data can run outside `streamlit run`."""
@@ -93,6 +99,8 @@ def _project_list(include_hidden: bool) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for name, cfg in sorted(PROJECTS.items(), key=lambda item: item[0].lower()):
         if not include_hidden and name in HIDDEN_PROJECTS:
+            continue
+        if name in MORNING_EXCLUDED_PROJECTS:
             continue
         schema = (cfg or {}).get("schema") or name
         rows.append((name, str(schema)))
